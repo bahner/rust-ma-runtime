@@ -2168,9 +2168,9 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "ma-core"
-version = "0.8.1"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "436ede272720e6ee163b965efa44740aa218b1c50379672dadbc11d35fb1a76b"
+checksum = "9e5fa2f9f8d312f405b997d495d821aed1db104850da9635e5a356b933bae37e"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2179,51 +2179,37 @@ dependencies = [
  "blake3",
  "bytes",
  "chacha20poly1305",
+ "ciborium",
  "cid",
  "clap",
  "directories",
+ "ed25519-dalek 2.2.0",
+ "getrandom 0.2.17",
+ "hex",
+ "ipld-core",
  "iroh",
  "iroh-base",
- "ma-did",
+ "js-sys",
+ "libp2p-identity",
+ "multibase",
+ "nanoid",
  "rand 0.8.6",
+ "rand_core 0.6.4",
  "reqwest 0.12.28",
  "serde",
+ "serde_ipld_dagcbor",
+ "serde_ipld_dagjson",
  "serde_json",
  "serde_yaml",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "unsigned-varint",
  "wasm-bindgen",
  "web-sys",
- "zeroize",
-]
-
-[[package]]
-name = "ma-did"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a768bc861abed688bb9ffa6d19835697c4101b635f4b8f939b64037d6efd3318"
-dependencies = [
- "blake3",
- "chacha20poly1305",
- "ciborium",
- "cid",
- "ed25519-dalek 2.2.0",
- "getrandom 0.2.17",
- "hex",
- "ipld-core",
- "js-sys",
- "libp2p-identity",
- "multibase",
- "nanoid",
- "rand_core 0.6.4",
- "serde",
- "serde_ipld_dagcbor",
- "serde_ipld_dagjson",
- "thiserror 2.0.18",
- "unsigned-varint",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
@@ -2232,7 +2218,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "base64",
  "ciborium",
  "cid",
  "clap",

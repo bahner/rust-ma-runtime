@@ -1,6 +1,6 @@
 # 間 IPFS Publisher
 
-A lean daemon that exposes `/ma/ipfs/0.0.1` and `/ma/inbox/0.0.1` on behalf of
+A lean daemon that exposes `/ma/ipfs/0.0.1` and `/ma/rpc/0.0.1` on behalf of
 clients that cannot reach the Kubo RPC API directly (e.g. browser-based 間
 actors). It runs on a host with a Kubo daemon, derives its own `did:ma` identity
 at startup, publishes its own DID document, then handles two services over iroh
@@ -8,14 +8,14 @@ QUIC transport:
 
 - **`/ma/ipfs/0.0.1`** — receives signed IPFS-publish requests and publishes
   `did:ma` DID documents to IPFS/IPNS via Kubo on behalf of the caller.
-- **`/ma/inbox/0.0.1`** — receives RPC messages; responds to `:ping` atoms
-  with `:pong` replies using the `/ma/rpc/0.0.1` content types.
+- **`/ma/rpc/0.0.1`** — receives RPC messages; responds to `:ping` atoms with
+  `:pong` replies using the `/ma/rpc/0.0.1` transport.
 
 A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
 
 ## Design principles
 
-- **Two services, nothing more.** Only `/ma/ipfs/0.0.1` and `/ma/inbox/0.0.1`
+- **Two services, nothing more.** Only `/ma/ipfs/0.0.1` and `/ma/rpc/0.0.1`
   are registered. No gossip, no additional RPC.
 - **No local protocol code.** All publish logic, validation, secret-bundle
   handling, config, ACL, and transport are provided by the `ma-core` crate.
@@ -47,19 +47,18 @@ Only published crates — **never local paths**:
 ```toml
 anyhow = "1"
 axum = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
-base64 = "0.22"
 ciborium = "0.2"
 clap = { version = "4", features = ["derive"] }
 libp2p-identity = { version = "0.2", features = ["ed25519", "peerid"] }
-ma-core = { version = "0.8.0", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
+ma-core = { version = "0.9.1", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
 tracing = "0.1"
 zeroize = "1"
 ```
 
-`ma-core 0.8.0` re-exports everything needed from `ma-did`, so no direct
-`ma-did` dependency is required.
+`ma-core 0.9.1` exposes everything this daemon uses for DID handling, so no
+direct `ma-did` dependency is required.
 
 ## Configuration
 
@@ -103,7 +102,7 @@ ma-ipfs-publisher --status-bind 0.0.0.0:5003
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--acl-file <PATH>` | — | ACL YAML file; defaults to open (`*`) if omitted |
-| `--poll-ms <MS>` | `100` | Service inbox poll interval |
+| `--poll-ms <MS>` | `100` | Service poll interval |
 | `--status-bind <ADDR>` | `127.0.0.1:5003` | Status web server bind address |
 | `--gen-headless-config` | — | Generate config + secret bundle and exit |
 
@@ -124,9 +123,9 @@ Rules:
 - **Deny always wins** over allow, including over `*`.
 - An identity-level deny (`!did:ma:<ipns>` with no fragment) blocks every
   DID-URL under that identity (any fragment, any path).
-- Entries are validated by `ma-did`'s `Did::try_from` at load time — invalid
-  entries cause a hard error.
-- ACL is checked on both `/ma/ipfs/0.0.1` and `/ma/inbox/0.0.1` messages.
+- Entries are validated by `Did::try_from` (via `ma-core`) at load time —
+  invalid entries cause a hard error.
+- ACL is checked on `/ma/ipfs/0.0.1` and `/ma/rpc/0.0.1` messages.
 
 ## Status web server
 
@@ -145,7 +144,7 @@ The JSON object contains:
   "endpoint_id": "<iroh-id>",
   "uptime_secs": 42,
   "ipfs_requests": 0,
-  "inbox_requests": 0,
+  "rpc_requests": 0,
   "pings_received": 0,
   "started_at": 1234567890
 }
@@ -164,9 +163,10 @@ RPC atoms are CBOR-encoded text strings beginning with `:`.
 
 The daemon handles exactly one RPC verb:
 
-- **`:ping`** — replies with `:pong` to `did:ma:<sender_ipns>#ping`. The reply
-  message sets `reply_to` to the originating message's ID. The reply is
-  delivered via `endpoint.outbox()` using the sender's resolved inbox endpoint.
+- **`:ping`** — accepted only on `/ma/rpc/0.0.1`; replies with `:pong` to
+  `did:ma:<sender_ipns>#ping`. The reply message sets `reply_to` to the
+  originating message's ID. The reply is delivered via `endpoint.outbox()`
+  using the sender's resolved RPC endpoint.
 
 ## ma-core API used
 
@@ -178,14 +178,14 @@ The daemon handles exactly one RPC verb:
 | IPNS derivation | `libp2p_identity::ed25519::SecretKey::try_from_bytes` → `Keypair` → `PeerId::to_base58()` |
 | Own DID document | `Document::new`, `SigningKey::from_private_key_bytes`, `EncryptionKey::from_private_key_bytes`, `VerificationMethod::new`, `document.sign`, `document.marshal` |
 | iroh endpoint | `ma_core::new_ma_endpoint(iroh_secret_key)` |
-| Register service | `endpoint.service("/ma/ipfs/0.0.1")` + `endpoint.service(INBOX_PROTOCOL_ID)` |
+| Register service | `endpoint.service("/ma/ipfs/0.0.1")` + `endpoint.service("/ma/rpc/0.0.1")` |
 | Kubo publisher | `IpfsDidPublisher::new(kubo_rpc_url)` |
 | Kubo readiness | `publisher.wait_until_ready(attempts)` |
 | Request validation | `validate_ipfs_publish_request(message_cbor)` |
 | Publish | `publisher.publish_document(did_doc_json, ipns_key_b64)` |
 | Replay guard | `ReplayGuard::default()` + `check_and_insert(&headers)` |
 | ACL | `Acl::new_from_yaml(yaml)` + `acl.is_allowed(did_url)` |
-| Outbox (pong) | `endpoint.outbox(&resolver, &sender_did, INBOX_PROTOCOL_ID).await` → `outbox.send(&msg)` |
+| Outbox (pong) | `endpoint.outbox(&resolver, &sender_did, "/ma/rpc/0.0.1").await` → `outbox.send(&msg)` |
 | Resolver | `IpfsGatewayResolver::new(kubo_rpc_url)` |
 
 ## Security notes

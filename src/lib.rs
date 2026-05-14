@@ -17,6 +17,7 @@
 ///     Some("k51qzi5uqu5di8zyh33j0mvlj19vwt1wm1z0bztofwebkihfrdobsrzwmxpr77")
 /// );
 /// ```
+#[must_use]
 pub fn extract_imported_ipns_id_from_error_text(text: &str) -> Option<String> {
     let prefix = "imported key IPNS id '";
     let infix = "' does not match document DID IPNS '";
