@@ -1,9 +1,9 @@
-# ma-ipfs-publisher – English
+# ma-runtime – English
 
 own-did-published = Own DID document published to IPNS
 own-did-publish-failed = Failed to publish own DID document
 own-did-publish-timeout = Own DID document publish timed out after 2 minutes
-started = ma-ipfs-publisher started
+started = ma runtime started
 shutdown-requested = Shutdown requested
 closing-endpoint = Closing iroh endpoint...
 shutdown-complete = Shutdown complete

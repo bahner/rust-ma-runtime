@@ -1,8 +1,12 @@
 [package]
-name = "ma-ipfs-publisher"
+name = "ma-runtime"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
+
+[[bin]]
+name = "ma"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
@@ -13,6 +17,7 @@ directories = "5"
 fluent = "0.16"
 ma-core = { version = "0.10.10", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
 serde_json = "1"
+serde_yaml = "0.9"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
 tracing = "0.1"
 unic-langid = "0.9"

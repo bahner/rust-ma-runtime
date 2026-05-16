@@ -1,4 +1,4 @@
-# 間 IPFS Publisher
+# 間 Runtime (`ma`)
 
 A lean daemon that exposes `/ma/ipfs/0.0.1` and `/ma/rpc/0.0.1` on behalf of
 clients that cannot reach the Kubo RPC API directly (e.g. browser-based 間
@@ -6,7 +6,8 @@ actors). It runs on a host with a Kubo daemon, derives its own `did:ma` identity
 at startup, publishes its own DID document, then handles two services over iroh
 QUIC transport:
 
-- **`/ma/ipfs/0.0.1`** — receives signed IPFS-publish requests and publishes
+- **`/ma/ipfs/0.0.1`** — optional (enabled by `ipfs_publisher: true` in config, default `true`);
+  receives signed IPFS-publish requests and publishes
   `did:ma` DID documents to IPFS/IPNS via Kubo on behalf of the caller.
 - **`/ma/rpc/0.0.1`** — receives RPC messages; responds to `:ping` atoms with
   `:pong` replies using the `/ma/rpc/0.0.1` transport.
@@ -49,15 +50,16 @@ anyhow = "1"
 axum = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
 ciborium = "0.2"
 clap = { version = "4", features = ["derive"] }
-libp2p-identity = { version = "0.2", features = ["ed25519", "peerid"] }
-ma-core = { version = "0.9.1", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
+directories = "5"
+ma-core = { version = "0.10.10", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
 serde_json = "1"
+serde_yaml = "0.9"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
 tracing = "0.1"
 zeroize = "1"
 ```
 
-`ma-core 0.9.1` exposes everything this daemon uses for DID handling, so no
+`ma-core 0.10.10` exposes everything this daemon uses for DID handling, so no
 direct `ma-did` dependency is required.
 
 > **Development note:** A `[patch.crates-io] ma-core = { path = "../rust-ma-core" }`
@@ -67,24 +69,36 @@ direct `ma-did` dependency is required.
 
 ## Configuration
 
-The default slug is `ma-ipfs-publisher`. Config, secret bundle, and log file
+The default slug is `ma`. Config, secret bundle, and log file
 follow XDG paths via ma-core:
 
 | File | Default path |
-|------|--------------|
-| Config | `$XDG_CONFIG_HOME/ma/ma-ipfs-publisher.yaml` |
-| Secret bundle | `$XDG_CONFIG_HOME/ma/ma-ipfs-publisher.bin` |
-| Log | `$XDG_DATA_HOME/ma/ma-ipfs-publisher.log` |
+|------|-------------|
+| Config | `$XDG_CONFIG_HOME/ma/ma.yaml` |
+| Secret bundle | `$XDG_CONFIG_HOME/ma/ma.bin` |
+| ACL | `$XDG_CONFIG_HOME/ma/ma.acl` (optional) |
+| Log | `$XDG_DATA_HOME/ma/ma.log` |
 
-`secret_bundle_passphrase` must be set (env `MA_MA_IPFS_PUBLISHER_SECRET_BUNDLE_PASSPHRASE`,
+`secret_bundle_passphrase` must be set (env `MA_MA_SECRET_BUNDLE_PASSPHRASE`,
 or `MA_SECRET_BUNDLE_PASSPHRASE`, or in the YAML config).
 
 `kubo_rpc_url` defaults to `http://127.0.0.1:5001`.
 
+### IPFS publisher toggle
+
+Add to `~/.config/ma/ma.yaml` to disable the IPFS publisher service:
+
+```yaml
+ipfs_publisher: false
+```
+
+The key lives in `config.extra` (a `serde_yaml::Mapping`). Default is `true`
+(enabled) when the key is absent.
+
 ### First-time setup
 
 ```sh
-ma-ipfs-publisher --gen-headless-config
+ma --gen-headless-config
 ```
 
 Generates a fresh `SecretBundle` with four random 32-byte keys (`iroh_secret_key`,
@@ -95,11 +109,11 @@ random passphrase, and writes both config and bundle to the XDG paths with mode
 ### Runtime
 
 ```sh
-ma-ipfs-publisher
+ma
 # or with an explicit ACL file:
-ma-ipfs-publisher --acl-file /etc/ma/acl.yaml
+ma --acl-file /etc/ma/acl.yaml
 # or with a custom status bind address:
-ma-ipfs-publisher --status-bind 0.0.0.0:5003
+ma --status-bind 0.0.0.0:5003
 ```
 
 ## CLI flags
@@ -148,6 +162,7 @@ The JSON object contains:
   "did": "did:ma:<ipns>",
   "endpoint_id": "<iroh-id>",
   "uptime_secs": 42,
+  "ipfs_publisher": true,
   "ipfs_requests": 0,
   "rpc_requests": 0,
   "pings_received": 0,

@@ -1,6 +1,6 @@
-# ma-ipfs-publisher
+# ma-runtime (`ma`)
 
-A lean daemon that bridges browser-based `did:ma` actors to a local
+A lean 間 runtime daemon that bridges browser-based `did:ma` actors to a local
 [Kubo](https://github.com/ipfs/kubo) IPFS node.  It listens for signed
 publish requests over an encrypted [iroh](https://iroh.computer/) QUIC
 transport and forwards them to Kubo's RPC API, so that clients that cannot
@@ -11,7 +11,7 @@ Two protocols are served:
 
 | Protocol | Purpose |
 |---|---|
-| `/ma/ipfs/0.0.1` | Receives signed DID-document publish requests and forwards them to Kubo |
+| `/ma/ipfs/0.0.1` | Optional (default on): receives signed DID-document publish requests and forwards them to Kubo |
 | `/ma/rpc/0.0.1` | Ping/pong health-check; replies `:pong` to any `:ping` |
 
 A minimal HTTP status page is also served on `127.0.0.1:5003`.
@@ -26,7 +26,8 @@ A minimal HTTP status page is also served on `127.0.0.1:5003`.
 | **Kubo** (go-ipfs) | Must be running and reachable at `http://127.0.0.1:5001` (default) |
 
 Make sure Kubo is started and its RPC API is up before running
-`ma-ipfs-publisher`.  The daemon will refuse to start if Kubo is unreachable.
+`ma`.  The daemon will refuse to start if Kubo is unreachable (unless
+the IPFS publisher service is disabled).
 
 ---
 
@@ -49,7 +50,7 @@ cargo build --release
 Run the generator once to create a fresh identity and configuration:
 
 ```sh
-ma-ipfs-publisher --gen-headless-config
+ma --gen-headless-config
 ```
 
 This will:
@@ -61,9 +62,10 @@ This will:
 
 | File | Default path |
 |---|---|
-| Config | `$XDG_CONFIG_HOME/ma/ma-ipfs-publisher.yaml` |
-| Secret bundle | `$XDG_CONFIG_HOME/ma/ma-ipfs-publisher.bin` |
-| Log | `$XDG_DATA_HOME/ma/ma-ipfs-publisher.log` |
+| Config | `$XDG_CONFIG_HOME/ma/ma.yaml` |
+| Secret bundle | `$XDG_CONFIG_HOME/ma/ma.bin` |
+| ACL | `$XDG_CONFIG_HOME/ma/ma.acl` (optional) |
+| Log | `$XDG_DATA_HOME/ma/ma.log` |
 
 On most Linux systems `$XDG_CONFIG_HOME` defaults to `~/.config` and
 `$XDG_DATA_HOME` to `~/.local/share`.
@@ -79,7 +81,7 @@ variables.
 
 | Key | Environment variable | Description |
 |---|---|---|
-| `secret_bundle_passphrase` | `MA_MA_IPFS_PUBLISHER_SECRET_BUNDLE_PASSPHRASE` *or* `MA_SECRET_BUNDLE_PASSPHRASE` | Passphrase that decrypts the secret bundle |
+| `secret_bundle_passphrase` | `MA_MA_SECRET_BUNDLE_PASSPHRASE` *or* `MA_SECRET_BUNDLE_PASSPHRASE` | Passphrase that decrypts the secret bundle |
 
 After `--gen-headless-config` the passphrase is already written into the
 config file.  In production you may prefer to supply it only via the
@@ -90,12 +92,15 @@ environment variable (and remove it from the YAML).
 | Key | Default | Description |
 |---|---|---|
 | `kubo_rpc_url` | `http://127.0.0.1:5001` | URL of the Kubo RPC API |
+| `ipfs_publisher` | `true` | Enable the `/ma/ipfs/0.0.1` IPFS publisher service |
 
 ### Example config snippet
 
 ```yaml
 secret_bundle_passphrase: "change-me"
 kubo_rpc_url: "http://127.0.0.1:5001"
+# Set to false to disable the IPFS publisher service:
+# ipfs_publisher: false
 ```
 
 ---
@@ -104,19 +109,19 @@ kubo_rpc_url: "http://127.0.0.1:5001"
 
 ```sh
 # Simplest — reads config from the XDG paths
-ma-ipfs-publisher
+ma
 
 # With a custom ACL file
-ma-ipfs-publisher --acl-file /etc/ma/acl.yaml
+ma --acl-file /etc/ma/acl.yaml
 
 # With a custom status bind address
-ma-ipfs-publisher --status-bind 0.0.0.0:5003
+ma --status-bind 0.0.0.0:5003
 
 # Norwegian log messages (default)
-MA_LANG=nb ma-ipfs-publisher
+MA_LANG=nb ma
 
 # English log messages
-MA_LANG=en ma-ipfs-publisher
+MA_LANG=en ma
 ```
 
 On startup the daemon will:
@@ -182,6 +187,7 @@ Example JSON response:
   "did": "did:ma:<ipns>",
   "endpoint_id": "<iroh-node-id>",
   "uptime_secs": 42,
+  "ipfs_publisher": true,
   "ipfs_requests": 7,
   "rpc_requests": 3,
   "pings_received": 3,
@@ -217,5 +223,5 @@ Example JSON response:
 | `make lint` | `cargo clippy`, `cargo fmt --check`, `mdl *.md` |
 | `make test` | Strict clippy (pedantic + nursery) |
 | `make clean` | `cargo clean` + remove local binary |
-| `make publish` | `scp` the binary to the `ma-ipfs-publisher` host |
+| `make publish` | `scp` the binary to the `ma` host |
 | `make distclean` | `clean` + remove `Cargo.lock` |

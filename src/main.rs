@@ -17,7 +17,7 @@ use ma_core::config::{Config, MaArgs, SecretBundle};
 use ma_core::ipfs::IpfsDidPublisher;
 use ma_core::ipfs_add;
 use ma_core::{
-    validate_ipfs_request, Acl, Did, IpfsGatewayResolver, ReplayGuard,
+    validate_ipfs_request, Acl, Did, Inbox, IpfsGatewayResolver, ReplayGuard,
     SigningKey, ValidatedIpfsRequest, IPFS_PROTOCOL_ID,
 };
 use serde_json::json;
@@ -25,7 +25,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use zeroize::{Zeroize, Zeroizing};
 
-const MA_DEFAULT_SLUG: &str = "ma-ipfs-publisher";
+const MA_DEFAULT_SLUG: &str = "ma";
 const OPEN_ACL_YAML: &str = include_str!("../default.acl");
 const RPC_PROTOCOL_ID: &str = "/ma/rpc/0.0.1";
 const CONTENT_TYPE_RPC: &str = "application/x-ma-rpc";
@@ -34,8 +34,8 @@ const PING_ATOM: &str = ":ping";
 const PONG_ATOM: &str = ":pong";
 
 #[derive(Debug, Parser)]
-#[command(name = "ma-ipfs-publisher")]
-#[command(about = "Lean /ma/ipfs/0.0.1 + /ma/rpc/0.0.1 daemon powered by ma-core")]
+#[command(name = "ma")]
+#[command(about = "間 Runtime daemon — RPC + optional IPFS publisher, powered by ma-core")]
 struct Cli {
     #[command(flatten)]
     ma: MaArgs,
@@ -69,9 +69,17 @@ struct Stats {
     rpc_requests: u64,
     pings_received: u64,
     started_at: u64,
+    ipfs_publisher_enabled: bool,
 }
 
 type SharedStats = Arc<RwLock<Stats>>;
+
+/// All state owned by the optional IPFS publisher service.
+struct IpfsServiceState {
+    messages: Inbox<ma_core::Message>,
+    publisher: IpfsDidPublisher,
+    replay_guard: ReplayGuard,
+}
 
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
@@ -89,12 +97,17 @@ async fn main() -> Result<()> {
 
     let acl = load_acl(cli.acl_file.as_deref())?;
 
+    let ipfs_publisher_enabled = config
+        .extra
+        .get("ipfs_publisher")
+        .and_then(serde_yaml::value::Value::as_bool)
+        .unwrap_or(true);
+
     let secrets = load_secret_bundle(&config)?;
 
     // ── iroh endpoint (uses iroh_secret_key, separate from IPNS) ──
     let mut endpoint = ma_core::new_ma_endpoint(secrets.iroh_secret_key).await?;
 
-    let ipfs_messages = endpoint.service(IPFS_PROTOCOL_ID);
     let rpc_messages = endpoint.service(RPC_PROTOCOL_ID);
 
     // ── Build and sign own DID document, publish in background ──
@@ -134,6 +147,20 @@ async fn main() -> Result<()> {
         .await
         .context("kubo RPC is not reachable")?;
 
+    // ── Optional IPFS publisher service ──
+    let mut ipfs_state = if ipfs_publisher_enabled {
+        let messages = endpoint.service(IPFS_PROTOCOL_ID);
+        info!("IPFS publisher service enabled");
+        Some(IpfsServiceState {
+            messages,
+            publisher,
+            replay_guard: ReplayGuard::default(),
+        })
+    } else {
+        info!("IPFS publisher service disabled (set ipfs_publisher: true in config to enable)");
+        None
+    };
+
     info!(
         did = %our_did,
         endpoint_id = %endpoint.id(),
@@ -152,6 +179,7 @@ async fn main() -> Result<()> {
         our_did: our_did.clone(),
         endpoint_id: endpoint.id(),
         started_at: now_unix_secs(),
+        ipfs_publisher_enabled,
         ..Default::default()
     }));
 
@@ -159,7 +187,6 @@ async fn main() -> Result<()> {
     spawn_status_server(stats.clone(), cli.status_bind);
 
     // ── Main event loop ──
-    let mut replay_guard = ReplayGuard::default();
     let mut ticker = tokio::time::interval(Duration::from_millis(cli.poll_ms));
 
     loop {
@@ -201,40 +228,42 @@ async fn main() -> Result<()> {
                 }
 
                 // Drain /ma/ipfs/0.0.1
-                while let Some(mut message) = ipfs_messages.pop(now) {
-                    debug!(
-                        node = %message.from,
-                        protocol = IPFS_PROTOCOL_ID,
-                        "{}", i18n::t("node-connected")
-                    );
-                    debug!(
-                        from = %message.from,
-                        to = %message.to,
-                        id = %message.id,
-                        content_type = %message.content_type,
-                        content_len = message.content.len(),
-                        "{}", i18n::t("received-encrypted-ma-msg")
-                    );
-                    {
-                        let mut s = stats.write().await;
-                        s.ipfs_requests += 1;
+                if let Some(ref mut ipfs) = ipfs_state {
+                    while let Some(mut message) = ipfs.messages.pop(now) {
+                        debug!(
+                            node = %message.from,
+                            protocol = IPFS_PROTOCOL_ID,
+                            "{}", i18n::t("node-connected")
+                        );
+                        debug!(
+                            from = %message.from,
+                            to = %message.to,
+                            id = %message.id,
+                            content_type = %message.content_type,
+                            content_len = message.content.len(),
+                            "{}", i18n::t("received-encrypted-ma-msg")
+                        );
+                        {
+                            let mut s = stats.write().await;
+                            s.ipfs_requests += 1;
+                        }
+                        if let Err(err) = handle_ipfs_message(
+                            &message,
+                            &acl,
+                            &IpfsHandlerCtx {
+                                our_did: &our_did,
+                                signing_key: &signing_key,
+                                endpoint: &*endpoint,
+                                kubo_rpc_url: &config.kubo_rpc_url,
+                                publisher: &ipfs.publisher,
+                            },
+                            &mut ipfs.replay_guard,
+                        ).await {
+                            warn!(error = %err, from = %message.from, "{}", i18n::t("ipfs-message-rejected"));
+                        }
+                        message.content.zeroize();
+                        message.signature.zeroize();
                     }
-                    if let Err(err) = handle_ipfs_message(
-                        &message,
-                        &acl,
-                        &IpfsHandlerCtx {
-                            our_did: &our_did,
-                            signing_key: &signing_key,
-                            endpoint: &*endpoint,
-                            kubo_rpc_url: &config.kubo_rpc_url,
-                            publisher: &publisher,
-                        },
-                        &mut replay_guard,
-                    ).await {
-                        warn!(error = %err, from = %message.from, "{}", i18n::t("ipfs-message-rejected"));
-                    }
-                    message.content.zeroize();
-                    message.signature.zeroize();
                 }
             }
             signal = tokio::signal::ctrl_c() => {
@@ -522,7 +551,7 @@ fn acl_check(acl: &Acl, from: &str) -> Result<()> {
 // ── Status web server handlers ────────────────────────────────────────────────
 
 async fn handle_index(State(stats): State<SharedStats>) -> impl IntoResponse {
-    let (our_did, endpoint_id, ipfs_requests, rpc_requests, pings_received, uptime) = {
+    let (our_did, endpoint_id, ipfs_requests, rpc_requests, pings_received, uptime, ipfs_enabled) = {
         let s = stats.read().await;
         (
             s.our_did.clone(),
@@ -531,23 +560,26 @@ async fn handle_index(State(stats): State<SharedStats>) -> impl IntoResponse {
             s.rpc_requests,
             s.pings_received,
             now_unix_secs().saturating_sub(s.started_at),
+            s.ipfs_publisher_enabled,
         )
     };
+    let ipfs_status = if ipfs_enabled { "enabled" } else { "disabled" };
     let html = format!(
         r#"<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>ma-ipfs-publisher</title>
+<head><meta charset="utf-8"><title>間 Runtime</title>
 <style>body{{font-family:monospace;max-width:700px;margin:2em auto;background:#111;color:#eee}}
 h1{{color:#7cf}}table{{border-collapse:collapse;width:100%}}
 td,th{{padding:6px 12px;border:1px solid #333;text-align:left}}
 th{{background:#222}}a{{color:#7cf}}</style></head>
 <body>
-<h1>間 IPFS Publisher</h1>
+<h1>間 Runtime</h1>
 <table>
 <tr><th>Field</th><th>Value</th></tr>
 <tr><td>DID</td><td>{our_did}</td></tr>
 <tr><td>Endpoint ID (iroh)</td><td>{endpoint_id}</td></tr>
 <tr><td>Uptime (seconds)</td><td>{uptime}</td></tr>
+<tr><td>IPFS publisher</td><td>{ipfs_status}</td></tr>
 <tr><td>IPFS publish requests</td><td>{ipfs_requests}</td></tr>
 <tr><td>RPC requests</td><td>{rpc_requests}</td></tr>
 <tr><td>Pings received</td><td>{pings_received}</td></tr>
@@ -559,7 +591,7 @@ th{{background:#222}}a{{color:#7cf}}</style></head>
 }
 
 async fn handle_status_json(State(stats): State<SharedStats>) -> impl IntoResponse {
-    let (our_did, endpoint_id, ipfs_requests, rpc_requests, pings_received, started_at, uptime) = {
+    let (our_did, endpoint_id, ipfs_requests, rpc_requests, pings_received, started_at, uptime, ipfs_enabled) = {
         let s = stats.read().await;
         (
             s.our_did.clone(),
@@ -569,12 +601,14 @@ async fn handle_status_json(State(stats): State<SharedStats>) -> impl IntoRespon
             s.pings_received,
             s.started_at,
             now_unix_secs().saturating_sub(s.started_at),
+            s.ipfs_publisher_enabled,
         )
     };
     let body = json!({
         "did": our_did,
         "endpoint_id": endpoint_id,
         "uptime_secs": uptime,
+        "ipfs_publisher": ipfs_enabled,
         "ipfs_requests": ipfs_requests,
         "rpc_requests": rpc_requests,
         "pings_received": pings_received,
@@ -595,24 +629,21 @@ fn default_acl_path() -> Result<PathBuf> {
 }
 
 fn load_acl(explicit: Option<&std::path::Path>) -> Result<Acl> {
-    match explicit {
-        Some(p) => {
-            let yaml = std::fs::read_to_string(p)
-                .with_context(|| format!("failed to read ACL file {}", p.display()))?;
-            info!(path = %p.display(), "ACL loaded from file");
+    if let Some(p) = explicit {
+        let yaml = std::fs::read_to_string(p)
+            .with_context(|| format!("failed to read ACL file {}", p.display()))?;
+        info!(path = %p.display(), "ACL loaded from file");
+        Acl::new_from_yaml(&yaml).context("invalid ACL YAML")
+    } else {
+        let default_path = default_acl_path()?;
+        if default_path.exists() {
+            let yaml = std::fs::read_to_string(&default_path)
+                .with_context(|| format!("failed to read ACL file {}", default_path.display()))?;
+            info!(path = %default_path.display(), "ACL loaded from default path");
             Acl::new_from_yaml(&yaml).context("invalid ACL YAML")
-        }
-        None => {
-            let default_path = default_acl_path()?;
-            if default_path.exists() {
-                let yaml = std::fs::read_to_string(&default_path)
-                    .with_context(|| format!("failed to read ACL file {}", default_path.display()))?;
-                info!(path = %default_path.display(), "ACL loaded from default path");
-                Acl::new_from_yaml(&yaml).context("invalid ACL YAML")
-            } else {
-                info!(path = %default_path.display(), "no ACL file found, starting with open access");
-                Acl::new_from_yaml(OPEN_ACL_YAML).context("invalid open ACL")
-            }
+        } else {
+            info!(path = %default_path.display(), "no ACL file found, starting with open access");
+            Acl::new_from_yaml(OPEN_ACL_YAML).context("invalid open ACL")
         }
     }
 }
