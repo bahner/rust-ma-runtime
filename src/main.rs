@@ -17,8 +17,8 @@ use ma_core::config::{Config, MaArgs, SecretBundle};
 use ma_core::ipfs::IpfsDidPublisher;
 use ma_core::ipfs_add;
 use ma_core::{
-    validate_ipfs_request, Acl, Did, Inbox, IpfsGatewayResolver, ReplayGuard,
-    SigningKey, ValidatedIpfsRequest, IPFS_PROTOCOL_ID,
+    validate_ipfs_request, Acl, Did, Inbox, IpfsGatewayResolver, MESSAGE_TYPE_RPC,
+    MESSAGE_TYPE_RPC_REPLY, ReplayGuard, SigningKey, ValidatedIpfsRequest, IPFS_PROTOCOL_ID,
 };
 use serde_json::json;
 use tokio::sync::RwLock;
@@ -28,8 +28,6 @@ use zeroize::{Zeroize, Zeroizing};
 const MA_DEFAULT_SLUG: &str = "ma";
 const OPEN_ACL_YAML: &str = include_str!("../default.acl");
 const RPC_PROTOCOL_ID: &str = "/ma/rpc/0.0.1";
-const CONTENT_TYPE_RPC: &str = "application/x-ma-rpc";
-const CONTENT_TYPE_RPC_REPLY: &str = "application/x-ma-rpc-reply";
 const PING_ATOM: &str = ":ping";
 const PONG_ATOM: &str = ":pong";
 
@@ -205,7 +203,7 @@ async fn main() -> Result<()> {
                         from = %message.from,
                         to = %message.to,
                         id = %message.id,
-                        content_type = %message.content_type,
+                        message_type = %message.message_type,
                         "{}", i18n::t("rpc-message-received")
                     );
                     {
@@ -239,7 +237,7 @@ async fn main() -> Result<()> {
                             from = %message.from,
                             to = %message.to,
                             id = %message.id,
-                            content_type = %message.content_type,
+                            message_type = %message.message_type,
                             content_len = message.content.len(),
                             "{}", i18n::t("received-encrypted-ma-msg")
                         );
@@ -345,10 +343,10 @@ async fn handle_rpc_message(
 ) -> Result<()> {
     acl_check(acl, &message.from)?;
 
-    if message.content_type != CONTENT_TYPE_RPC {
+    if message.message_type != MESSAGE_TYPE_RPC {
         return Err(anyhow!(
             "unsupported RPC content type '{}' on {}",
-            message.content_type,
+            message.message_type,
             RPC_PROTOCOL_ID,
         ));
     }
@@ -378,11 +376,12 @@ async fn handle_rpc_message(
     let mut reply = ma_core::Message::new(
         our_did,
         &ping_did_url,
-        CONTENT_TYPE_RPC_REPLY,
+        MESSAGE_TYPE_RPC_REPLY,
+        "application/cbor",
         pong_bytes,
         signing_key,
     )
-    .context("failed to build pong message")?;
+    .context("failed to build pong message")?;;
     reply.reply_to = Some(message.id.clone());
 
     let resolver = ma_core::IpfsGatewayResolver::new(kubo_rpc_url.to_string());
@@ -454,11 +453,12 @@ async fn handle_ipfs_message(
             let mut reply = ma_core::Message::new(
                 ctx.our_did,
                 &rpc_did_url,
-                CONTENT_TYPE_RPC_REPLY,
+                MESSAGE_TYPE_RPC_REPLY,
+                "application/cbor",
                 reply_bytes,
                 ctx.signing_key,
             )
-            .context("failed to build ipfs-publish reply")?;
+            .context("failed to build ipfs-publish reply")?;;
             reply.reply_to = Some(message.id.clone());
 
             let resolver = IpfsGatewayResolver::new(ctx.kubo_rpc_url.to_string());
@@ -511,7 +511,8 @@ async fn handle_ipfs_store(
     let mut reply = ma_core::Message::new(
         ctx.our_did,
         &rpc_did_url,
-        CONTENT_TYPE_RPC_REPLY,
+        MESSAGE_TYPE_RPC_REPLY,
+        "application/cbor",
         reply_bytes,
         ctx.signing_key,
     )
