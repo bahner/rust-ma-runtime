@@ -60,6 +60,11 @@ zeroize = "1"
 `ma-core 0.9.1` exposes everything this daemon uses for DID handling, so no
 direct `ma-did` dependency is required.
 
+> **Development note:** A `[patch.crates-io] ma-core = { path = "../rust-ma-core" }`
+> is active in `Cargo.toml` while new `ma-core` features (`ValidatedIpfsRequest`,
+> `ValidatedIpfsStore`, `ipfs_add`) are not yet in a published release.
+> Remove the patch when a new version is published.
+
 ## Configuration
 
 The default slug is `ma-ipfs-publisher`. Config, secret bundle, and log file

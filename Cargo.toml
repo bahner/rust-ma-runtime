@@ -8,13 +8,13 @@ rust-version = "1.95"
 anyhow = "1"
 axum = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
 ciborium = "0.2"
-cid = "0.11"
 clap = { version = "4", features = ["derive"] }
-libp2p-identity = { version = "0.2", features = ["ed25519", "peerid"] }
-ma-core = { version = "0.9.1", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
+fluent = "0.16"
+ma-core = { version = "0.10.10", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
 tracing = "0.1"
+unic-langid = "0.9"
 zeroize = "1"
 
 [profile.release]
@@ -22,3 +22,7 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# Development patch — remove when new ma-core version is published
+[patch.crates-io]
+ma-core = { path = "../rust-ma-core" }

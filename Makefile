@@ -3,8 +3,9 @@ CARGO    := cargo
 RELEASE  := target/release/$(BINARY)
 DEBUG    := target/debug/$(BINARY)
 CLIPPY_STRICT := --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery
+SRCS     := Cargo.toml $(shell find src -name '*.rs')
 
-.PHONY: all build release clean distclean lint test $(BINARY)
+.PHONY: all clean distclean lint publish test
 
 all: $(BINARY)
 
@@ -20,12 +21,15 @@ test:
 $(BINARY): $(RELEASE)
 	cp $(RELEASE) $(BINARY)
 
-$(RELEASE):
+$(RELEASE): $(SRCS)
 	$(CARGO) build --release
 
 clean:
 	$(CARGO) clean
 	rm -f $(BINARY)
+
+publish: $(BINARY)
+	scp $(BINARY) ma-ipfs-publisher:bin/
 
 distclean: clean
 	rm -rf Cargo.lock

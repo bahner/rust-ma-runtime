@@ -1,3 +1,5 @@
+mod i18n;
+
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,15 +11,13 @@ use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use axum::Router;
 use ciborium::Value as CborValue;
-use cid::Cid;
 use clap::Parser;
-use libp2p_identity::ed25519::SecretKey as LibP2pEd25519Secret;
-use libp2p_identity::{Keypair, PeerId};
 use ma_core::config::{Config, MaArgs, SecretBundle};
-use ma_core::ipfs::{validate_ipfs_publish_request, IpfsDidPublisher};
+use ma_core::ipfs::IpfsDidPublisher;
+use ma_core::ipfs_add;
 use ma_core::{
-    Acl, Did, Document, EncryptionKey, ReplayGuard, SigningKey, VerificationMethod,
-    IPFS_PROTOCOL,
+    validate_ipfs_request, Acl, Did, IpfsGatewayResolver, ReplayGuard,
+    SigningKey, ValidatedIpfsRequest, IPFS_PROTOCOL_ID,
 };
 use serde_json::json;
 use tokio::sync::RwLock;
@@ -46,6 +46,11 @@ struct Cli {
     /// Poll interval in milliseconds.
     #[arg(long, default_value_t = 100)]
     poll_ms: u64,
+
+    /// Language for log messages.
+    /// Accepted: nb (default), en.
+    #[arg(long, default_value = "nb", env = "MA_LANG")]
+    lang: String,
 
     /// Status web server bind address.
     #[arg(long, default_value = "127.0.0.1:5003")]
@@ -77,39 +82,47 @@ async fn main() -> Result<()> {
 
     let config = Config::from_args(&cli.ma, MA_DEFAULT_SLUG)?;
     config.init_logging()?;
+    i18n::init(&cli.lang);
 
     let acl = load_acl(cli.acl_file.as_deref())?;
-    info!("ACL loaded");
 
     let secrets = load_secret_bundle(&config)?;
-
-    // ── Derive our IPNS identity from ipns_secret_key via libp2p-identity ──
-    let ipns_key_bytes = secrets.ipns_secret_key;
-    let ipns = derive_ipns_from_secret(ipns_key_bytes)?;
-    let derived_did = format!("did:ma:{ipns}");
-    info!(did = %derived_did, "daemon identity derived from bundle key");
-
-    // ── Build and sign our own DID document ──
-    let our_document =
-        build_and_publish_own_document(&derived_did, &secrets, &config.kubo_rpc_url, ipns_key_bytes)
-            .await
-            .context("failed to publish own DID document")?;
-    let our_did = our_document.id.clone();
-    info!(did = %our_document.id, "own DID document published");
 
     // ── iroh endpoint (uses iroh_secret_key, separate from IPNS) ──
     let mut endpoint = ma_core::new_ma_endpoint(secrets.iroh_secret_key).await?;
 
-    let ipfs_protocol =
-        std::str::from_utf8(IPFS_PROTOCOL).context("invalid IPFS protocol bytes")?;
-    let ipfs_messages = endpoint.service(ipfs_protocol);
+    let ipfs_messages = endpoint.service(IPFS_PROTOCOL_ID);
     let rpc_messages = endpoint.service(RPC_PROTOCOL_ID);
 
-    info!(
-        endpoint_id = %endpoint.id(),
-        did = %our_did,
-        "ma-ipfs-publisher online"
-    );
+    // ── Build and sign own DID document, publish in background ──
+    let ma = endpoint.ma_extension().kind("runtime");
+    let our_document = secrets
+        .build_document(ma)
+        .context("failed to build own DID document")?;
+    let our_did = our_document.id.clone();
+
+    let doc_cbor = our_document
+        .encode()
+        .context("failed to encode own DID document")?;
+    let ipns_key = secrets.ipns_secret_key.to_vec();
+    let kubo_url_clone = config.kubo_rpc_url.clone();
+    let did_for_log = our_did.clone();
+    tokio::spawn(async move {
+        let result = tokio::time::timeout(
+            Duration::from_mins(2),
+            do_publish_own_document(kubo_url_clone, doc_cbor, ipns_key),
+        )
+        .await;
+        match result {
+            Ok(Ok(())) => info!(did = %did_for_log, "{}", i18n::t("own-did-published")),
+            Ok(Err(err)) => {
+                error!(did = %did_for_log, error = %format!("{err:#}"), "{}", i18n::t("own-did-publish-failed"));
+            }
+            Err(_) => {
+                error!(did = %did_for_log, "{}", i18n::t("own-did-publish-timeout"));
+            }
+        }
+    });
 
     let publisher = IpfsDidPublisher::new(&config.kubo_rpc_url)
         .with_context(|| format!("invalid kubo_rpc_url: {}", config.kubo_rpc_url))?;
@@ -117,10 +130,19 @@ async fn main() -> Result<()> {
         .wait_until_ready(10)
         .await
         .context("kubo RPC is not reachable")?;
-    info!(kubo_rpc_url = %config.kubo_rpc_url, "kubo RPC ready");
 
-    // ── Reconstruct signing key for sending pong replies ──
-    let signing_key = build_signing_key(&ipns, secrets.did_signing_key)?;
+    info!(
+        did = %our_did,
+        endpoint_id = %endpoint.id(),
+        kubo_rpc_url = %config.kubo_rpc_url,
+        status_bind = %cli.status_bind,
+        "{}", i18n::t("started")
+    );
+
+    // ── Signing key for pong replies ──
+    let signing_key = secrets
+        .signing_key()
+        .context("failed to derive signing key")?;
 
     // ── Shared status state ──
     let stats = Arc::new(RwLock::new(Stats {
@@ -147,15 +169,14 @@ async fn main() -> Result<()> {
                     debug!(
                         node = %message.from,
                         protocol = RPC_PROTOCOL_ID,
-                        "node connected to protocol"
+                        "{}", i18n::t("node-connected")
                     );
-                    debug!(
+                    info!(
                         from = %message.from,
                         to = %message.to,
                         id = %message.id,
                         content_type = %message.content_type,
-                        content = %preview_ma_message_content(&message.content),
-                        "received encrypted ma-msg on /ma/rpc/0.0.1"
+                        "{}", i18n::t("rpc-message-received")
                     );
                     {
                         let mut s = stats.write().await;
@@ -170,7 +191,7 @@ async fn main() -> Result<()> {
                         &config.kubo_rpc_url,
                         stats.clone(),
                     ).await {
-                        warn!(error = %err, from = %message.from, "rpc message rejected");
+                        warn!(error = %err, from = %message.from, "{}", i18n::t("rpc-message-rejected"));
                     }
                     message.content.zeroize();
                     message.signature.zeroize();
@@ -180,8 +201,8 @@ async fn main() -> Result<()> {
                 while let Some(mut message) = ipfs_messages.pop(now) {
                     debug!(
                         node = %message.from,
-                        protocol = ipfs_protocol,
-                        "node connected to protocol"
+                        protocol = IPFS_PROTOCOL_ID,
+                        "{}", i18n::t("node-connected")
                     );
                     debug!(
                         from = %message.from,
@@ -189,7 +210,7 @@ async fn main() -> Result<()> {
                         id = %message.id,
                         content_type = %message.content_type,
                         content = %preview_ma_message_content(&message.content),
-                        "received encrypted ma-msg on /ma/ipfs/0.0.1"
+                        "{}", i18n::t("received-encrypted-ma-msg")
                     );
                     {
                         let mut s = stats.write().await;
@@ -198,10 +219,16 @@ async fn main() -> Result<()> {
                     if let Err(err) = handle_ipfs_message(
                         &message,
                         &acl,
-                        &publisher,
+                        &IpfsHandlerCtx {
+                            our_did: &our_did,
+                            signing_key: &signing_key,
+                            endpoint: &*endpoint,
+                            kubo_rpc_url: &config.kubo_rpc_url,
+                            publisher: &publisher,
+                        },
                         &mut replay_guard,
                     ).await {
-                        warn!(error = %err, from = %message.from, "ipfs message rejected");
+                        warn!(error = %err, from = %message.from, "{}", i18n::t("ipfs-message-rejected"));
                     }
                     message.content.zeroize();
                     message.signature.zeroize();
@@ -209,100 +236,34 @@ async fn main() -> Result<()> {
             }
             signal = tokio::signal::ctrl_c() => {
                 if let Err(err) = signal {
-                    error!(error = %err, "ctrl-c handler failed");
+                    error!(error = %err, "{}", i18n::t("ctrlc-handler-failed"));
                 }
-                info!("shutdown requested");
+                info!("{}", i18n::t("shutdown-requested"));
                 break;
             }
         }
     }
 
+    info!("{}", i18n::t("closing-endpoint"));
+    endpoint.close().await;
+    info!("{}", i18n::t("shutdown-complete"));
     Ok(())
 }
 
-// ── Build and publish own DID document ──────────────────────────────────────
-
-async fn build_and_publish_own_document(
-    our_did: &str,
-    secrets: &SecretBundle,
-    kubo_rpc_url: &str,
-    mut ipns_key_bytes: [u8; 32],
-) -> Result<Document> {
-    fn build_document_for_did(our_did: &str, secrets: &SecretBundle) -> Result<(Document, Vec<u8>)> {
-        let did = Did::try_from(our_did).context("invalid own DID")?;
-
-        let sign_did = Did::new_url(&did.ipns, None::<&str>).context("sign did")?;
-        let enc_did = Did::new_url(&did.ipns, None::<&str>).context("enc did")?;
-
-        let signing_key = SigningKey::from_private_key_bytes(sign_did, secrets.did_signing_key)
-            .context("invalid did_signing_key")?;
-        let encryption_key =
-            EncryptionKey::from_private_key_bytes(enc_did, secrets.did_encryption_key)
-                .context("invalid did_encryption_key")?;
-
-        let mut document = Document::new(&did, &did);
-
-        let assertion_vm = VerificationMethod::new(
-            did.base_id(),
-            did.base_id(),
-            signing_key.key_type.clone(),
-            signing_key.did.fragment.as_deref().unwrap_or("signing"),
-            signing_key.public_key_multibase.clone(),
-        )
-        .context("assertion verification method")?;
-
-        let key_agreement_vm = VerificationMethod::new(
-            did.base_id(),
-            did.base_id(),
-            encryption_key.key_type.clone(),
-            encryption_key
-                .did
-                .fragment
-                .as_deref()
-                .unwrap_or("encryption"),
-            encryption_key.public_key_multibase.clone(),
-        )
-        .context("key agreement verification method")?;
-
-        let assertion_vm_id = assertion_vm.id.clone();
-        let key_agreement_vm_id = key_agreement_vm.id.clone();
-        document
-            .add_verification_method(assertion_vm.clone())
-            .context("add assertion vm")?;
-        document
-            .add_verification_method(key_agreement_vm)
-            .context("add key agreement vm")?;
-        document.assertion_method = vec![assertion_vm_id];
-        document.key_agreement = vec![key_agreement_vm_id];
-        document
-            .sign(&signing_key, &assertion_vm)
-            .context("sign document")?;
-
-        let doc_cbor = document.to_cbor().context("marshal own document as dag-cbor")?;
-        Ok((document, doc_cbor))
-    }
-
-    let (document, doc_cbor) = build_document_for_did(our_did, secrets)?;
-
-    // Kubo key/import expects a libp2p protobuf-encoded private key, not raw 32-byte seed.
-    let lp2p_secret = LibP2pEd25519Secret::try_from_bytes(&mut ipns_key_bytes)
-        .context("invalid ipns_secret_key bytes for Kubo import")?;
-    let keypair = Keypair::from(libp2p_identity::ed25519::Keypair::from(lp2p_secret));
-    let mut ipns_private_key_protobuf = keypair
-        .to_protobuf_encoding()
-        .context("failed to protobuf-encode ipns private key")?;
-
-    let publisher = IpfsDidPublisher::new(kubo_rpc_url)?;
+async fn do_publish_own_document(
+    kubo_url: String,
+    doc_cbor: Vec<u8>,
+    mut ipns_secret_key: Vec<u8>,
+) -> Result<()> {
+    let publisher = IpfsDidPublisher::new(&kubo_url)?;
     publisher.wait_until_ready(10).await?;
-    publisher
-        .publish_document(&doc_cbor, &ipns_private_key_protobuf)
+    let result = publisher
+        .publish_document(&doc_cbor, &ipns_secret_key)
         .await
-        .context("kubo publish failed for own DID document")?;
-
-    ipns_private_key_protobuf.zeroize();
-    ipns_key_bytes.zeroize();
-
-    Ok(document)
+        .context("kubo publish failed for own DID document")
+        .map(|_| ());
+    ipns_secret_key.zeroize();
+    result
 }
 
 fn load_secret_bundle(config: &Config) -> Result<SecretBundle> {
@@ -320,22 +281,6 @@ fn load_secret_bundle(config: &Config) -> Result<SecretBundle> {
     })
 }
 
-fn derive_ipns_from_secret(ipns_key_bytes: [u8; 32]) -> Result<String> {
-    let mut ipns_key_for_identity = ipns_key_bytes;
-    let lp2p_secret = LibP2pEd25519Secret::try_from_bytes(&mut ipns_key_for_identity)
-        .context("invalid ipns_secret_key bytes")?;
-    let keypair = Keypair::from(libp2p_identity::ed25519::Keypair::from(lp2p_secret));
-    let peer_id: PeerId = keypair.public().to_peer_id();
-
-    peer_id_to_ipns_base36(peer_id).context("failed to derive canonical IPNS id")
-}
-
-fn build_signing_key(ipns: &str, did_signing_key: [u8; 32]) -> Result<SigningKey> {
-    let sign_did = Did::new_url(ipns, None::<&str>).context("invalid ipns for signing Did")?;
-    SigningKey::from_private_key_bytes(sign_did, did_signing_key)
-        .context("invalid did_signing_key")
-}
-
 fn spawn_status_server(stats: SharedStats, status_bind: SocketAddr) {
     let status_router = Router::new()
         .route("/", get(handle_index))
@@ -346,7 +291,7 @@ fn spawn_status_server(stats: SharedStats, status_bind: SocketAddr) {
         let listener = tokio::net::TcpListener::bind(status_bind)
             .await
             .expect("status server bind failed");
-        info!(bind = %status_bind, "status server listening");
+        info!(bind = %status_bind, "{}", i18n::t("status-listening"));
         axum::serve(listener, status_router)
             .await
             .expect("status server failed");
@@ -378,6 +323,7 @@ async fn handle_rpc_message(
         .context("invalid CBOR in RPC message")?;
 
     if !matches!(&term, CborValue::Text(s) if s == PING_ATOM) {
+        debug!(from = %message.from, atom = ?term, "{}", i18n::t("unknown-rpc-atom"));
         return Ok(());
     }
 
@@ -385,7 +331,7 @@ async fn handle_rpc_message(
         let mut s = stats.write().await;
         s.pings_received += 1;
     }
-    info!(from = %message.from, "received :ping");
+    info!(from = %message.from, "{}", i18n::t("ping-received"));
 
     let mut pong_bytes = Vec::new();
     ciborium::ser::into_writer(&CborValue::Text(PONG_ATOM.to_string()), &mut pong_bytes)
@@ -412,10 +358,10 @@ async fn handle_rpc_message(
     {
         Ok(mut outbox) => {
             outbox.send(&reply).await.context("pong send failed")?;
-            info!(to = %ping_did_url, "sent :pong");
+            info!(to = %ping_did_url, "{}", i18n::t("pong-sent"));
         }
         Err(err) => {
-            warn!(error = %err, to = %ping_did_url, "could not resolve sender to deliver :pong");
+            warn!(error = %err, to = %ping_did_url, "{}", i18n::t("pong-resolve-failed"));
         }
     }
 
@@ -424,10 +370,18 @@ async fn handle_rpc_message(
 
 // ── IPFS handler ─────────────────────────────────────────────────────────────
 
+struct IpfsHandlerCtx<'a> {
+    our_did: &'a str,
+    signing_key: &'a SigningKey,
+    endpoint: &'a dyn ma_core::MaEndpoint,
+    kubo_rpc_url: &'a str,
+    publisher: &'a IpfsDidPublisher,
+}
+
 async fn handle_ipfs_message(
     message: &ma_core::Message,
     acl: &Acl,
-    publisher: &IpfsDidPublisher,
+    ctx: &IpfsHandlerCtx<'_>,
     replay_guard: &mut ReplayGuard,
 ) -> Result<()> {
     let headers = message.headers();
@@ -437,29 +391,116 @@ async fn handle_ipfs_message(
 
     acl_check(acl, &message.from)?;
 
-    let mut message_cbor = message
-        .to_cbor()
-        .context("failed to encode message to CBOR")?;
-    let mut validated =
-        validate_ipfs_publish_request(&message_cbor).context("invalid /ma/ipfs request")?;
+    let validated = validate_ipfs_request(message).context("invalid /ma/ipfs/0.0.1 request")?;
 
-    publisher
-        .publish_document(
-            &validated.request.did_document,
-            &validated.request.ipns_private_key,
-        )
+    match validated {
+        ValidatedIpfsRequest::DidDocumentPublish(v) => {
+            info!(from = %message.from, id = %message.id, "{}", i18n::t("did-publish-request-received"));
+            let mut key = v.ipns_secret_key.clone();
+            let cid = ctx.publisher
+                .publish_document(&v.document_bytes, &key)
+                .await
+                .context("kubo DID publish failed")?
+                .ok_or_else(|| anyhow::anyhow!("publisher returned no CID"))?;
+            key.fill(0);
+            info!(did = %v.document_did.id(), cid = %cid, "{}", i18n::t("document-published"));
+
+            // Send CID reply back to sender's RPC inbox.
+            let reply_atom: Vec<ciborium::Value> = vec![
+                ciborium::Value::Text(":ok".to_string()),
+                ciborium::Value::Text(cid.clone()),
+            ];
+            let mut reply_bytes = Vec::new();
+            ciborium::ser::into_writer(&ciborium::Value::Array(reply_atom), &mut reply_bytes)
+                .context("failed to encode ipfs-publish reply")?;
+
+            let sender = Did::try_from(message.from.as_str())
+                .with_context(|| format!("invalid sender DID: {}", message.from))?;
+            let rpc_did_url = format!("did:ma:{}#rpc", sender.ipns);
+
+            let mut reply = ma_core::Message::new(
+                ctx.our_did,
+                &rpc_did_url,
+                CONTENT_TYPE_RPC_REPLY,
+                reply_bytes,
+                ctx.signing_key,
+            )
+            .context("failed to build ipfs-publish reply")?;
+            reply.reply_to = Some(message.id.clone());
+
+            let resolver = IpfsGatewayResolver::new(ctx.kubo_rpc_url.to_string());
+            match ctx.endpoint
+                .outbox(&resolver, &sender.base_id(), RPC_PROTOCOL_ID)
+                .await
+            {
+                Ok(mut outbox) => {
+                    outbox.send(&reply).await.context("ipfs-publish reply send failed")?;
+                    info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("did-publish-cid-reply-sent"));
+                }
+                Err(err) => {
+                    warn!(error = %err, to = %rpc_did_url, "{}", i18n::t("did-publish-resolve-failed"));
+                }
+            }
+
+            Ok(())
+        }
+        ValidatedIpfsRequest::Store(v) => {
+            handle_ipfs_store(message, &v, ctx).await
+        }
+    }
+}
+
+async fn handle_ipfs_store(
+    orig_message: &ma_core::Message,
+    v: &ma_core::ValidatedIpfsStore,
+    ctx: &IpfsHandlerCtx<'_>,
+) -> Result<()> {
+    info!(from = %orig_message.from, id = %orig_message.id, "{}", i18n::t("ipfs-store-request-received"));
+
+    let cid = ipfs_add(ctx.kubo_rpc_url, v.content.clone())
         .await
-        .context("kubo publish failed")?;
+        .context("ipfs add failed")?;
 
-    info!(
-        from = %message.from,
-        did = %validated.document_did.id(),
-        "published DID document via /ma/ipfs/0.0.1"
-    );
+    info!(cid = %cid, from = %orig_message.from, "{}", i18n::t("ipfs-stored"));
 
-    validated.request.ipns_private_key.zeroize();
-    validated.request.did_document.zeroize();
-    message_cbor.zeroize();
+    let reply_atom: Vec<ciborium::Value> = vec![
+        ciborium::Value::Text(":ok".to_string()),
+        ciborium::Value::Text(cid.clone()),
+    ];
+    let mut reply_bytes = Vec::new();
+    ciborium::ser::into_writer(&ciborium::Value::Array(reply_atom), &mut reply_bytes)
+        .context("failed to encode ipfs-store reply")?;
+
+    let sender = Did::try_from(orig_message.from.as_str())
+        .with_context(|| format!("invalid sender DID: {}", orig_message.from))?;
+    let rpc_did_url = format!("did:ma:{}#rpc", sender.ipns);
+
+    let mut reply = ma_core::Message::new(
+        ctx.our_did,
+        &rpc_did_url,
+        CONTENT_TYPE_RPC_REPLY,
+        reply_bytes,
+        ctx.signing_key,
+    )
+    .context("failed to build ipfs-store reply")?;
+    reply.reply_to = Some(orig_message.id.clone());
+
+    let resolver = IpfsGatewayResolver::new(ctx.kubo_rpc_url.to_string());
+    match ctx.endpoint
+        .outbox(&resolver, &sender.base_id(), RPC_PROTOCOL_ID)
+        .await
+    {
+        Ok(mut outbox) => {
+            outbox
+                .send(&reply)
+                .await
+                .context("ipfs-store reply send failed")?;
+            info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("ipfs-store-cid-reply-sent"));
+        }
+        Err(err) => {
+            warn!(error = %err, to = %rpc_did_url, "{}", i18n::t("ipfs-store-resolve-failed"));
+        }
+    }
 
     Ok(())
 }
@@ -488,7 +529,8 @@ async fn handle_index(State(stats): State<SharedStats>) -> impl IntoResponse {
             now_unix_secs().saturating_sub(s.started_at),
         )
     };
-    let html = format!(r#"<!DOCTYPE html>
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><title>ma-ipfs-publisher</title>
 <style>body{{font-family:monospace;max-width:700px;margin:2em auto;background:#111;color:#eee}}
@@ -507,7 +549,8 @@ th{{background:#222}}a{{color:#7cf}}</style></head>
 <tr><td>Pings received</td><td>{pings_received}</td></tr>
 </table>
 <p><a href="/status.json">status.json</a></p>
-</body></html>"#);
+</body></html>"#
+    );
     Html(html)
 }
 
@@ -554,7 +597,7 @@ fn load_acl(path: Option<&std::path::Path>) -> Result<Acl> {
 fn now_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-    .map_or(0, |d| d.as_secs())
+        .map_or(0, |d| d.as_secs())
 }
 
 fn preview_ma_message_content(content: &[u8]) -> String {
@@ -567,13 +610,4 @@ fn preview_ma_message_content(content: &[u8]) -> String {
 
     // Keep logs one-line and readable even for binary-ish payloads.
     preview.replace('\n', "\\n").replace('\r', "\\r")
-}
-
-fn peer_id_to_ipns_base36(peer_id: PeerId) -> Result<String> {
-    // IPNS peer names are CIDv1 with codec=libp2p-key (0x72), encoded base36 (k...).
-    let mh = cid::multihash::Multihash::<64>::from_bytes(peer_id.as_ref().to_bytes().as_slice())
-        .context("invalid peer multihash")?;
-    let cid = Cid::new_v1(0x72, mh);
-    cid.to_string_of_base(cid::multibase::Base::Base36Lower)
-        .map_err(|e| anyhow!("failed to encode IPNS cid in base36: {e}"))
 }
