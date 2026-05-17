@@ -2,9 +2,12 @@ use anyhow::{anyhow, Context, Result};
 use ma_core::ipfs::IpfsDidPublisher;
 use ma_core::ipfs_add;
 use ma_core::{
-    validate_ipfs_request, Acl, Did, Inbox, IpfsGatewayResolver, MESSAGE_TYPE_RPC_REPLY,
-    ReplayGuard, SigningKey, ValidatedIpfsRequest,
+    ipns_from_secret, validate_ipfs_request, Acl, Did, Document, Inbox, IpfsGatewayResolver,
+    MESSAGE_TYPE_RPC_REPLY, ReplayGuard, SigningKey, ValidatedIpfsRequest,
 };
+use ma_core::ipfs::MA_IPNS_ALIAS_HASH_PREFIX;
+use reqwest::multipart;
+use serde::Deserialize;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 
@@ -31,6 +34,7 @@ pub async fn do_publish_own_document(
     kubo_url: String,
     doc_cbor: Vec<u8>,
     ipns_secret_key: Vec<u8>,
+    publish_lifetime_hours: u64,
 ) -> Result<()> {
     // Wrap in Zeroizing so the key bytes are cleared on return *and* on
     // async cancellation (e.g. if the 2-minute timeout fires and drops
@@ -38,11 +42,337 @@ pub async fn do_publish_own_document(
     let ipns_secret_key = Zeroizing::new(ipns_secret_key);
     let publisher = IpfsDidPublisher::new(&kubo_url)?;
     publisher.wait_until_ready(10).await?;
-    publisher
-        .publish_document(&doc_cbor, &ipns_secret_key)
-        .await
-        .context("kubo publish failed for own DID document")
-        .map(|_| ())
+
+    // Decode once so we can derive deterministic Kubo key alias from DID IPNS.
+    let document = Document::decode(&doc_cbor)
+        .map_err(|e| anyhow!("invalid own DID document dag-cbor: {e}"))?;
+    let document_did = Did::try_from(document.id.as_str())
+        .map_err(|e| anyhow!("invalid own DID '{}': {e}", document.id))?;
+
+    let hash = blake3::hash(document_did.ipns.as_bytes());
+    let key_name = format!("{}{}", MA_IPNS_ALIAS_HASH_PREFIX, &hash.to_hex()[..16]);
+
+    ensure_kubo_ipns_key(&kubo_url, &key_name, &document_did.ipns, &ipns_secret_key).await?;
+    let cid = dag_put_cbor(&kubo_url, &doc_cbor).await?;
+    name_publish(&kubo_url, &key_name, &cid, publish_lifetime_hours).await?;
+    Ok(())
+}
+
+pub async fn resolve_runtime_root_cid_by_ipns_id(
+    kubo_url: &str,
+    ipns_id: &str,
+) -> Result<Option<String>> {
+    let key_id = list_keys(kubo_url)
+        .await?
+        .into_iter()
+        .find_map(|(_, id)| if id == ipns_id { Some(id) } else { None });
+
+    let Some(key_id) = key_id else {
+        return Ok(None);
+    };
+
+    resolve_ipns_path(kubo_url, &key_id).await
+}
+
+/// Publish a runtime IPLD root CID to the runtime's dedicated IPNS.
+///
+/// Uses the extra `"runtime_ipns"` key from the `SecretBundle` — distinct from
+/// `ipns_secret_key` which is reserved for the DID document.  Imports the key
+/// into Kubo on first use (idempotent).
+pub async fn publish_runtime_root_cid(
+    kubo_url: &str,
+    runtime_ipns_key: &[u8; 32],
+    root_cid: &str,
+    publish_lifetime_hours: u64,
+) -> Result<String> {
+    let runtime_ipns_id = ipns_from_secret(*runtime_ipns_key)
+        .context("failed to derive runtime IPNS id")?;
+    let hash = blake3::hash(runtime_ipns_id.as_bytes());
+    let key_name = format!("{}{}", MA_IPNS_ALIAS_HASH_PREFIX, &hash.to_hex()[..16]);
+    ensure_kubo_ipns_key(kubo_url, &key_name, &runtime_ipns_id, runtime_ipns_key).await?;
+    name_publish(kubo_url, &key_name, root_cid, publish_lifetime_hours).await
+}
+
+#[derive(Debug, Deserialize)]
+struct DagPutCid {
+    #[serde(rename = "/")]
+    slash: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DagPutResponse {
+    #[serde(default, rename = "Cid")]
+    cid_upper: Option<DagPutCid>,
+    #[serde(default)]
+    cid: Option<DagPutCid>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NamePublishResponse {
+    #[serde(default, rename = "Value")]
+    value_upper: String,
+    #[serde(default, rename = "value")]
+    value_lower: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct NameResolveResponse {
+    #[serde(default, rename = "Path")]
+    path_upper: String,
+    #[serde(default, rename = "path")]
+    path_lower: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct KeyListEntry {
+    #[serde(default, rename = "Name")]
+    name: String,
+    #[serde(default, rename = "name")]
+    name_lower: String,
+    #[serde(default, rename = "Id")]
+    id: String,
+    #[serde(default, rename = "id")]
+    id_lower: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct KeyListResponse {
+    #[serde(default, rename = "Keys")]
+    keys: Vec<KeyListEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KeyImportResponse {
+    #[serde(default, rename = "Id")]
+    id_upper: String,
+    #[serde(default, rename = "id")]
+    id_lower: String,
+}
+
+
+async fn dag_put_cbor(kubo_url: &str, data: &[u8]) -> Result<String> {
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/dag/put");
+
+    let part = multipart::Part::bytes(data.to_vec())
+        .file_name("document.cbor")
+        .mime_str("application/octet-stream")?;
+    let form = multipart::Form::new().part("file", part);
+
+    let body = reqwest::Client::new()
+        .post(url)
+        .query(&[
+            ("store-codec", "dag-cbor"),
+            ("input-codec", "dag-cbor"),
+            ("pin", "true"),
+        ])
+        .multipart(form)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    let parsed: DagPutResponse = serde_json::from_str(&body)
+        .map_err(|e| anyhow!("failed parsing dag/put response: {e} body={body}"))?;
+    parsed
+        .cid_upper
+        .or(parsed.cid)
+        .map(|c| c.slash)
+        .ok_or_else(|| anyhow!("missing CID in dag/put response: {body}"))
+}
+
+async fn name_publish(
+    kubo_url: &str,
+    key_name: &str,
+    cid: &str,
+    publish_lifetime_hours: u64,
+) -> Result<String> {
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/name/publish");
+    let arg = format!("/ipfs/{}", cid.trim_start_matches('/').trim_start_matches("ipfs/"));
+
+    let lifetime = format!("{}h", publish_lifetime_hours);
+    let body = reqwest::Client::new()
+        .post(url)
+        .query(&[
+            ("arg", arg.as_str()),
+            ("key", key_name),
+            ("allow-offline", "true"),
+            ("lifetime", lifetime.as_str()),
+            ("resolve", "false"),
+            ("quieter", "true"),
+        ])
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    let parsed: NamePublishResponse = serde_json::from_str(&body)
+        .map_err(|e| anyhow!("failed parsing name/publish response: {e} body={body}"))?;
+    let value = if !parsed.value_upper.is_empty() {
+        parsed.value_upper
+    } else {
+        parsed.value_lower
+    };
+    if value.is_empty() {
+        return Err(anyhow!("missing value in name/publish response: {body}"));
+    }
+    Ok(value)
+}
+
+async fn resolve_ipns_path(kubo_url: &str, key_id: &str) -> Result<Option<String>> {
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/name/resolve");
+    let arg = format!("/ipns/{key_id}");
+
+    let body = reqwest::Client::new()
+        .post(url)
+        .query(&[("arg", arg.as_str()), ("recursive", "true")])
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    let parsed: NameResolveResponse = serde_json::from_str(&body)
+        .map_err(|e| anyhow!("failed parsing name/resolve response: {e} body={body}"))?;
+    let path = if !parsed.path_upper.is_empty() {
+        parsed.path_upper
+    } else {
+        parsed.path_lower
+    };
+    if path.is_empty() {
+        return Ok(None);
+    }
+
+    let cid = path
+        .trim()
+        .strip_prefix("/ipfs/")
+        .map_or_else(|| path.trim().to_string(), ToString::to_string);
+    if cid.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(cid))
+    }
+}
+
+async fn ensure_kubo_ipns_key(
+    kubo_url: &str,
+    key_name: &str,
+    expected_ipns_id: &str,
+    ipns_secret_key: &[u8],
+) -> Result<()> {
+    let existing = list_keys(kubo_url)
+        .await?
+        .into_iter()
+        .find(|(name, _)| name == key_name);
+
+    if let Some((_, id)) = existing {
+        if id.trim() != expected_ipns_id {
+            return Err(anyhow!(
+                "existing key '{}' has IPNS id '{}' but expected '{}'",
+                key_name,
+                id,
+                expected_ipns_id
+            ));
+        }
+        return Ok(());
+    }
+
+    let raw_key: [u8; 32] = ipns_secret_key
+        .try_into()
+        .map_err(|_| anyhow!("ipns_secret_key must be 32 bytes"))?;
+    let keypair = libp2p_identity::Keypair::ed25519_from_bytes(raw_key)
+        .map_err(|e| anyhow!("invalid ipns key: {e}"))?;
+    let protobuf_key = keypair
+        .to_protobuf_encoding()
+        .map_err(|e| anyhow!("failed to encode ipns key: {e}"))?;
+
+    let imported_id = import_key(kubo_url, key_name, protobuf_key).await?;
+    if imported_id.trim() != expected_ipns_id {
+        return Err(anyhow!(
+            "imported key IPNS id '{}' does not match expected '{}'",
+            imported_id,
+            expected_ipns_id
+        ));
+    }
+    Ok(())
+}
+
+async fn list_keys(kubo_url: &str) -> Result<Vec<(String, String)>> {
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/key/list");
+
+    let body = reqwest::Client::new()
+        .post(url)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    let parsed: KeyListResponse = serde_json::from_str(&body)
+        .map_err(|e| anyhow!("failed parsing key/list response: {e} body={body}"))?;
+
+    Ok(parsed
+        .keys
+        .into_iter()
+        .filter_map(|k| {
+            let name = if !k.name.trim().is_empty() {
+                k.name.trim().to_string()
+            } else {
+                k.name_lower.trim().to_string()
+            };
+            let id = if !k.id.trim().is_empty() {
+                k.id.trim().to_string()
+            } else {
+                k.id_lower.trim().to_string()
+            };
+            if name.is_empty() || id.is_empty() {
+                None
+            } else {
+                Some((name, id))
+            }
+        })
+        .collect())
+}
+
+async fn import_key(kubo_url: &str, key_name: &str, key_bytes: Vec<u8>) -> Result<String> {
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/key/import");
+
+    let part = multipart::Part::bytes(key_bytes)
+        .file_name("ipns.key")
+        .mime_str("application/octet-stream")?;
+    let form = multipart::Form::new().part("file", part);
+
+    let body = reqwest::Client::new()
+        .post(url)
+        .query(&[
+            ("arg", key_name),
+            ("ipns-base", "base36"),
+            ("allow-any-key-type", "true"),
+        ])
+        .multipart(form)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    let parsed: KeyImportResponse = serde_json::from_str(&body)
+        .map_err(|e| anyhow!("failed parsing key/import response: {e} body={body}"))?;
+    let id = if !parsed.id_upper.trim().is_empty() {
+        parsed.id_upper
+    } else {
+        parsed.id_lower
+    };
+    if id.trim().is_empty() {
+        return Err(anyhow!("missing id in key/import response: {body}"));
+    }
+    Ok(id.trim().to_string())
 }
 
 pub async fn handle_ipfs_message(

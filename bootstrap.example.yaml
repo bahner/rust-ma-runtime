@@ -1,0 +1,53 @@
+# Bootstrap a ma runtime with entities.
+#
+# Run once before starting the daemon:
+#
+#   ma --gen-root-cid bootstrap.example.yaml
+#
+# The command prints `bootstrap_cid` and `locales_cid`.
+# Put `bootstrap_cid` into `root_cid` in config once. Runtime updates should later use `root_cid`.
+#
+# Prerequisites:
+#   - IPFS Desktop (Kubo) must be running on localhost:5001
+#   - Wasm plugin(s) already pinned to IPFS (get the CID from `ipfs add <plugin.wasm>`)
+
+runtime:
+  # DID of the operator who owns this runtime.
+  # Replace with your own: `ma --status` shows your DID after first start.
+  owner: did:ma:k51qzi5uqu5dgqn5qgzrx81y9x2e5sesg5lqhiz6uvn8lep1k4l10k03ndubmt
+
+  # Protocol kinds that entities in this runtime may implement.
+  # Uses the same nested structure as runtime manifest: <family>/<impl>/<version>.
+  kinds:
+    stateless:
+      python:
+        protocol: /ma/stateless/python/0.0.1
+        wasi: true       # Python/WASI plugins — false for native Rust extism plugins
+        api:
+          - handle_cast  # fn handle_cast() — process incoming message
+        host_functions:
+          - ma_reply     # ma_reply({msg, content}) — reply to sender; runtime handles routing
+          - ma_send      # ma_send(envelope)        — full control: arbitrary to/content_type
+    stateful:
+      python:
+        protocol: /ma/stateful/python/0.0.1
+        wasi: true       # Python/WASI plugins — false for native Rust extism plugins
+        api:
+          - init         # fn init()        — called on load with persisted state bytes
+          - handle_call  # fn handle_call() — process incoming message
+          - save_state   # fn save_state()  — janitor snapshot trigger
+        host_functions:
+          - ma_reply     # ma_reply({msg, content}) — reply to sender
+          - ma_send      # ma_send(envelope)        — full control outbound
+          - ma_set_state # ma_set_state(bytes)      — persist state to IPFS via runtime
+
+  # Named entities.  Each entity is a Wasm plugin stored on IPFS.
+  entities:
+    fortune:
+      kind: /ma/stateless/python/0.0.1
+      # Pin your Wasm file: `ipfs add fortune.wasm`
+      behavior_cid: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
+      acl:
+        - "*"   # allow any caller
+      # owner defaults to runtime.owner above; override per-entity if needed
+      # owner: "did:ma:OTHER_DID"

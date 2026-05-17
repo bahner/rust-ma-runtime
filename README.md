@@ -1,106 +1,135 @@
-# ma-runtime (`ma`)
+# 間 Runtime (`ma`)
 
-A lean 間 runtime daemon that bridges browser-based `did:ma` actors to a local
-[Kubo](https://github.com/ipfs/kubo) IPFS node.  It listens for signed
-publish requests over an encrypted [iroh](https://iroh.computer/) QUIC
-transport and forwards them to Kubo's RPC API, so that clients that cannot
-reach Kubo directly (e.g. browser tabs) can still publish their `did:ma` DID
-documents to IPFS/IPNS.
+A lean Tokio daemon that bridges browser-based `did:ma:` identities to Kubo
+(IPFS) and manages a Wasm entity/plugin system over iroh QUIC transport.
 
-Two protocols are served:
+---
 
-| Protocol | Purpose |
-|---|---|
-| `/ma/ipfs/0.0.1` | Optional (default on): receives signed DID-document publish requests and forwards them to Kubo |
-| `/ma/rpc/0.0.1` | Ping/pong health-check; replies `:pong` to any `:ping` |
+## Overview
 
-A minimal HTTP status page is also served on `127.0.0.1:5003`.
+`ma` exposes two iroh QUIC services on behalf of clients that cannot reach the
+Kubo RPC API directly (e.g. the `ego` browser actor):
+
+| Service | Protocol ID | Purpose |
+|---------|-------------|---------|
+| IPFS publisher | `/ma/ipfs/0.0.1` | Receives signed DID-document publish requests and forwards them to Kubo |
+| RPC | `/ma/rpc/0.0.1` | Entity/plugin dispatch, `#root` entity management, ping/pong |
+
+The daemon derives its own `did:ma:` identity at startup, publishes its own DID
+document to IPFS/IPNS, and then enters the main event loop.
+
+---
+
+## Architecture
+
+```
+ego (browser WASM) ──iroh QUIC──► /ma/rpc/0.0.1
+                                       │
+                                       ├─ #root          → create/list/delete entities
+                                       ├─ #<name>        → Wasm plugin dispatch
+                                       └─ (unfragmented) → ping/pong
+                   ──iroh QUIC──► /ma/ipfs/0.0.1
+                                       │
+                                       └─ publish DID document to Kubo/IPNS
+```
+
+Entity Wasm plugins are loaded from IPFS at startup.  State is persisted back
+to IPFS on graceful shutdown.
 
 ---
 
 ## Prerequisites
 
-| Requirement | Notes |
-|---|---|
-| **Rust ≥ 1.95** | Install via [rustup](https://rustup.rs/) |
-| **Kubo** (go-ipfs) | Must be running and reachable at `http://127.0.0.1:5001` (default) |
-
-Make sure Kubo is started and its RPC API is up before running
-`ma`.  The daemon will refuse to start if Kubo is unreachable (unless
-the IPFS publisher service is disabled).
+- Rust (latest stable)
+- [Kubo](https://docs.ipfs.tech/install/command-line/) running on
+  `http://127.0.0.1:5001` (or set `kubo_rpc_url` in config)
 
 ---
 
 ## Building
 
 ```sh
-# Debug build
-cargo build
-
-# Optimised release build (also copies the binary to the project root)
-make
-# or
 cargo build --release
 ```
+
+Binary: `target/release/ma`.
 
 ---
 
 ## First-time setup
 
-Run the generator once to create a fresh identity and configuration:
+### 1. Generate config and secret bundle
 
 ```sh
 ma --gen-headless-config
 ```
 
-This will:
-
-1. Generate four random 32-byte keys:
-   `iroh_secret_key`, `ipns_secret_key`, `did_signing_key`, `did_encryption_key`.
-2. Encrypt them into a `SecretBundle` with a random passphrase.
-3. Write the config **and** the encrypted bundle to their XDG paths (mode `0600`).
+Writes four random 32-byte keys encrypted with a random passphrase to:
 
 | File | Default path |
-|---|---|
+|------|-------------|
 | Config | `$XDG_CONFIG_HOME/ma/ma.yaml` |
 | Secret bundle | `$XDG_CONFIG_HOME/ma/ma.bin` |
-| ACL | `$XDG_CONFIG_HOME/ma/ma.acl` (optional) |
-| Log | `$XDG_DATA_HOME/ma/ma.log` |
 
-On most Linux systems `$XDG_CONFIG_HOME` defaults to `~/.config` and
-`$XDG_DATA_HOME` to `~/.local/share`.
+The passphrase is printed once — store it or set
+`MA_MA_SECRET_BUNDLE_PASSPHRASE` in the environment.
 
----
+### 2. Bootstrap entities and locales (optional)
 
-## Configuration
+Run once after Kubo is ready to set up the entity system:
 
-The config file is YAML.  All fields can be overridden by environment
-variables.
+```sh
+ma --gen-root-cid bootstrap.example.yaml
+```
 
-### Required
+This:
+1. Publishes kind nodes, entity nodes, and the root `RuntimeManifest` as
+   IPLD DAG-CBOR objects to Kubo.
+2. Publishes all `*.ftl` files from `locales/` to IPFS.
+3. Stores locale links under `RuntimeManifest.locales` (e.g. `nb` → CID).
+4. Prints the generated `root_cid` and exits.
 
-| Key | Environment variable | Description |
-|---|---|---|
-| `secret_bundle_passphrase` | `MA_MA_SECRET_BUNDLE_PASSPHRASE` *or* `MA_SECRET_BUNDLE_PASSPHRASE` | Passphrase that decrypts the secret bundle |
+Recommended runtime model:
+- Runtime head CID is read from IPNS at startup.
+- `--root-cid <cid>` overrides IPNS for the current process.
+- `locales_cid` is kept in config and can be updated independently.
 
-After `--gen-headless-config` the passphrase is already written into the
-config file.  In production you may prefer to supply it only via the
-environment variable (and remove it from the YAML).
+Warning for `--root-cid`:
+- It immediately resets runtime head for this run.
+- If you pass the wrong CID, retrieve the previous CID from runtime logs and restart with that value.
 
-### Optional
+On subsequent starts, the daemon restores runtime head from IPNS automatically.
+**No locale files or entity code are compiled into the binary at runtime.**
 
-| Key | Default | Description |
-|---|---|---|
-| `kubo_rpc_url` | `http://127.0.0.1:5001` | URL of the Kubo RPC API |
-| `ipfs_publisher` | `true` | Enable the `/ma/ipfs/0.0.1` IPFS publisher service |
+To refresh locales without rebuilding entities:
 
-### Example config snippet
+```sh
+make gen-locales-cid
+```
+
+This republishes all `locales/*.ftl` and prints a new `locales_cid`
+for manual config updates.
+
+It does **not** rewrite the runtime manifest tree or produce a new `root_cid`.
+
+#### `bootstrap.yaml` format
 
 ```yaml
-secret_bundle_passphrase: "change-me"
-kubo_rpc_url: "http://127.0.0.1:5001"
-# Set to false to disable the IPFS publisher service:
-# ipfs_publisher: false
+runtime:
+  owner: "did:ma:<your-ipns>"
+  kinds:
+    entity:
+      greeter:
+        protocol: "/ma/entity/greeter/0.0.1"
+        api: ["greet", "goodbye"]
+        host_functions: ["ma_reply", "ma_send"]
+        wasi: false
+  entities:
+    greeter:
+      kind: "/ma/entity/greeter/0.0.1"
+      behavior_cid: "bafyreiXXXX"    # CID of compiled .wasm blob
+      acl: ["*"]
+      owner: "did:ma:<owner>"        # optional; falls back to runtime owner
 ```
 
 ---
@@ -108,120 +137,237 @@ kubo_rpc_url: "http://127.0.0.1:5001"
 ## Running
 
 ```sh
-# Simplest — reads config from the XDG paths
 ma
-
-# With a custom ACL file
-ma --acl-file /etc/ma/acl.yaml
-
-# With a custom status bind address
-ma --status-bind 0.0.0.0:5003
-
-# Norwegian log messages (default)
-MA_LANG=nb ma
-
-# English log messages
-MA_LANG=en ma
+# or
+ma --acl-file /etc/ma/acl.yaml --status-bind 0.0.0.0:5003
 ```
-
-On startup the daemon will:
-
-1. Load and decrypt the secret bundle.
-2. Derive its `did:ma` identity from `ipns_secret_key`.
-3. Build and publish its own signed DID document to Kubo (background task,
-   up to 2-minute timeout).
-4. Start accepting iroh connections.
-5. Start the HTTP status server.
-
-Shut down cleanly with `Ctrl-C`.
 
 ---
 
 ## CLI flags
 
 | Flag | Default | Description |
-|---|---|---|
-| `--acl-file <PATH>` | *(open — allow everyone)* | ACL YAML file |
-| `--poll-ms <MS>` | `100` | Service poll interval (milliseconds) |
-| `--status-bind <ADDR>` | `127.0.0.1:5003` | Status web server bind address |
-| `--lang <LANG>` | `nb` | Log-message language (`nb` or `en`) |
-| `--gen-headless-config` | — | Generate config + secret bundle, then exit |
+|------|---------|-------------|
+| `--gen-root-cid <YAML>` | — | Publish bootstrap manifest + locales to IPFS, print `root_cid`, then exit |
+| `--root-cid <CID>` | — | WARNING: resets runtime head for this process; recover prior CID from logs if mistaken |
+| `--gen-locales-cid` | `false` | Re-publish locale files only and print a new `locales_cid` |
+| `--locales-cid` | `false` | Alias for `--gen-locales-cid` |
+| `--locales-dir <DIR>` | `locales` | Directory containing `.ftl` locale files |
+| `--acl-file <PATH>` | — | ACL YAML; open (`*`) if omitted |
+| `--poll-ms <MS>` | `100` | Service poll interval |
+| `--lang <LANG>` | `nb` | Log language: `nb` or `en`. Also `MA_LANG` env var. |
+| `--status-bind <ADDR>` | `127.0.0.1:5003` | Status HTTP server address |
+| `--gen-headless-config` | — | Generate config + bundle, then exit |
+
+---
+
+## Startup sequence
+
+1. Parse CLI, load config.
+2. If `--gen-headless-config`: write config + bundle, exit.
+3. If `--gen-root-cid <yaml>`: wait for Kubo, publish IPLD + locales, print `root_cid`, exit.
+4. If `--gen-locales-cid` (or `--locales-cid`): wait for Kubo, publish locale map only, print new `locales_cid`, exit.
+5. Load ACL.
+6. Load `SecretBundle`.
+7. Create iroh QUIC endpoint, register services.
+8. Build own DID document, spawn background publish to IPNS.
+9. Wait for Kubo readiness (10 attempts).
+10. Fetch locale from `RuntimeManifest.locales`; fall back to key names if unavailable.
+11. Load Wasm entity plugins from IPFS manifest.
+12. Start status HTTP server.
+13. Main event loop: drain RPC and IPFS inboxes every `poll_ms`.
+14. On `Ctrl-C`: save entity states to IPFS, update manifest CID in config, close endpoint.
+
+---
+
+## Entity / plugin system
+
+### Concept
+
+All entities are created and managed via RPC to the built-in `#root` entity.
+Entity behaviour lives in Wasm blobs stored on IPFS.
+
+### IPLD schema (DAG-CBOR on Kubo)
+
+```
+RuntimeManifest { owner, kinds: {family→implementation→CID}, entities: {name→CID→EntityNode}, locales: {lang→CID} }
+KindNode        { protocol, api: [String] }
+EntityNode      { name, kind, behavior: {"/":CID}, state: {"/":CID}?, owner, acl: [String], wasi: bool }
+```
+
+### `#root` RPC commands
+
+Send CBOR atoms/arrays to `did:ma:<runtime>#root`:
+
+| Verb | Args | Reply |
+|------|------|-------|
+| `:list-entities` | — | JSON array of names |
+| `:create-entity` | name, kind, behavior_cid [, acl…] | JSON `{cid, entity_cid, status}` |
+| `:delete-entity` | name | JSON `{cid, status}` |
+
+### Plugin ABI
+
+Each Wasm plugin must export:
+
+| Export | Description |
+|--------|-------------|
+| `init(state: Bytes)` | Called at load with persisted state (empty bytes on first load) |
+| `handle_message(PluginInput JSON) → PluginOutput JSON` | Handle an incoming RPC message |
+| `get_state() → Bytes` | Return current state for IPFS persistence |
+
+**`PluginInput`:**
+```json
+{
+  "msg": {
+    "id": "…", "from": "did:ma:…", "to": "did:ma:…#name",
+    "created_at": 1234567890123456789,
+    "expires": 1234567890,
+    "reply_to": null,
+    "content_type": "application/cbor",
+    "content": [/* bytes */]
+  },
+  "ctx": { "self": "did:ma:…#name", "owner": "did:ma:…" }
+}
+```
+
+**`PluginOutput`:**
+```json
+{ "reply": { "content_type": "application/json", "content": [/* bytes */] } }
+```
+`"reply": null` for no reply.
 
 ---
 
 ## ACL
 
-If no `--acl-file` is given the daemon is open to everyone (`*`).
-
-An ACL file must contain an `acl:` sequence:
-
 ```yaml
 acl:
-  - "*"                        # allow everyone …
-  - "!did:ma:<bad-ipns>"       # … except this identity and all its DID-URLs
-  - "did:ma:<trusted-ipns>"    # (explicit allow — useful without *)
+  - "*"               # permit all
+  - "!did:ma:<bad>"   # deny this identity and all its DID-URLs
 ```
 
-Rules:
-
-- **Deny always wins.**  A `!` prefix means deny.  A deny overrides any
-  allow, including `*`.
-- An identity-level deny (`did:ma:<ipns>` with no fragment) automatically
-  blocks every DID-URL under that identity.
-- Entries are validated at load time; an invalid entry causes a hard error.
-- ACL is checked on both `/ma/ipfs/0.0.1` and `/ma/rpc/0.0.1`.
+- Deny always wins over allow, including over `*`.
+- Applied to both services on every incoming message.
+- Default when no file supplied: open (`*`).
 
 ---
 
-## Status endpoints
+## Status web server
 
 | Endpoint | Content-Type | Description |
-|---|---|---|
-| `GET /` | `text/html` | Human-readable status page |
-| `GET /status.json` | `application/json` | Machine-readable JSON |
+|----------|-------------|-------------|
+| `GET /` | `text/html` | Human-friendly page |
+| `GET /status.json` | `application/json` | Machine-readable status |
 
-Example JSON response:
+### CORS policy (default-deny except allowlist)
+
+Status endpoints are served with a CORS allowlist (not `*`).
+
+Default allowed origins:
+
+- `http://localhost:8000`
+- `http://127.0.0.1:8000`
+- `https://xn--nf5a.bahner.com`
+- `https://間.bahner.com`
+
+Override in config extra as either a YAML list or comma-separated string:
+
+```yaml
+status_cors_allowed_origins:
+  - http://localhost:8000
+  - http://127.0.0.1:8000
+  - https://xn--nf5a.bahner.com
+  - https://間.bahner.com
+```
+
+### `status.json`
 
 ```json
 {
   "did": "did:ma:<ipns>",
-  "endpoint_id": "<iroh-node-id>",
+  "ipns": "/ipns/<ipns>",
+  "endpoint_id": "<iroh-id>",
   "uptime_secs": 42,
   "ipfs_publisher": true,
-  "ipfs_requests": 7,
-  "rpc_requests": 3,
-  "pings_received": 3,
-  "started_at": 1747389600
+  "ipfs_requests": 0,
+  "rpc_requests": 0,
+  "pings_received": 0,
+  "started_at": 1234567890,
+  "entity_names": ["greeter", "counter"],
+  "runtime": {"/": "bafyreiXXXX"}
 }
 ```
 
 ---
 
-## Security notes
+## Runtime tuning keys (config extra)
 
-- **Private keys never leave memory in plaintext.**  The `SecretBundle` is
-  encrypted on disk.  IPNS key bytes arriving in a publish request are used
-  once and immediately zeroized.  The daemon's own `ipns_secret_key` bytes
-  are also zeroized right after the own DID document is published at startup.
-- **Replay protection.**  A 120-second sliding-window `ReplayGuard` is applied
-  to every `/ma/ipfs/0.0.1` message.
-- **Strict validation.**  Every incoming publish request is verified: CBOR
-  structure, content-type, DID document proof signature, and IPNS
-  identity-to-DID binding.
-- **The daemon cannot impersonate other identities.**  It carries only its own
-  transport key (`iroh_secret_key`) and its own DID identity keys — it has no
-  access to any other actor's signing or encryption keys.
-- Config and bundle files are written with mode `0600`.
+These keys are safe/anonymous operational settings and are also mirrored into
+the runtime manifest `config` node.
+
+```yaml
+did_resolver_positive_ttl_secs: 60
+did_resolver_negative_ttl_secs: 10
+
+did_document_publishing_interval_secs: 300
+did_document_publishing_timeout_secs: 120
+did_document_publishing_lifetime_hours: 8760
+
+ipns_publish_lifetime_hours: 8760
+ipns_publish_allow_offline: true
+ipns_publish_resolve: false
+
+status_cors_allowed_origins:
+  - http://localhost:8000
+  - http://127.0.0.1:8000
+  - https://xn--nf5a.bahner.com
+  - https://間.bahner.com
+```
+
+### IPNS safety notes
+
+- Keep `ipns_secret_key` private and encrypted in `SecretBundle`.
+- Prefer `ipns_publish_resolve: false` and explicit republish intervals to
+  reduce publish-time dependency on network resolution.
+- Use bounded timeouts for publish operations
+  (`did_document_publishing_timeout_secs`).
 
 ---
 
-## Makefile targets
+## Configuration keys (`ma.yaml`)
 
-| Target | Description |
-|---|---|
-| `make` / `make all` | Release build, binary copied to project root |
-| `make lint` | `cargo clippy`, `cargo fmt --check`, `mdl *.md` |
-| `make test` | Strict clippy (pedantic + nursery) |
-| `make clean` | `cargo clean` + remove local binary |
-| `make publish` | `scp` the binary to the `ma` host |
-| `make distclean` | `clean` + remove `Cargo.lock` |
+| Key | Description |
+|-----|-------------|
+| `kubo_rpc_url` | Kubo RPC URL (default `http://127.0.0.1:5001`) |
+| `secret_bundle_passphrase` | Bundle passphrase. Also `MA_MA_SECRET_BUNDLE_PASSPHRASE` env. |
+| `ipfs_publisher` | `true`/`false` — enable `/ma/ipfs/0.0.1` (default `true`) |
+| `locales_cid` | CID of locale map (`{lang -> IPLD link}`) used for i18n |
+
+Runtime root CID publishing uses a deterministic Kubo key alias derived from the
+runtime identity in `SecretBundle` (same derivation used for own DID publish).
+
+---
+
+## Security notes
+
+- **IPNS keys are zero-use.** The sender's IPNS private key carried in each
+  `/ma/ipfs/0.0.1` request is used once for the Kubo publish call and
+  immediately zeroized.
+- **Replay protection** via a 120-second sliding window on `/ma/ipfs/0.0.1`.
+- **Input validation** via `validate_ipfs_publish_request` (ma-core): checks
+  content-type, DID document proof, sender identity match.
+- **Wasm sandboxing** via extism/Wasmtime.
+- **No auto-execution** of arbitrary CIDs — plugins load only from
+  `behavior_cid` values in the signed IPLD manifest.
+- Config and bundle files are created with mode `0600`.
+
+---
+
+## Makefile
+
+```sh
+make build    # cargo build
+make release  # cargo build --release
+make check    # cargo check
+make run      # run the daemon
+```

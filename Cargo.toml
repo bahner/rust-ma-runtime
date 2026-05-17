@@ -12,13 +12,20 @@ path = "src/main.rs"
 anyhow = "1"
 axum = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
 ciborium = "0.2"
+cid = "0.11"
 clap = { version = "4", features = ["derive"] }
 directories = "5"
+extism = "1"
 fluent = "0.16"
+blake3 = "1"
+libp2p-identity = "0.2"
 ma-core = { version = "0.10.11", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
+tower-http = { version = "0.5", features = ["cors"] }
 tracing = "0.1"
 unic-langid = "0.9"
 zeroize = "1"
@@ -29,6 +36,3 @@ lto = true
 codegen-units = 1
 strip = true
 
-# Development patch — remove when new ma-core version is published
-[patch.crates-io]
-ma-core = { path = "../rust-ma-core" }
