@@ -1,24 +1,64 @@
 //! Extism-based Wasm plugin wrapper for entity dispatch.
 //!
-//! Each entity is backed by a `.wasm` module stored on IPFS.  The module must
-//! export three functions:
-//!
-//! - `init(state: &[u8])` — called once when the plugin is loaded.  `state`
-//!   is the raw bytes from the previous `get_state()` call (or empty on first
-//!   load).
-//! - `handle_message(input: &[u8])` — called for every incoming RPC message.
-//!   `input` is CBOR-encoded `PluginInput`.  The plugin sends replies by calling
-//!   the `ma_send` host function rather than returning a value.
-//! - `get_state() -> Vec<u8>` — returns opaque state bytes to be persisted on
-//!   IPFS.
-//!
-//! The `ma_send` host function (namespace `extism:host/user`) lets plugins
-//! queue outbound messages without blocking on the network send.  The runtime
-//! drains the queue after each `handle_message` call.
-//!
-//! Because `extism::Plugin::call` requires `&mut self` and the runtime is
-//! async, the plugin is wrapped in `std::sync::Mutex` and calls are made via
-//! `tokio::task::block_in_place`.
+//! See module-level docs in each sub-section for details.
+
+pub mod root_abi {
+    //! Re-exported ABI types for the /ma/root/0.0.1 plugin.
+    //!
+    //! Defined inline here so the runtime binary can depend on them without
+    //! a separate crate dependency (the root/ crate is the plugin, compiled
+    //! to wasm32-unknown-unknown only).
+
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum Op {
+        Get,
+        Set,
+        Delete,
+        ApplyCid,
+        Verb,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RootRequest {
+        pub op: Op,
+        pub path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub value: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub cid: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub verb: Option<String>,
+        pub caller_did: String,
+        pub message_id: String,
+        pub owner_did: String,
+        pub subtree_snapshot: serde_json::Value,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    pub enum CommitIntent {
+        UpsertEntity { name: String, node: serde_json::Value },
+        DeleteEntity { name: String },
+        UpsertKind { family: String, implementation: String, node: serde_json::Value },
+        DeleteKind { family: String, implementation: String },
+        SetConfig { key: String, value: serde_json::Value },
+        DeleteConfig { key: String },
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RootResponse {
+        pub ok: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub result: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub commit: Vec<CommitIntent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub error: Option<String>,
+    }
+}
 
 use std::{
     collections::HashMap,
@@ -325,12 +365,24 @@ impl EntityPlugin {
 // ── CBOR helpers ──────────────────────────────────────────────────────────────
 
 /// Serialise a `serde::Serialize` value to `ciborium::Value` via JSON round-trip.
-fn to_cbor_value<T: serde::Serialize>(value: &T) -> Result<ciborium::Value> {
+pub(crate) fn to_cbor_value<T: serde::Serialize>(value: &T) -> Result<ciborium::Value> {
     let json = serde_json::to_value(value)?;
     json_to_cbor(json).map_err(|e| anyhow!("{e}"))
 }
 
-fn json_to_cbor(v: serde_json::Value) -> std::result::Result<ciborium::Value, String> {
+/// Encode a `serde::Serialize` value to CBOR bytes.
+pub fn encode_cbor<T: serde::Serialize>(value: &T, buf: &mut Vec<u8>) -> Result<()> {
+    let cbor = to_cbor_value(value)?;
+    ciborium::ser::into_writer(&cbor, buf)
+        .map_err(|e| anyhow!("CBOR encode: {e}"))
+}
+
+/// Decode CBOR bytes to a `serde::DeserializeOwned` value.
+pub fn decode_cbor<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
+    from_cbor_bytes(bytes)
+}
+
+pub(crate) fn json_to_cbor(v: serde_json::Value) -> std::result::Result<ciborium::Value, String> {
     Ok(match v {
         serde_json::Value::Null => ciborium::Value::Null,
         serde_json::Value::Bool(b) => ciborium::Value::Bool(b),
@@ -406,4 +458,117 @@ fn cbor_to_json(v: ciborium::Value) -> Result<serde_json::Value> {
     })
 }
 
+// ── RootPlugin ────────────────────────────────────────────────────────────────
+//
+// The root plugin implements `/ma/root/0.0.1`.  Unlike normal `EntityPlugin`s,
+// which send replies via the `ma_reply` host function, the root plugin RETURNS
+// its structured `RootResponse` as the `handle_cast` return value.  The runtime
+// parses the response, executes `CommitIntent`s, and sends the caller's reply.
+//
+// Host functions exposed to the root plugin:
+//   `ma_root_read(path_utf8) -> cbor_value`  — read any leaf from the manifest
+//                                              snapshot supplied at call time.
 
+/// Shared manifest snapshot for the `ma_root_read` host function.
+/// Wrapped in `Arc<Mutex>` so that the `UserData` can be updated before each
+/// call and the host function can read it consistently within a single dispatch.
+type RootManifestData = serde_json::Value;
+
+host_fn!(ma_root_read_fn(user_data: RootManifestData; path_bytes: Vec<u8>) -> Vec<u8> {
+    let path = String::from_utf8(path_bytes)
+        .map_err(|e| anyhow::anyhow!("ma_root_read: invalid UTF-8 path: {e}"))?;
+
+    let manifest = user_data.get()?;
+    let snapshot = manifest.lock().map_err(|e| anyhow::anyhow!("manifest lock: {e}"))?;
+
+    // Walk the dot-separated path into the snapshot.
+    let result = {
+        let mut cur: &serde_json::Value = &snapshot;
+        let mut found = true;
+        for seg in path.split('.') {
+            match cur.get(seg) {
+                Some(next) => cur = next,
+                None => { found = false; break; }
+            }
+        }
+        if found { cur.clone() } else { serde_json::Value::Null }
+    };
+
+    let cbor = to_cbor_value(&result)?;
+    let mut buf = Vec::new();
+    ciborium::ser::into_writer(&cbor, &mut buf)
+        .map_err(|e| anyhow::anyhow!("ma_root_read: CBOR encode: {e}"))?;
+    Ok(buf)
+});
+
+/// A loaded instance of the `/ma/root/0.0.1` Extism plugin.
+///
+/// Thread-safe: the inner `Plugin` is guarded by a `Mutex`.  All calls are
+/// made via `tokio::task::block_in_place`.
+pub struct RootPlugin {
+    pub owner: String,
+    plugin: Mutex<Plugin>,
+    /// Manifest snapshot shared with `ma_root_read`.  Updated before each call.
+    manifest_data: UserData<RootManifestData>,
+}
+
+// Same soundness justification as for `EntityPlugin`.
+unsafe impl Send for RootPlugin {}
+unsafe impl Sync for RootPlugin {}
+
+impl RootPlugin {
+    /// Load the root plugin from IPFS by its `behavior` CID.
+    pub async fn load(node: &crate::entity::EntityNode, kubo_url: &str) -> Result<Self> {
+        let cid = &node.behavior.cid;
+        debug!(cid = %cid, "loading root plugin");
+
+        let wasm_bytes = ma_core::cat_bytes(kubo_url, cid)
+            .await
+            .with_context(|| format!("fetching root plugin wasm from {cid}"))?;
+
+        let manifest_data: UserData<RootManifestData> =
+            UserData::new(serde_json::Value::Null);
+
+        let ma_root_read = Function::new(
+            "ma_root_read",
+            [PTR],
+            [PTR],
+            manifest_data.clone(),
+            ma_root_read_fn,
+        );
+
+        let manifest = Manifest::new([Wasm::data(wasm_bytes)]);
+        let plugin = tokio::task::block_in_place(|| {
+            Plugin::new(&manifest, [ma_root_read], node.wasi)
+                .map_err(|e| anyhow!("failed to create root plugin: {e}"))
+        })?;
+
+        Ok(Self {
+            owner: node.owner.clone(),
+            plugin: Mutex::new(plugin),
+            manifest_data,
+        })
+    }
+
+    /// Call `handle_cast` with a pre-built CBOR-encoded `RootRequest`.
+    ///
+    /// `manifest` is a JSON representation of the full current `RuntimeManifest`
+    /// (used by `ma_root_read`).  The plugin returns CBOR-encoded `RootResponse`
+    /// bytes which the caller is responsible for parsing.
+    pub fn call(&self, manifest_json: serde_json::Value, input_cbor: Vec<u8>) -> Result<Vec<u8>> {
+        // Update the manifest snapshot that `ma_root_read` will see.
+        {
+            let arc = self.manifest_data.get()
+                .map_err(|e| anyhow!("manifest_data error: {e}"))?;
+            *arc.lock().map_err(|e| anyhow!("manifest_data poisoned: {e}"))? = manifest_json;
+        }
+
+        tokio::task::block_in_place(|| {
+            let mut plugin = self.plugin.lock()
+                .map_err(|e| anyhow!("root plugin mutex poisoned: {e}"))?;
+            plugin
+                .call::<&[u8], Vec<u8>>("handle_cast", input_cbor.as_slice())
+                .map_err(|e| anyhow!("root plugin handle_cast failed: {e}"))
+        })
+    }
+}

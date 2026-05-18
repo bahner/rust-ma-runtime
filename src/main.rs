@@ -274,6 +274,23 @@ async fn main() -> Result<()> {
         info!(count = %count, "Entity plugins loaded");
     }
 
+    // ── Load root plugin (/ma/root/0.0.1) ─────────────────────────────────────
+    let root_plugin: Option<Arc<plugin::RootPlugin>> =
+        if let Some(ref rc) = root_cid {
+            match bootstrap::load_root_plugin(rc, &config.kubo_rpc_url).await {
+                Some(rp) => {
+                    info!("Root plugin (/ma/root/0.0.1) loaded");
+                    Some(Arc::new(rp))
+                }
+                None => {
+                    info!("No root plugin in manifest; using built-in #root handlers");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
     // ── Signing key ────────────────────────────────────────────────────────────
     let signing_key = secrets
         .signing_key()
@@ -420,6 +437,7 @@ async fn main() -> Result<()> {
                             kubo_rpc_url: &config.kubo_rpc_url,
                             entity_registry: entity_registry.clone(),
                             stats: stats.clone(),
+                            root_plugin: root_plugin.clone(),
                         },
                     )
                     .await

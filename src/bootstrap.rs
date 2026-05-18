@@ -258,9 +258,49 @@ pub async fn load_entities(
     loaded
 }
 
-// ── Graceful shutdown: persist entity states ──────────────────────────────────
+// ── Root plugin loading ────────────────────────────────────────────────────────
 
-/// Save the current state of every loaded plugin to IPFS and update the entity
+/// Load the `/ma/root/0.0.1` plugin from the manifest, if present.
+///
+/// The root entity is expected in the manifest under the name `"root"` with
+/// kind `/ma/root/0.0.1`.  Returns `None` if no such entity exists or loading
+/// fails (non-fatal).
+pub async fn load_root_plugin(
+    root_cid: &str,
+    kubo_url: &str,
+) -> Option<plugin::RootPlugin> {
+    let manifest: RuntimeManifest = match kubo::dag_get(kubo_url, root_cid).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!("load_root_plugin: manifest fetch failed: {e}");
+            return None;
+        }
+    };
+
+    let link = manifest.entities.get("root")?;
+    let node: EntityNode = match kubo::dag_get(kubo_url, &link.cid).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(cid = %link.cid, "load_root_plugin: entity node fetch failed: {e}");
+            return None;
+        }
+    };
+
+    if node.kind != "/ma/root/0.0.1" {
+        tracing::warn!(kind = %node.kind, "load_root_plugin: 'root' entity is not /ma/root/0.0.1; skipping");
+        return None;
+    }
+
+    match plugin::RootPlugin::load(&node, kubo_url).await {
+        Ok(rp) => Some(rp),
+        Err(e) => {
+            tracing::warn!(error = %e, "load_root_plugin: plugin load failed");
+            None
+        }
+    }
+}
+
+// ── Graceful shutdown: persist entity states ──────────────────────────────────
 /// nodes and root manifest.
 /// Logs progress at `info` level with per-entity phases.  Returns the new
 /// root CID on success.
