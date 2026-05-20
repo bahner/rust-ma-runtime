@@ -1,0 +1,6 @@
+protocol: /ma/stateless/ping/0.0.1
+wasi: false
+api:
+  - handle_cast
+host_functions:
+  - ma_send

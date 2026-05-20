@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
-use ma_core::check_op;
+use ma_core::check_cap;
 use tokio::sync::RwLock;
 use tracing::info;
 
-pub use ma_core::{normalize_principal, validate_acl_map, AclMap, PERM_W, PERM_X};
+pub use ma_core::{normalize_principal, validate_acl_map, AclMap, CAP_IPFS, CAP_RPC};
 
 /// In-memory cache of named ACLs, keyed by `"<ns>.acl.<name>"`.
 pub type AclCache = Arc<RwLock<HashMap<String, AclMap>>>;
@@ -59,11 +59,11 @@ const OPEN_ACL_YAML: &str = include_str!("../default.acl");
 
 /// Transport-level ACL check.
 ///
-/// Call with the appropriate `required` bits for the service:
-/// - `/ma/rpc/0.0.1`  — use `PERM_X`
-/// - `/ma/ipfs/0.0.1` — use `PERM_W`
-pub fn acl_check(acl: &AclMap, from: &str, required: u8) -> Result<()> {
-    check_op(acl, from, required).with_context(|| format!("access denied for {from}"))
+/// Call with the appropriate capability string for the service:
+/// - `/ma/rpc/0.0.1`  — use `CAP_RPC`
+/// - `/ma/ipfs/0.0.1` — use `CAP_IPFS`
+pub fn acl_check(acl: &AclMap, from: &str, cap: &str) -> Result<()> {
+    check_cap(acl, from, cap).with_context(|| format!("access denied for {from}"))
 }
 
 fn default_acl_path() -> Result<PathBuf> {
@@ -119,68 +119,55 @@ pub fn verb_acl_allows(allowlist: &[String], caller: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use ma_core::{check_op, AclMap, Permissions, PERM_R, PERM_W, PERM_X};
+    use ma_core::{check_cap, AclMap, CapabilityEntry, CAP_IPFS, CAP_RPC};
 
     use super::verb_acl_allows;
 
-    fn m(entries: &[(&str, &str)]) -> AclMap {
+    fn allow(caps: &[&str]) -> CapabilityEntry {
+        CapabilityEntry::from_caps(caps.iter().copied())
+    }
+
+    fn m(entries: &[(&str, CapabilityEntry)]) -> AclMap {
         entries
             .iter()
-            .map(|(k, v)| (k.to_string(), v.parse().expect("valid permissions")))
+            .map(|(k, v)| (k.to_string(), v.clone()))
             .collect()
     }
 
     #[test]
-    fn wildcard_exec_allows_execute() {
-        let acl = m(&[("*", "x")]);
-        assert!(check_op(&acl, "did:ma:alice", PERM_X).is_ok());
+    fn wildcard_rpc_allows_rpc() {
+        let acl = m(&[("*", allow(&["rpc"]))]);
+        assert!(check_cap(&acl, "did:ma:alice", CAP_RPC).is_ok());
     }
 
     #[test]
-    fn wildcard_exec_denies_write() {
-        let acl = m(&[("*", "x")]);
-        assert!(check_op(&acl, "did:ma:alice", PERM_W).is_err());
+    fn wildcard_rpc_denies_ipfs() {
+        let acl = m(&[("*", allow(&["rpc"]))]);
+        assert!(check_cap(&acl, "did:ma:alice", CAP_IPFS).is_err());
     }
 
     #[test]
     fn explicit_deny_wins_over_wildcard_allow() {
-        let acl = m(&[("*", "rwx"), ("did:ma:bandit", "")]);
-        assert!(check_op(&acl, "did:ma:bandit", PERM_X).is_err());
+        let acl = m(&[("*", allow(&["rpc", "ipfs"])), ("did:ma:bandit", CapabilityEntry::Deny)]);
+        assert!(check_cap(&acl, "did:ma:bandit", CAP_RPC).is_err());
     }
 
     #[test]
     fn exact_match_restricts_below_wildcard() {
-        let acl = m(&[("*", "rwx"), ("did:ma:bob", "r")]);
-        assert!(check_op(&acl, "did:ma:bob", PERM_R).is_ok());
-        assert!(check_op(&acl, "did:ma:bob", PERM_X).is_err());
+        let acl = m(&[("*", allow(&["rpc", "ipfs"])), ("did:ma:bob", allow(&["rpc"]))]);
+        assert!(check_cap(&acl, "did:ma:bob", CAP_RPC).is_ok());
+        assert!(check_cap(&acl, "did:ma:bob", CAP_IPFS).is_err());
     }
 
     #[test]
     fn did_url_caller_is_normalized() {
-        let acl = m(&[("did:ma:alice", "rwx")]);
-        assert!(check_op(&acl, "did:ma:alice#sign", PERM_X).is_ok());
+        let acl = m(&[("did:ma:alice", allow(&["rpc", "ipfs"]))]);
+        assert!(check_cap(&acl, "did:ma:alice#sign", CAP_RPC).is_ok());
     }
 
     #[test]
     fn default_deny_when_no_matching_entries() {
-        assert!(check_op(&AclMap::new(), "did:ma:alice", PERM_X).is_err());
-    }
-
-    #[test]
-    fn permissions_roundtrip() {
-        for (input, expected) in &[
-            ("rwx", "rwx"),
-            ("r", "r"),
-            ("w", "w"),
-            ("x", "x"),
-            ("rw", "rw"),
-            ("rx", "rx"),
-            ("wx", "wx"),
-            ("", "-"),
-        ] {
-            let p: Permissions = input.parse().expect("parse");
-            assert_eq!(p.to_string(), *expected, "roundtrip for {input:?}");
-        }
+        assert!(check_cap(&AclMap::new(), "did:ma:alice", CAP_RPC).is_err());
     }
 
     #[test]

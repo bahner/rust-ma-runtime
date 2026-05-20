@@ -153,13 +153,11 @@ runtime:
     ping:
       kind: /ma/stateless/ping/0.0.1
       behavior_cid: bafkrei…   # CID of compiled .wasm — `ipfs add plugin.wasm`
-      acl:
-        "*": x                 # any caller may invoke
+      acl: ""                  # "" = deny-all; use a named ACL ref for open access
     fortune:
       kind: /ma/stateless/python/0.0.1
       behavior_cid: Qm…
-      acl:
-        "*": x
+      acl: ""
       # owner: did:ma:<other>  # optional; falls back to runtime.owner
 ```
 
@@ -322,17 +320,28 @@ Each Wasm plugin must export:
 
 ## ACL
 
+Capabilities are plain strings in YAML sequences. The default when no
+`--acl-file` is given allows everyone to use both services.
+
 ```yaml
 acl:
-  "*": "rwx"          # everyone: full access
-  "did:ma:bob": "rx"  # read + execute, no write
-  "did:ma:eve":       # null = explicit deny
+  "*": [rpc, ipfs]            # everyone: RPC + IPFS publish (default)
+  "did:ma:alice": [owner]     # alice: full access
+  "did:ma:bob": [rpc]         # bob: RPC only, no IPFS publish
+  "did:ma:eve":               # null = explicit deny
 ```
 
-- Deny always wins over wildcard allow. An explicit `null` entry denies.
-- `/ma/ipfs/0.0.1` requires `w`; `/ma/rpc/0.0.1` requires `x`.
-- Fragment stripped from DID-URLs before lookup.
-- Default when no file supplied: `"*": "rwx"`.
+Built-in capabilities:
+
+| Capability | Required by |
+|------------|-------------|
+| `rpc` | `/ma/rpc/0.0.1` |
+| `ipfs` | `/ma/ipfs/0.0.1` |
+| `"*"` | Wildcard — grants all capabilities when used in an Allow set |
+| `create` / `update` / `delete` | Namespace / entity management |
+
+Rules: deny always wins; direct match wins over wildcard; fragment stripped
+from DID-URLs before lookup.
 
 ---
 

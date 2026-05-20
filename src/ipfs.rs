@@ -11,7 +11,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 
-use crate::acl::{acl_check, AclMap, PERM_W};
+use crate::acl::{acl_check, AclMap, CAP_IPFS};
 use crate::i18n;
 use crate::rpc::RPC_PROTOCOL_ID;
 
@@ -381,7 +381,7 @@ pub async fn handle_ipfs_message(
     ctx: &IpfsHandlerCtx<'_>,
     replay_guard: &mut ReplayGuard,
 ) -> Result<()> {
-    acl_check(acl, &message.from, PERM_W)?;
+    acl_check(acl, &message.from, CAP_IPFS)?;
 
     let headers = message.headers();
     replay_guard

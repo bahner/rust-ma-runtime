@@ -40,10 +40,10 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
   matches the document's DID.
 - **Replay protection.** A `ReplayGuard` (sliding 120-second window) is applied
   to `/ma/ipfs/0.0.1` messages before any processing.
-- **ACL with deny-wins semantics.** An explicit `null`/empty-string value in the
-  `AclMap` denies a principal and overrides any wildcard allow. Permission bits
-  are `r` (4/read), `w` (2/write — required for `/ma/ipfs/0.0.1`), `x`
-  (1/execute — required for `/ma/rpc/0.0.1`).
+- **ACL with deny-wins semantics.** An explicit `null` entry in the `AclMap`
+  denies a principal and overrides any wildcard allow. Capabilities are plain
+  strings in YAML sequences — `/ma/rpc/0.0.1` requires `"rpc"`,
+  `/ma/ipfs/0.0.1` requires `"ipfs"`.
 
 ## Dependencies
 
@@ -55,7 +55,7 @@ axum = { version = "0.7", default-features = false, features = ["http1", "tokio"
 ciborium = "0.2"
 clap = { version = "4", features = ["derive"] }
 directories = "5"
-ma-core = { version = "0.10.14", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
+ma-core = { version = "0.10.15", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
 serde_json = "1"
 serde_yaml = "0.9"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
@@ -130,33 +130,40 @@ ma --status-bind 0.0.0.0:5003
 
 ## ACL format
 
-The ACL YAML must contain an `acl:` map from principal to permission string.
-The default when no file is supplied is open (`"*": "rwx"`).
+The ACL YAML must contain an `acl:` map from principal to a YAML sequence of
+capability strings. The default when no file is supplied is open
+(`"*": [rpc, ipfs]`).
 
 ```yaml
 acl:
-  "*": "rwx"          # everyone: full access
-  "did:ma:bob": "rx"  # read + execute, no write
-  "did:ma:eve":       # null = explicit deny
+  "*": [rpc, ipfs]            # everyone: RPC + IPFS publish
+  "did:ma:alice": ["*"]       # alice: all capabilities
+  "did:ma:bob": [rpc]         # bob: RPC only, no IPFS publish
+  "did:ma:eve":               # null = explicit deny
 ```
 
-Permission bits:
+Built-in capability strings:
 
-| Letter | Value | Required by |
-|--------|-------|-------------|
-| `r` | 4 | Read — list/fetch |
-| `w` | 2 | Write — `/ma/ipfs/0.0.1` |
-| `x` | 1 | Execute — `/ma/rpc/0.0.1` |
+| Capability | Required by |
+|------------|-------------|
+| `"rpc"` | `/ma/rpc/0.0.1` |
+| `"ipfs"` | `/ma/ipfs/0.0.1` |
+| `"read"` | (reserved — future read-only access) |
+| `"create"` | Create namespaces/entities |
+| `"update"` | Update namespaces/entities |
+| `"delete"` | Delete namespaces/entities |
+| `"*"` | Wildcard — grants all capabilities when used in an Allow set |
+
+Arbitrary capability strings are valid — entity and namespace ACLs may use
+verb names or sub-namespace names as capabilities.
 
 Rules:
 
-- **Deny always wins** over wildcard allow. An explicit `null` entry (bare key
-  or `key: ~` or `key: null` in YAML) is an explicit deny.
+- **Deny always wins** over wildcard allow. An explicit `null` entry (bare key,
+  `key: ~`, or `key: null` in YAML) is an explicit deny.
 - Direct principal lookup wins over the `"*"` wildcard.
-- Identity-level entries match all DID-URL callers for that identity (fragment
-  is stripped before lookup).
-- ACL is checked on `/ma/ipfs/0.0.1` (`w` required) and `/ma/rpc/0.0.1` (`x`
-  required) messages.
+- Fragment stripped from DID-URLs before lookup.
+- ACL is checked on every incoming message on both services.
 
 ## Status web server
 
@@ -211,14 +218,13 @@ RPC verbs are CBOR-encoded text strings beginning with `:`.
 ### Dot-path grammar
 
 Unfragmented RPC messages (addressed to `did:ma:<ipns>`, no fragment) use a
-dot-path grammar rooted in five namespaces:
+dot-path grammar rooted in four namespaces:
 
 ```
-:entities[.<name>][:<verb>]           — entity management
-:kinds[.<family>[.<impl>]]            — kind/protocol registry (read-only)
-:config[.<key>]                       — runtime config
-:groups[.<handle>[.<group>]][:<verb>] — group namespace management
-:ping                                 — liveness check
+:entities[.<name>][:<verb>]  — entity management
+:kinds[.<family>[.<impl>]]   — kind/protocol registry (read-only)
+:config[.<key>]              — runtime config
+:ping                        — liveness check
 ```
 
 | Pattern | Meaning |
@@ -246,41 +252,6 @@ editor session; it only stores and retrieves by CID.
 Replies with `:pong` to `did:ma:<sender_ipns>#ping`. The reply sets `reply_to`
 to the originating message's ID and is delivered via `endpoint.outbox()`.
 
-### Groups — `:groups.*`
-
-Groups are named sets of principals used in `AclMap` entries as
-`group:<handle>.<groupname>`.
-
-**Namespace model:** Groups are organised into *namespaces* identified by a
-handle string. Each namespace has one owner DID. The `runtime` handle is
-reserved and bootstrapped with `RuntimeManifest.owner` as its owner.
-
-**Rust types** (`src/acl.rs` / `src/entity.rs`):
-```rust
-pub struct GroupNamespace {
-    pub owner: String,
-    pub groups: HashMap<String, Vec<String>>,
-}
-pub type Groups = HashMap<String, GroupNamespace>;
-```
-
-| Operation | Auth |
-|-----------|------|
-| List handles / list group names / list members | any |
-| `[:groups.<handle>:, <did>]` — create namespace (owner = `<did>`) | any; `runtime` handle: manifest owner only |
-| `[:groups.<handle>:, <did>]` — transfer ownership | current namespace owner or manifest owner |
-| Set / add / remove members in `<handle>.<group>` | namespace owner |
-| Delete group (`groups.<handle>.<group>:`) | namespace owner |
-| Delete namespace (`groups.<handle>:`) | **FORBIDDEN** — namespaces cannot be deleted |
-
-**Owner bypass:** `RuntimeManifest.owner` has implicit `rwx` on all operations
-(checked before any ACL evaluation). This allows recovery from misconfiguration
-or identity loss.
-
-**Stale ACL references:** Deleting a group leaves dead `group:handle.name`
-entries in ACL maps. These resolve to zero members and fail-closed (no access
-granted). Only the namespace owner can re-create the group; no hijacking possible.
-
 ## ma-core API used
 
 | Purpose | Call |
@@ -297,7 +268,7 @@ granted). Only the namespace owner can re-create the group; no hijacking possibl
 | Request validation | `validate_ipfs_publish_request(message_cbor)` |
 | Publish | `publisher.publish_document(did_doc_json, ipns_key_b64)` |
 | Replay guard | `ReplayGuard::default()` + `check_and_insert(&headers)` |
-| ACL | `Acl::new_from_yaml(yaml)` + `acl.is_allowed(did_url)` |
+| ACL | `AclMap` (serde-deserialised from YAML) + `check_cap(acl, caller, cap)` |
 | Outbox (pong) | `endpoint.outbox(&resolver, &sender_did, "/ma/rpc/0.0.1").await` → `outbox.send(&msg)` |
 | Resolver | `IpfsGatewayResolver::new(kubo_rpc_url)` |
 

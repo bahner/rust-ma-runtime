@@ -44,4 +44,5 @@ entity-state-saving = Saving entity state
 entity-state-saved = Entity state saved
 entity-state-empty = Plugin returned empty state, skipping persist
 entity-states-saved = Entity states saved
-ftl-loaded = Locale messages loaded from IPFS
+link-set = Link set
+ftl-loaded = Lang messages loaded from IPFS

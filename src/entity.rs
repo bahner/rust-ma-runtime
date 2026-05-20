@@ -139,7 +139,7 @@ pub struct KindNode {
 /// kinds.<family>.<implementation>.
 ///
 /// New manifests store a plain IPLD link. Older manifests stored an object
-/// with duplicated metadata and a nested `link` field.
+/// with duplicted metadata and a nested `link` field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum KindRef {
@@ -173,10 +173,6 @@ impl KindRef {
 /// root link.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NamespaceNode {
-    /// Owner DID — only this principal (or the runtime itself) may modify
-    /// the namespace.
-    #[serde(default)]
-    pub did: String,
     /// Optional human-readable name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -196,10 +192,8 @@ pub struct NamespaceNode {
 
 /// IPLD node representing a single entity.
 ///
-/// Ownership is implicit: the namespace prefix of the entity name determines
-/// the owner (e.g. `alice.#fortune` is owned by whoever owns the `alice`
-/// namespace).  WASI support is derived from the `kind` protocol string at
-/// plugin-load time.
+/// Access is controlled by the entity-level ACL.  WASI support is derived
+/// from the `kind` protocol string at plugin-load time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityNode {
     pub kind: String,
@@ -218,12 +212,12 @@ pub struct EntityNode {
 
 /// Root IPLD node for this runtime.
 /// Stored as CID in `config.yaml` and published into the DID document under
-/// `ma.runtime`. Namespace data (`groups`, `acls`) lives in [`NamespaceNode`]
+/// `ma.runtime`. Namespace data (`acls`) lives in [`NamespaceNode`]
 /// values addressed by namespace handle.
 ///
 /// Path traversal example:
-/// `ipfs dag get /ipns/<did>/runtime/<handle>/groups/<name>` returns the
-/// group document directly (IPLD follows `{"/": "bafy…"}` links).
+/// `ipfs dag get /ipns/<did>/runtime/<handle>/acl/<name>` returns the
+/// ACL document directly (IPLD follows `{"/": "bafy…"}` links).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeManifest {
     /// Transport-level ACL — IPLD link to an ACL document.
@@ -240,15 +234,13 @@ pub struct RuntimeManifest {
     /// Global entity registry — fragment → IPLD link to [`EntityNode`].
     pub entities: HashMap<String, IpldLink>,
     #[serde(default)]
-    pub locales: HashMap<String, IpldLink>,
+    pub lang: HashMap<String, IpldLink>,
     #[serde(default)]
     pub config: BTreeMap<String, serde_json::Value>,
     /// Namespace nodes keyed by handle (e.g. `"owner"`, `"alice"`).
-    /// Serialised flat alongside the typed fields; IPFS path segments follow
-    /// the handle: `…/runtime/<handle>/groups/<name>`.
     ///
     /// Reserved handles that may not be used as namespace names:
-    /// `acl`, `protocol`, `kinds`, `entities`, `locales`, `config`.
+    /// `acl`, `protocol`, `kinds`, `entities`, `lang`, `config`.
     #[serde(flatten)]
     pub namespaces: HashMap<String, NamespaceNode>,
 }

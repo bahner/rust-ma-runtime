@@ -18,7 +18,7 @@ use ma_core::ipfs_add;
 use serde::Deserialize;
 
 use crate::entity::{
-    EntityNode, IpldLink, KindNode, KindRef, KindTree, NamespaceNode, PluginKind, RuntimeManifest,
+    EntityNode, IpldLink, KindNode, KindRef, KindTree, PluginKind, RuntimeManifest,
 };
 use crate::kubo;
 use crate::plugin;
@@ -34,8 +34,11 @@ pub struct BootstrapYaml {
 
 #[derive(Debug, Deserialize)]
 pub struct BootstrapRuntime {
-    pub owner: String,
+    #[serde(default)]
     pub kinds: BootstrapKindsDict,
+    /// Fragment entities defined directly under `runtime:` in the YAML.
+    /// Keys must start with `#` (e.g. `"#fortune"`).  No `entities:` wrapper.
+    #[serde(flatten)]
     pub entities: HashMap<String, BootstrapEntity>,
 }
 
@@ -56,8 +59,8 @@ pub type BootstrapKindsDict = BTreeMap<String, BTreeMap<String, BootstrapKind>>;
 pub struct BootstrapEntity {
     pub kind: String,
     pub behavior_cid: String,
-    /// Reference path to a named ACL in the namespace tree
-    /// (e.g. `"owner.acl.open"`). Empty string means deny-all.
+    /// Entity-level ACL reference path (e.g. `"ns.acl.write"`).
+    /// Empty string means deny-all.
     #[serde(default)]
     pub acl: String,
 }
@@ -148,7 +151,7 @@ pub async fn build_manifest(
         kinds_flat.iter().map(|k| k.protocol.clone()).collect();
     let mut entities_map: HashMap<String, IpldLink> = HashMap::new();
     for (name, be) in &cfg.entities {
-        if !known_kinds.contains(&be.kind) {
+        if !known_kinds.is_empty() && !known_kinds.contains(&be.kind) {
             return Err(anyhow!("entity {name} references unknown kind {}", be.kind));
         }
         let entity = build_bootstrap_entity_node(be);
@@ -171,17 +174,7 @@ pub async fn build_manifest(
         entities: entities_map,
         locales,
         config: runtime_config,
-        namespaces: {
-            let mut ns = std::collections::HashMap::new();
-            ns.insert(
-                "owner".to_string(),
-                NamespaceNode {
-                    did: cfg.owner.clone(),
-                    ..Default::default()
-                },
-            );
-            ns
-        },
+        namespaces: std::collections::HashMap::new(),
     };
     let root_cid = kubo::dag_put(kubo_url, &root)
         .await

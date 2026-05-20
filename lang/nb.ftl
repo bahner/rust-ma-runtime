@@ -44,4 +44,5 @@ entity-state-saving = Lagrer enhetstilstand
 entity-state-saved = Enhetstilstand lagret
 entity-state-empty = Plugin returnerte tom tilstand, hopper over lagring
 entity-states-saved = Enhetstilstander lagret
-ftl-loaded = Lokaliserte meldinger lastet fra IPFS
+link-set = Lenke satt
+ftl-loaded = Språkmeldinger lastet fra IPFS

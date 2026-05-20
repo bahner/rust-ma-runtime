@@ -1,0 +1,7 @@
+protocol: /ma/stateless/python/0.0.1
+wasi: true
+api:
+  - handle_cast
+host_functions:
+  - ma_reply
+  - ma_send

@@ -9,7 +9,7 @@ use ma_core::{
 };
 use tracing::{debug, info, warn};
 
-use crate::acl::{acl_check, AclCache, AclMap, PERM_X};
+use crate::acl::{acl_check, AclCache, AclMap, CAP_RPC};
 use crate::entity::{
     CastInput, EntityNode, IpldLink, LocalMessage, NamespaceNode, PluginCtx, PluginKind,
     RuntimeManifest, SendEnvelope,
@@ -38,7 +38,7 @@ pub async fn handle_rpc_message(
     acl: &AclMap,
     ctx: &RpcHandlerCtx<'_>,
 ) -> Result<()> {
-    acl_check(acl, &message.from, PERM_X)?;
+    acl_check(acl, &message.from, CAP_RPC)?;;
 
     if message.message_type != MESSAGE_TYPE_RPC {
         return Err(anyhow!(
@@ -823,9 +823,8 @@ async fn handle_ns_root(
                 }
             }
         }
-        // Create / upsert namespace: `[:ns:, "did:ma:owner"]`
-        (Some(""), [CborValue::Text(owner_did)]) => {
-            let owner_did = owner_did.clone();
+        // Create / upsert namespace: `[:ns:]`
+        (Some(""), []) => {
             if RESERVED_NS.contains(&ns) {
                 return send_rpc_error_reply(
                     message,
@@ -837,10 +836,7 @@ async fn handle_ns_root(
             let new_root = with_manifest(ctx, |m| {
                 m.namespaces
                     .entry(ns.to_string())
-                    .or_insert_with(|| NamespaceNode {
-                        did: owner_did.clone(),
-                        ..Default::default()
-                    });
+                    .or_insert_with(NamespaceNode::default);
                 Ok(())
             })
             .await?;
@@ -924,16 +920,11 @@ async fn handle_ns_acl(
                 }
                 (Some(""), [CborValue::Text(cid)]) => {
                     let cid = cid.clone();
-                    let sender = message.from.clone();
-                    let our_did = ctx.our_did.to_string();
                     let new_root = with_manifest(ctx, |m| {
                         let ns_node = m
                             .namespaces
                             .get_mut(ns)
                             .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
-                        if sender != ns_node.did && sender != our_did {
-                            return Err(anyhow!("permission denied for {sender} on {ns}"));
-                        }
                         ns_node.acl.insert(acl_name.clone(), IpldLink::new(&cid));
                         Ok(())
                     })
@@ -964,16 +955,11 @@ async fn handle_ns_acl(
                     send_rpc_reply(message, ctx, out).await
                 }
                 (Some(""), []) => {
-                    let sender = message.from.clone();
-                    let our_did = ctx.our_did.to_string();
                     let new_root = with_manifest(ctx, |m| {
                         let ns_node = m
                             .namespaces
                             .get_mut(ns)
                             .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
-                        if sender != ns_node.did && sender != our_did {
-                            return Err(anyhow!("permission denied for {sender} on {ns}"));
-                        }
                         ns_node.acl.remove(&acl_name);
                         Ok(())
                     })
@@ -1049,16 +1035,11 @@ async fn handle_ns_blob(
         }
         (Some(""), [CborValue::Text(cid)]) if sub_path.is_empty() => {
             let cid = cid.clone();
-            let sender = message.from.clone();
-            let our_did = ctx.our_did.to_string();
             let new_root = with_manifest(ctx, |m| {
                 let ns_node = m
                     .namespaces
                     .get_mut(ns)
                     .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
-                if sender != ns_node.did && sender != our_did {
-                    return Err(anyhow!("permission denied for {sender} on {ns}"));
-                }
                 ns_node
                     .extra
                     .insert(key.to_string(), serde_json::json!({ "/": cid }));
@@ -1078,16 +1059,11 @@ async fn handle_ns_blob(
             send_rpc_reply(message, ctx, out).await
         }
         (Some(""), []) if sub_path.is_empty() => {
-            let sender = message.from.clone();
-            let our_did = ctx.our_did.to_string();
             let new_root = with_manifest(ctx, |m| {
                 let ns_node = m
                     .namespaces
                     .get_mut(ns)
                     .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
-                if sender != ns_node.did && sender != our_did {
-                    return Err(anyhow!("permission denied for {sender} on {ns}"));
-                }
                 ns_node.extra.remove(key);
                 Ok(())
             })

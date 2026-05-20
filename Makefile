@@ -8,7 +8,7 @@ PREFIX   ?= $(HOME)/.local/bin
 PUBLISH  := ma:bin/
 RUN_ARGS ?=
 
-.PHONY: all clean distclean install lint publish test gen-locales-cid
+.PHONY: all clean distclean install lint publish test gen-lang-cids gen-kinds-cids
 
 all: $(BINARY)
 
@@ -20,8 +20,11 @@ lint:
 test:
 	$(CARGO) clippy $(CLIPPY_STRICT)
 
-gen-locales-cid:
-	$(CARGO) run $(RUN_ARGS) -- --gen-locales-cid --locales-dir locales
+gen-lang-cids:
+	$(CARGO) run $(RUN_ARGS) -- --gen-lang-cids --lang-dir lang
+
+gen-kinds-cids:
+	$(CARGO) run $(RUN_ARGS) -- --gen-kinds-cids --kinds-dir kinds
 
 # Release build, binary copied to project root
 $(BINARY): $(RELEASE)
