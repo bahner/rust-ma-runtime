@@ -43,9 +43,7 @@ pub async fn handle_rpc_message(
     // Intra-runtime messages (sender = `<our_did>#<entity>`) skip the root ACL
     // transport gate — they are trusted local dispatches between entities on
     // this runtime.
-    let intra_runtime = message
-        .from
-        .starts_with(&format!("{}#", ctx.our_did));
+    let intra_runtime = message.from.starts_with(&format!("{}#", ctx.our_did));
     if !intra_runtime {
         check_full(acl, &message.from, &[CAP_RPC], |_| async { Ok(vec![]) }).await?;
     }
@@ -744,10 +742,9 @@ async fn handle_kinds_ns(
             let root_cid = current_root_cid(ctx).await?;
             let manifest: RuntimeManifest =
                 crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
-            let ids: Vec<&str> = manifest.kinds.keys().map(String::as_str).collect();
+            let ids: Vec<String> = manifest.kinds.protocol_ids();
             let mut out = Vec::new();
-            ciborium::ser::into_writer(&ids, &mut out)
-                .context("encoding kinds list as CBOR")?;
+            ciborium::ser::into_writer(&ids, &mut out).context("encoding kinds list as CBOR")?;
             send_rpc_reply(message, ctx, out).await
         }
         // [":kinds", "<protocol>"] → get KindNode as CBOR
@@ -757,7 +754,7 @@ async fn handle_kinds_ns(
                 crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
             let val = manifest
                 .kinds
-                .get(protocol.as_str())
+                .get_protocol(protocol.as_str())
                 .ok_or_else(|| anyhow!("kind not found: {protocol}"))?;
             let mut out = Vec::new();
             ciborium::ser::into_writer(val, &mut out).context("encoding kind as CBOR")?;
@@ -767,7 +764,7 @@ async fn handle_kinds_ns(
         (Some(""), [CborValue::Text(protocol)]) => {
             let protocol = protocol.clone();
             with_manifest(ctx, |m| {
-                m.kinds.remove(&protocol);
+                m.kinds.remove_protocol(&protocol);
                 Ok(())
             })
             .await?;
@@ -775,13 +772,12 @@ async fn handle_kinds_ns(
         }
         // [":kinds:", "<protocol>", <dag-cbor-bytes>] → upsert
         (Some(""), [CborValue::Text(protocol), CborValue::Bytes(cbor_bytes)]) => {
-            use crate::entity::{IpldLink as Link, KindRef};
             let protocol = protocol.clone();
             let cid = crate::kubo::dag_put_raw(ctx.kubo_rpc_url, cbor_bytes)
                 .await
                 .context("dag_put kind")?;
             let new_root = with_manifest(ctx, |m| {
-                m.kinds.insert(protocol, KindRef::Link(Link::new(&cid)));
+                m.kinds.insert_protocol(&protocol, IpldLink::new(&cid));
                 Ok(())
             })
             .await?;
@@ -882,7 +878,9 @@ async fn handle_config_ns(
 // ── Namespace dispatching `:ns.*` ─────────────────────────────────────────────
 
 /// Handles that may not be used as namespace names.
-const RESERVED_NS: &[&str] = &["acl", "acls", "protocol", "kinds", "entities", "lang", "config"];
+const RESERVED_NS: &[&str] = &[
+    "acl", "acls", "protocol", "kinds", "entities", "lang", "config",
+];
 
 /// Check the namespace gate ACL for `caller` against `caps`.
 ///
@@ -936,7 +934,11 @@ async fn handle_namespace_op(
         // Blob op — enforce namespace gate.
         if let Ok(root_cid) = current_root_cid(ctx).await {
             let is_read = tail.is_none();
-            let caps: &[&str] = if is_read { &[category, "read", "*"] } else { &[category, "update", "*"] };
+            let caps: &[&str] = if is_read {
+                &[category, "read", "*"]
+            } else {
+                &[category, "update", "*"]
+            };
             if let Err(e) = ns_acl_check(
                 ns,
                 &message.from,
@@ -1062,7 +1064,10 @@ async fn handle_ns_acl_gate(
             let cache_key = format!("{ns}.acl");
             match crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &cid).await {
                 Ok(acl_map) => {
-                    ctx.acl_cache.write().await.insert(cache_key.clone(), acl_map);
+                    ctx.acl_cache
+                        .write()
+                        .await
+                        .insert(cache_key.clone(), acl_map);
                     info!(key = %cache_key, cid = %cid, "Namespace gate ACL loaded into cache");
                 }
                 Err(e) => {
@@ -1352,7 +1357,7 @@ async fn check_entity_management_cap(
     caps: &[&str],
 ) -> Result<()> {
     let acl = ctx.root_acl.read().await;
-    check_full(&*acl, &message.from, caps, |_| async { Ok(vec![]) })
+    check_full(&acl, &message.from, caps, |_| async { Ok(vec![]) })
         .await
         .with_context(|| {
             format!(
@@ -1410,10 +1415,7 @@ async fn send_rpc_reply(
     Ok(())
 }
 
-async fn send_rpc_ok_reply(
-    incoming: &ma_core::Message,
-    ctx: &RpcHandlerCtx<'_>,
-) -> Result<()> {
+async fn send_rpc_ok_reply(incoming: &ma_core::Message, ctx: &RpcHandlerCtx<'_>) -> Result<()> {
     let mut payload = Vec::new();
     ciborium::ser::into_writer(&CborValue::Text(":ok".to_string()), &mut payload)
         .context("failed to encode :ok reply")?;

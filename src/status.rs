@@ -89,7 +89,7 @@ pub fn now_unix_secs() -> u64 {
 }
 
 async fn handle_index(State(state): State<StatusState>) -> impl IntoResponse {
-    let stats = &state.stats;
+    let shared_stats = &state.stats;
     let (
         our_did,
         endpoint_id,
@@ -101,7 +101,7 @@ async fn handle_index(State(state): State<StatusState>) -> impl IntoResponse {
         root_cid,
         owners,
     ) = {
-        let s = stats.read().await;
+        let s = shared_stats.read().await;
         (
             s.our_did.clone(),
             s.endpoint_id.clone(),
@@ -161,7 +161,7 @@ th{{background:#222}}a{{color:#7cf}}</style></head>
 }
 
 async fn handle_status_json(State(state): State<StatusState>) -> impl IntoResponse {
-    let stats = &state.stats;
+    let shared_stats = &state.stats;
     let (
         our_did,
         endpoint_id,
@@ -173,7 +173,7 @@ async fn handle_status_json(State(state): State<StatusState>) -> impl IntoRespon
         entity_names,
         root_cid,
     ) = {
-        let s = stats.read().await;
+        let s = shared_stats.read().await;
         (
             s.our_did.clone(),
             s.endpoint_id.clone(),
@@ -212,9 +212,9 @@ fn did_to_ipns_path(did: &str) -> Option<String> {
 }
 
 async fn handle_bootstrap_yaml(State(state): State<StatusState>) -> impl IntoResponse {
-    let stats = &state.stats;
+    let shared_stats = &state.stats;
     let (root_cid, kubo_rpc_url) = {
-        let s = stats.read().await;
+        let s = shared_stats.read().await;
         (s.root_cid.clone(), s.kubo_rpc_url.clone())
     };
 
@@ -272,7 +272,7 @@ async fn handle_claim(
     let new_owners = vec![body.owner.clone()];
     {
         let mut s = state.stats.write().await;
-        s.owners = new_owners.clone();
+        s.owners.clone_from(&new_owners);
     }
     info!(owner = %body.owner, "{}", crate::i18n::t("runtime-claimed"));
 
@@ -342,8 +342,7 @@ fn persist_owners_to_config(path: &std::path::Path, owners: &[String]) -> anyhow
 /// Called at startup (from known owners list) and when `POST /claim` fires.
 pub async fn grant_owners_in_acl(acl: &SharedAcl, owners: &[String]) {
     use ma_core::CapabilityEntry;
-    let wildcard: std::collections::BTreeSet<String> =
-        std::iter::once("*".to_string()).collect();
+    let wildcard: std::collections::BTreeSet<String> = std::iter::once("*".to_string()).collect();
     let mut map = acl.write().await;
     for owner in owners {
         map.insert(owner.clone(), CapabilityEntry::Allow(wildcard.clone()));

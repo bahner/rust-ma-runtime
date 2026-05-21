@@ -32,8 +32,11 @@ runtime:
 
 
   # Kind definitions.
-  # Flat map: full protocol ID string -> kind descriptor.
+  # Flat map: full protocol ID string → kind descriptor (bootstrap input only).
   # The `protocol` field is omitted — the map key IS the protocol ID.
+  # When published to IPFS, the runtime converts this to a nested tree so that
+  # IPLD path traversal works:
+  #   ipfs dag get .../kinds/ma/stateless/python/0.0.1
   kinds:
     /ma/stateless/python/0.0.1:
       wasi: true

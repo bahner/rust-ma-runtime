@@ -18,9 +18,7 @@ use ma_core::ipfs_add;
 use serde::{Deserialize, Serialize};
 
 use crate::acl::AclMap;
-use crate::entity::{
-    EntityNode, IpldLink, KindNode, KindRef, KindTree, PluginKind, RuntimeManifest,
-};
+use crate::entity::{EntityNode, IpldLink, KindNode, KindTree, PluginKind, RuntimeManifest};
 use crate::kubo;
 use crate::plugin;
 
@@ -48,7 +46,7 @@ pub struct BootstrapRuntime {
     #[serde(default)]
     pub entities: HashMap<String, BootstrapEntity>,
     /// Named ACL library: name → inline `AclMap` published to IPFS at bootstrap.
-    /// Reference an ACL by name in an EntityNode's `acl` field.
+    /// Reference an ACL by name in an `EntityNode`'s `acl` field.
     #[serde(default)]
     pub acls: HashMap<String, AclMap>,
 }
@@ -148,9 +146,8 @@ pub async fn build_manifest(
     runtime_config: BTreeMap<String, serde_json::Value>,
     old_root_cid: Option<&str>,
 ) -> Result<BootstrapResult> {
-
     // 1. Publish kind nodes.
-    let mut kinds: KindTree = BTreeMap::new();
+    let mut kinds = KindTree::default();
     for (protocol, bk) in &cfg.kinds {
         let node = KindNode {
             protocol: protocol.clone(),
@@ -162,7 +159,7 @@ pub async fn build_manifest(
             .await
             .with_context(|| format!("dag_put kind {protocol}"))?;
         tracing::info!(protocol = %protocol, cid = %cid, "Published kind node");
-        kinds.insert(protocol.clone(), KindRef::Link(IpldLink::new(cid)));
+        kinds.insert_protocol(protocol, IpldLink::new(cid));
     }
 
     // 2. Build and publish entity nodes.
@@ -173,7 +170,12 @@ pub async fn build_manifest(
                 tracing::info!(name = %name, cid = %cid, "Registering pre-published entity");
                 IpldLink::new(cid)
             }
-            BootstrapEntity::Inline { kind, behavior, acl, state } => {
+            BootstrapEntity::Inline {
+                kind,
+                behavior,
+                acl,
+                state,
+            } => {
                 let node = EntityNode {
                     kind: kind.clone(),
                     behavior: behavior.clone(),
@@ -258,12 +260,12 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
 
     // Kinds: fetch each KindNode by CID.
     let mut kinds = BootstrapKindsDict::new();
-    for (protocol, kind_ref) in &manifest.kinds {
-        let node: KindNode = kubo::dag_get(kubo_url, &kind_ref.link().cid)
+    for (protocol, kind_link) in manifest.kinds.iter_protocols() {
+        let node: KindNode = kubo::dag_get(kubo_url, &kind_link.cid)
             .await
             .with_context(|| format!("fetching kind {protocol}"))?;
         kinds.insert(
-            protocol.clone(),
+            protocol,
             BootstrapKind {
                 api: node.api,
                 host_functions: node.host_functions,

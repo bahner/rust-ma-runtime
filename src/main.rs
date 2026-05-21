@@ -98,7 +98,9 @@ async fn main() -> Result<()> {
     // headless config automatically so the daemon works out of the box without
     // manual configuration.
     let bundle_path = config.effective_secret_bundle()?;
-    let config = if !bundle_path.exists() {
+    let config = if bundle_path.exists() {
+        config
+    } else {
         warn!("No config found.");
         warn!("Initialising new runtime identity.");
         Config::gen_headless(&cli.ma, MA_DEFAULT_SLUG)?;
@@ -117,8 +119,6 @@ async fn main() -> Result<()> {
             .context("failed to re-save bundle with 'runtime_ipns' key")?;
         warn!("Generated headless config.");
         Config::from_args(&cli.ma, MA_DEFAULT_SLUG)?
-    } else {
-        config
     };
 
     // ── gen-root-cid: publish bootstrap tree + lang files to IPFS, print root CID, exit ──
@@ -158,10 +158,9 @@ async fn main() -> Result<()> {
             .await
             .context("kubo RPC is not reachable for lang refresh")?;
 
-        let refresh =
-            bootstrap::refresh_lang_in_manifest(&config.kubo_rpc_url, &cli.lang_dir)
-                .await
-                .context("refreshing lang failed")?;
+        let refresh = bootstrap::refresh_lang_in_manifest(&config.kubo_rpc_url, &cli.lang_dir)
+            .await
+            .context("refreshing lang failed")?;
         info!(
             lang_cid = %refresh.lang_cid,
             "Lang files refreshed"

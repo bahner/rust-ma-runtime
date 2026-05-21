@@ -5,10 +5,7 @@ use anyhow::{Context, Result};
 use ma_core::check_cap;
 use tokio::sync::RwLock;
 
-pub use ma_core::{
-    normalize_principal, AclMap, CapabilityEntry, GROUP_PREFIX, CAP_IPFS,
-    CAP_RPC,
-};
+pub use ma_core::{normalize_principal, AclMap, CapabilityEntry, CAP_IPFS, CAP_RPC, GROUP_PREFIX};
 
 /// In-memory cache of named ACLs.
 ///
@@ -96,7 +93,9 @@ where
         return Err(anyhow::anyhow!("access denied for {caller}"));
     }
     if matches!(acl.get("*"), Some(CapabilityEntry::Deny)) {
-        return Err(anyhow::anyhow!("access denied for {caller} (wildcard deny)"));
+        return Err(anyhow::anyhow!(
+            "access denied for {caller} (wildcard deny)"
+        ));
     }
 
     // Step 2 — synchronous Allow check (handles principal entries + wildcard).
@@ -125,7 +124,9 @@ where
         if let CapabilityEntry::Allow(cap_set) = entry {
             let members = resolve_group(key).await.unwrap_or_default();
             if members.iter().any(|m| normalize_principal(m) == normalized)
-                && caps.iter().any(|c| cap_set.contains(*c) || cap_set.contains("*"))
+                && caps
+                    .iter()
+                    .any(|c| cap_set.contains(*c) || cap_set.contains("*"))
             {
                 return Ok(());
             }
@@ -196,13 +197,19 @@ mod tests {
 
     #[test]
     fn explicit_deny_wins_over_wildcard_allow() {
-        let acl = m(&[("*", allow(&["rpc", "ipfs"])), ("did:ma:bandit", CapabilityEntry::Deny)]);
+        let acl = m(&[
+            ("*", allow(&["rpc", "ipfs"])),
+            ("did:ma:bandit", CapabilityEntry::Deny),
+        ]);
         assert!(check_cap(&acl, "did:ma:bandit", CAP_RPC).is_err());
     }
 
     #[test]
     fn exact_match_restricts_below_wildcard() {
-        let acl = m(&[("*", allow(&["rpc", "ipfs"])), ("did:ma:bob", allow(&["rpc"]))]);
+        let acl = m(&[
+            ("*", allow(&["rpc", "ipfs"])),
+            ("did:ma:bob", allow(&["rpc"])),
+        ]);
         assert!(check_cap(&acl, "did:ma:bob", CAP_RPC).is_ok());
         assert!(check_cap(&acl, "did:ma:bob", CAP_IPFS).is_err());
     }
@@ -260,10 +267,7 @@ mod tests {
             ("+project.readers", allow(&["read"])),
             ("+project.writers", allow(&["write"])),
         ]);
-        let resolve = |g: &str| {
-            let g = g.to_string();
-            async move { Ok(vec!["did:ma:alice".to_string()]) }
-        };
+        let resolve = |_g: &str| async move { Ok(vec!["did:ma:alice".to_string()]) };
         // Check read via readers group.
         let r1 = check_full(&acl, "did:ma:alice", &["read"], resolve).await;
         assert!(r1.is_ok());
@@ -298,8 +302,7 @@ mod tests {
     async fn check_full_allow_via_allow_entry() {
         use super::check_full;
         let acl = m(&[("did:ma:alice", allow(&["read"]))]);
-        let result =
-            check_full(&acl, "did:ma:alice", &["read"], |_| async { Ok(vec![]) }).await;
+        let result = check_full(&acl, "did:ma:alice", &["read"], |_| async { Ok(vec![]) }).await;
         assert!(result.is_ok());
     }
 
@@ -310,8 +313,7 @@ mod tests {
             ("*", allow(&["rpc", "ipfs"])),
             ("did:ma:bandit", CapabilityEntry::Deny),
         ]);
-        let result =
-            check_full(&acl, "did:ma:bandit", &["rpc"], |_| async { Ok(vec![]) }).await;
+        let result = check_full(&acl, "did:ma:bandit", &["rpc"], |_| async { Ok(vec![]) }).await;
         assert!(result.is_err());
     }
 
@@ -371,10 +373,10 @@ mod tests {
     async fn check_full_group_non_member_denied() {
         use super::check_full;
         let acl = m(&[("+carlotta.friends", allow(&["fortune"]))]);
-        let result =
-            check_full(&acl, "did:ma:stranger", &["fortune"], |_| async { Ok(vec![]) })
-                .await;
+        let result = check_full(&acl, "did:ma:stranger", &["fortune"], |_| async {
+            Ok(vec![])
+        })
+        .await;
         assert!(result.is_err());
     }
 }
-

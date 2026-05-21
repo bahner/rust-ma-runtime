@@ -5,9 +5,130 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
-/// Flat map: protocol ID → kind reference.
-/// Keys are full protocol ID strings, e.g. `/ma/stateless/python/0.0.1`.
-pub type KindTree = BTreeMap<String, KindRef>;
+/// Nested IPLD kinds tree — enables IPLD path traversal like:
+///   `ipfs dag get .../kinds/ma/stateless/python/0.0.1`
+///
+/// Protocol IDs such as `/ma/stateless/python/0.0.1` are stored by stripping
+/// the leading `/` and splitting on `/`, forming a tree:
+///   `kinds.ma.stateless.python["0.0.1"]` = `{"/": "bafy..."}`
+///
+/// Use [`KindTree::insert_protocol`], [`KindTree::get_protocol`], etc.
+/// for protocol-ID-based access. Serialises as a plain nested JSON/CBOR object.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct KindTree(BTreeMap<String, KindTreeNode>);
+
+/// A node in the nested [`KindTree`].
+///
+/// Either a leaf (IPLD link to a published [`KindNode`]) or a branch
+/// (inner map continuing the path traversal).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum KindTreeNode {
+    /// Leaf: IPLD link to a published [`KindNode`].
+    Leaf(IpldLink),
+    /// Branch: inner map continuing the path traversal.
+    Branch(BTreeMap<String, Self>),
+}
+
+impl KindTree {
+    /// Insert a kind by full protocol ID (e.g. `/ma/stateless/python/0.0.1`).
+    pub fn insert_protocol(&mut self, protocol: &str, link: IpldLink) {
+        let segments: Vec<&str> = protocol.trim_start_matches('/').split('/').collect();
+        kind_tree_insert(&mut self.0, &segments, link);
+    }
+
+    /// Look up an IPLD link by full protocol ID.
+    pub fn get_protocol(&self, protocol: &str) -> Option<&IpldLink> {
+        let segments: Vec<&str> = protocol.trim_start_matches('/').split('/').collect();
+        kind_tree_get(&self.0, &segments)
+    }
+
+    /// Remove a kind by full protocol ID. Returns `true` when something was removed.
+    pub fn remove_protocol(&mut self, protocol: &str) -> bool {
+        let segments: Vec<&str> = protocol.trim_start_matches('/').split('/').collect();
+        kind_tree_remove(&mut self.0, &segments)
+    }
+
+    /// Collect all protocol IDs stored in this tree (each prefixed with `/`).
+    pub fn protocol_ids(&self) -> Vec<String> {
+        let mut ids = Vec::new();
+        kind_tree_collect_ids(&self.0, "", &mut ids);
+        ids
+    }
+
+    /// Iterate over all `(protocol_id, link)` pairs in the tree.
+    pub fn iter_protocols(&self) -> impl Iterator<Item = (String, &IpldLink)> {
+        self.protocol_ids()
+            .into_iter()
+            .filter_map(|id| self.get_protocol(&id).map(|link| (id, link)))
+    }
+}
+
+fn kind_tree_insert(map: &mut BTreeMap<String, KindTreeNode>, segments: &[&str], link: IpldLink) {
+    match segments {
+        [] => {}
+        [key] => {
+            map.insert((*key).to_string(), KindTreeNode::Leaf(link));
+        }
+        [key, rest @ ..] => {
+            let entry = map
+                .entry((*key).to_string())
+                .or_insert_with(|| KindTreeNode::Branch(BTreeMap::new()));
+            if let KindTreeNode::Branch(inner) = entry {
+                kind_tree_insert(inner, rest, link);
+            }
+        }
+    }
+}
+
+fn kind_tree_get<'a>(
+    map: &'a BTreeMap<String, KindTreeNode>,
+    segments: &[&str],
+) -> Option<&'a IpldLink> {
+    match segments {
+        [] => None,
+        [key] => match map.get(*key)? {
+            KindTreeNode::Leaf(link) => Some(link),
+            KindTreeNode::Branch(_) => None,
+        },
+        [key, rest @ ..] => match map.get(*key)? {
+            KindTreeNode::Branch(inner) => kind_tree_get(inner, rest),
+            KindTreeNode::Leaf(_) => None,
+        },
+    }
+}
+
+fn kind_tree_remove(map: &mut BTreeMap<String, KindTreeNode>, segments: &[&str]) -> bool {
+    match segments {
+        [] => false,
+        [key] => map.remove(*key).is_some(),
+        [key, rest @ ..] => {
+            if let Some(KindTreeNode::Branch(inner)) = map.get_mut(*key) {
+                let removed = kind_tree_remove(inner, rest);
+                if inner.is_empty() {
+                    map.remove(*key);
+                }
+                removed
+            } else {
+                false
+            }
+        }
+    }
+}
+
+fn kind_tree_collect_ids(
+    map: &BTreeMap<String, KindTreeNode>,
+    prefix: &str,
+    ids: &mut Vec<String>,
+) {
+    for (key, node) in map {
+        let path = format!("{prefix}/{key}");
+        match node {
+            KindTreeNode::Leaf(_) => ids.push(path),
+            KindTreeNode::Branch(inner) => kind_tree_collect_ids(inner, &path, ids),
+        }
+    }
+}
 
 // ── IPLD link ─────────────────────────────────────────────────────────────────
 
@@ -137,27 +258,6 @@ pub struct KindNode {
     pub wasi: bool,
 }
 
-/// Kind reference stored in nested dict layout:
-/// kinds.<family>.<implementation>.
-///
-/// New manifests store a plain IPLD link. Older manifests stored an object
-/// with duplicted metadata and a nested `link` field.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum KindRef {
-    Link(IpldLink),
-    Legacy { link: IpldLink },
-}
-
-impl KindRef {
-    #[allow(dead_code)]
-    pub const fn link(&self) -> &IpldLink {
-        match self {
-            Self::Link(link) | Self::Legacy { link } => link,
-        }
-    }
-}
-
 /// A namespace within the runtime manifest. Owned by a single DID.
 ///
 /// ## Key conventions
@@ -262,7 +362,7 @@ pub struct RuntimeManifest {
 impl RuntimeManifest {
     #[allow(dead_code)]
     pub fn kind_link(&self, protocol: &str) -> Option<&IpldLink> {
-        self.kinds.get(protocol).map(|r| r.link())
+        self.kinds.get_protocol(protocol)
     }
 }
 
@@ -284,7 +384,50 @@ pub struct SendEnvelope {
 
 #[cfg(test)]
 mod tests {
-    use super::{EntityNode, IpldLink, PluginKind};
+    use super::{EntityNode, IpldLink, KindTree, PluginKind};
+
+    #[test]
+    fn kind_tree_nested_serialization() {
+        let mut tree = KindTree::default();
+        tree.insert_protocol("/ma/stateless/python/0.0.1", IpldLink::new("bafyAAA"));
+        tree.insert_protocol("/ma/stateful/python/0.0.1", IpldLink::new("bafyBBB"));
+
+        let val = serde_json::to_value(&tree).expect("serialize kind tree");
+        // Verify nested structure accessible via path segments.
+        assert_eq!(
+            val["ma"]["stateless"]["python"]["0.0.1"]["/"], "bafyAAA",
+            "stateless python leaf"
+        );
+        assert_eq!(
+            val["ma"]["stateful"]["python"]["0.0.1"]["/"], "bafyBBB",
+            "stateful python leaf"
+        );
+    }
+
+    #[test]
+    fn kind_tree_protocol_ids_roundtrip() {
+        let mut tree = KindTree::default();
+        tree.insert_protocol("/ma/stateless/python/0.0.1", IpldLink::new("bafyAAA"));
+        tree.insert_protocol("/ma/stateful/python/0.0.1", IpldLink::new("bafyBBB"));
+
+        let mut ids = tree.protocol_ids();
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec!["/ma/stateful/python/0.0.1", "/ma/stateless/python/0.0.1"]
+        );
+    }
+
+    #[test]
+    fn kind_tree_remove_prunes_empty_branches() {
+        let mut tree = KindTree::default();
+        tree.insert_protocol("/ma/stateless/python/0.0.1", IpldLink::new("bafyAAA"));
+        assert!(tree.remove_protocol("/ma/stateless/python/0.0.1"));
+        assert!(
+            tree.protocol_ids().is_empty(),
+            "tree should be empty after remove"
+        );
+    }
 
     #[test]
     fn serializing_entity_without_state_omits_state_field() {
