@@ -184,38 +184,42 @@ async fn handle_entity_plugin_message(
         _ => None,
     };
 
-    if !entity.acl.is_empty() {
-        let acl_name = &entity.acl;
-        let acl_key = format!("acls.{acl_name}");
-        let maybe_acl = ctx.acl_cache.read().await.get(&acl_key).cloned();
-        if let Some(ref acl_map) = maybe_acl {
-            let verb_ref = verb_str.as_deref().unwrap_or("*");
-            let root_cid = current_root_cid(ctx).await.unwrap_or_default();
-            let url = ctx.kubo_rpc_url.to_string();
-            let rc = root_cid.clone();
-            crate::acl::check_full(acl_map, &message.from, &[verb_ref, "*"], |g| {
-                let url = url.clone();
-                let rc = rc.clone();
-                let g = g.to_string();
-                async move { crate::acl::fetch_group_members(&url, &g, &rc).await }
-            })
-            .await
-            .with_context(|| {
-                format!(
-                    "entity '{}' ACL denied {} calling {:?}",
-                    entity.fragment, message.from, verb_str
-                )
-            })?;
-        } else {
-            // ACL name set but not in cache → deny (fail-closed).
-            return Err(anyhow!(
-                "entity '{}' ACL '{}' not found in cache: access denied",
-                entity.fragment,
-                acl_name
-            ));
-        }
+    // Empty acl field → deny-all (fail-closed). Matches EntityNode.acl doc contract.
+    if entity.acl.is_empty() {
+        return Err(anyhow!(
+            "entity '{}' has no ACL configured: access denied (fail-closed)",
+            entity.fragment
+        ));
     }
-    // Empty acl field → open access (no restriction at entity level).
+    let acl_name = &entity.acl;
+    let acl_key = format!("acls.{acl_name}");
+    let maybe_acl = ctx.acl_cache.read().await.get(&acl_key).cloned();
+    if let Some(ref acl_map) = maybe_acl {
+        let verb_ref = verb_str.as_deref().unwrap_or("*");
+        let root_cid = current_root_cid(ctx).await.unwrap_or_default();
+        let url = ctx.kubo_rpc_url.to_string();
+        let rc = root_cid.clone();
+        crate::acl::check_full(acl_map, &message.from, &[verb_ref, "*"], |g| {
+            let url = url.clone();
+            let rc = rc.clone();
+            let g = g.to_string();
+            async move { crate::acl::fetch_group_members(&url, &g, &rc).await }
+        })
+        .await
+        .with_context(|| {
+            format!(
+                "entity '{}' ACL denied {} calling {:?}",
+                entity.fragment, message.from, verb_str
+            )
+        })?;
+    } else {
+        // ACL name set but not in cache → deny (fail-closed).
+        return Err(anyhow!(
+            "entity '{}' ACL '{}' not found in cache: access denied",
+            entity.fragment,
+            acl_name
+        ));
+    }
 
     let mut content_bytes = Vec::new();
     ciborium::ser::into_writer(&term, &mut content_bytes)
@@ -509,7 +513,7 @@ async fn handle_single_entity(
                 Some(link) => crate::kubo::dag_get(ctx.kubo_rpc_url, &link.cid).await?,
                 None => EntityNode {
                     kind: String::new(),
-                    behavior: IpldLink::new(""),
+                    behavior: String::new(),
                     acl: String::new(),
                     state: None,
                 },
@@ -709,6 +713,17 @@ async fn handle_entity_acl_field(
     }
 }
 
+/// Handle `:kinds` RPC operations.
+///
+/// Protocol IDs contain slashes and cannot appear as dot-path segments.
+/// All kinds operations use tuple args:
+///
+/// | Term                                              | Description  |
+/// |---------------------------------------------------|--------------|
+/// | `:kinds`                                          | list all IDs |
+/// | `[":kinds", "<protocol>"]`                        | get KindNode |
+/// | `[":kinds:", "<protocol>"]`                       | delete       |
+/// | `[":kinds:", "<protocol>", <dag-cbor-bytes>]`     | upsert       |
 async fn handle_kinds_ns(
     message: &ma_core::Message,
     rest: &[String],
@@ -717,96 +732,72 @@ async fn handle_kinds_ns(
     verb: &str,
     ctx: &RpcHandlerCtx<'_>,
 ) -> Result<()> {
-    match rest {
-        [] => match (tail, args.as_slice()) {
-            (None | Some("edit"), []) => {
-                let root_cid = current_root_cid(ctx).await?;
-                let manifest: RuntimeManifest =
-                    crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
-                let mut out = Vec::new();
-                ciborium::ser::into_writer(&manifest.kinds, &mut out)
-                    .context("encoding kinds as CBOR")?;
-                send_rpc_reply(message, ctx, out).await
-            }
-            (Some(""), _) => {
-                // The :kinds root is protected — silently ignore delete attempts.
-                send_rpc_ok_reply(message, ctx).await
-            }
-            _ => Err(anyhow!("unknown kinds operation: {verb}")),
-        },
-        [family] => match (tail, args.as_slice()) {
-            (None | Some("edit"), []) => {
-                let root_cid = current_root_cid(ctx).await?;
-                let manifest: RuntimeManifest =
-                    crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
-                let val = manifest
-                    .kinds
-                    .get(family.as_str())
-                    .ok_or_else(|| anyhow!("kind family not found: {family}"))?;
-                let mut out = Vec::new();
-                ciborium::ser::into_writer(val, &mut out)
-                    .context("encoding kind family as CBOR")?;
-                send_rpc_reply(message, ctx, out).await
-            }
-            _ => Err(anyhow!("unknown kinds.{family} operation: {verb}")),
-        },
-        [family, implementation] => match (tail, args.as_slice()) {
-            (None | Some("edit"), []) => {
-                let root_cid = current_root_cid(ctx).await?;
-                let manifest: RuntimeManifest =
-                    crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
-                let val = manifest
-                    .kinds
-                    .get(family.as_str())
-                    .and_then(|f| f.get(implementation.as_str()))
-                    .ok_or_else(|| anyhow!("kind not found: {family}/{implementation}"))?;
-                let mut out = Vec::new();
-                ciborium::ser::into_writer(val, &mut out).context("encoding kind impl as CBOR")?;
-                send_rpc_reply(message, ctx, out).await
-            }
-            (Some(""), []) => {
-                let family = family.as_str().to_string();
-                let implementation = implementation.as_str().to_string();
-                with_manifest(ctx, |m| {
-                    if let Some(fam) = m.kinds.get_mut(&family) {
-                        fam.remove(&implementation);
-                    }
-                    Ok(())
-                })
-                .await?;
-                let mut out = Vec::new();
-                ciborium::ser::into_writer(&CborValue::Text(":ok".to_string()), &mut out)
-                    .context("encoding kinds-delete reply as CBOR")?;
-                send_rpc_reply(message, ctx, out).await
-            }
-            (Some(""), [CborValue::Text(cid)]) => {
-                use crate::entity::{IpldLink as Link, KindRef};
-                let family = family.as_str().to_string();
-                let implementation = implementation.as_str().to_string();
-                let cid = cid.as_str().to_string();
-                let new_root = with_manifest(ctx, |m| {
-                    m.kinds
-                        .entry(family)
-                        .or_default()
-                        .insert(implementation, KindRef::Link(Link::new(&cid)));
-                    Ok(())
-                })
-                .await?;
-                let mut out = Vec::new();
-                ciborium::ser::into_writer(
-                    &CborValue::Array(vec![
-                        CborValue::Text(":ok".to_string()),
-                        CborValue::Text(new_root),
-                    ]),
-                    &mut out,
-                )
-                .context("encoding kinds-set reply as CBOR")?;
-                send_rpc_reply(message, ctx, out).await
-            }
-            _ => Err(anyhow!(
-                "unknown kinds.{family}.{implementation} operation: {verb}"
-            )),
-        },
+    if !rest.is_empty() {
+        return Err(anyhow!(
+            "unknown kinds operation: {verb} \
+             (protocol IDs are tuple args, not dot-path segments)"
+        ));
+    }
+    match (tail, args.as_slice()) {
+        // :kinds → list all protocol IDs
+        (None, []) => {
+            let root_cid = current_root_cid(ctx).await?;
+            let manifest: RuntimeManifest =
+                crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+            let ids: Vec<&str> = manifest.kinds.keys().map(String::as_str).collect();
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(&ids, &mut out)
+                .context("encoding kinds list as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        // [":kinds", "<protocol>"] → get KindNode as CBOR
+        (None, [CborValue::Text(protocol)]) => {
+            let root_cid = current_root_cid(ctx).await?;
+            let manifest: RuntimeManifest =
+                crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+            let val = manifest
+                .kinds
+                .get(protocol.as_str())
+                .ok_or_else(|| anyhow!("kind not found: {protocol}"))?;
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(val, &mut out).context("encoding kind as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        // [":kinds:", "<protocol>"] → delete
+        (Some(""), [CborValue::Text(protocol)]) => {
+            let protocol = protocol.clone();
+            with_manifest(ctx, |m| {
+                m.kinds.remove(&protocol);
+                Ok(())
+            })
+            .await?;
+            send_rpc_ok_reply(message, ctx).await
+        }
+        // [":kinds:", "<protocol>", <dag-cbor-bytes>] → upsert
+        (Some(""), [CborValue::Text(protocol), CborValue::Bytes(cbor_bytes)]) => {
+            use crate::entity::{IpldLink as Link, KindRef};
+            let protocol = protocol.clone();
+            let cid = crate::kubo::dag_put_raw(ctx.kubo_rpc_url, cbor_bytes)
+                .await
+                .context("dag_put kind")?;
+            let new_root = with_manifest(ctx, |m| {
+                m.kinds.insert(protocol, KindRef::Link(Link::new(&cid)));
+                Ok(())
+            })
+            .await?;
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Text(new_root),
+                ]),
+                &mut out,
+            )
+            .context("encoding kinds-upsert reply as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        // [":kinds:"] → delete root (protected — silently accept)
+        (Some(""), []) => send_rpc_ok_reply(message, ctx).await,
         _ => Err(anyhow!("unknown kinds operation: {verb}")),
     }
 }
@@ -891,7 +882,7 @@ async fn handle_config_ns(
 // ── Namespace dispatching `:ns.*` ─────────────────────────────────────────────
 
 /// Handles that may not be used as namespace names.
-const RESERVED_NS: &[&str] = &["acl", "acls", "protocol", "kinds", "entities", "locales", "config"];
+const RESERVED_NS: &[&str] = &["acl", "acls", "protocol", "kinds", "entities", "lang", "config"];
 
 /// Check the namespace gate ACL for `caller` against `caps`.
 ///

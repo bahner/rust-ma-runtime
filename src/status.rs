@@ -22,6 +22,7 @@ pub struct Stats {
     pub ipfs_publisher_enabled: bool,
     pub entity_names: Vec<String>,
     pub root_cid: Option<String>,
+    pub kubo_rpc_url: String,
 }
 
 pub type SharedStats = Arc<RwLock<Stats>>;
@@ -50,6 +51,7 @@ pub fn spawn_status_server(
     let status_router = Router::new()
         .route("/", get(handle_index))
         .route("/status.json", get(handle_status_json))
+        .route("/bootstrap.yaml", get(handle_bootstrap_yaml))
         .layer(cors)
         .with_state(stats);
 
@@ -127,7 +129,7 @@ th{{background:#222}}a{{color:#7cf}}</style></head>
 <tr><td>Entities</td><td>{entities_html}</td></tr>
 <tr><td>Runtime</td><td>{root_cid_html}</td></tr>
 </table>
-<p><a href="/status.json">status.json</a></p>
+<p><a href="/status.json">status.json</a> &bull; <a href="/bootstrap.yaml">bootstrap.yaml</a></p>
 </body></html>"#
     );
     Html(html)
@@ -181,4 +183,38 @@ async fn handle_status_json(State(stats): State<SharedStats>) -> impl IntoRespon
 fn did_to_ipns_path(did: &str) -> Option<String> {
     let identity = did.strip_prefix("did:ma:")?;
     Some(format!("/ipns/{identity}"))
+}
+
+async fn handle_bootstrap_yaml(State(stats): State<SharedStats>) -> impl IntoResponse {
+    let (root_cid, kubo_rpc_url) = {
+        let s = stats.read().await;
+        (s.root_cid.clone(), s.kubo_rpc_url.clone())
+    };
+
+    let Some(cid) = root_cid else {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            [(axum::http::header::CONTENT_TYPE, "text/plain")],
+            "Runtime not yet initialised (no root CID)".to_string(),
+        )
+            .into_response();
+    };
+
+    match crate::bootstrap::export_bootstrap_yaml(&cid, &kubo_rpc_url).await {
+        Ok(yaml) => (
+            axum::http::StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "text/yaml; charset=utf-8")],
+            yaml,
+        )
+            .into_response(),
+        Err(e) => {
+            warn!(error = %e, "failed to export bootstrap.yaml");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                [(axum::http::header::CONTENT_TYPE, "text/plain")],
+                format!("export failed: {e}"),
+            )
+                .into_response()
+        }
+    }
 }

@@ -34,7 +34,7 @@ struct Cli {
     #[arg(long)]
     acl_file: Option<PathBuf>,
 
-    /// Publish FTL locales + manifest from YAML and print the resulting root CID, then exit.
+    /// Publish FTL lang files + manifest from YAML and print the resulting root CID, then exit.
     #[arg(long)]
     gen_root_cid: Option<PathBuf>,
 
@@ -42,14 +42,14 @@ struct Cli {
     #[arg(long)]
     root_cid: Option<String>,
 
-    /// Re-publish all locale files and update `root_cid` to a manifest
-    /// that references the refreshed locale CIDs.
-    #[arg(long = "gen-locales-cid", visible_alias = "locales-cid")]
-    gen_locales_cid: bool,
+    /// Re-publish all lang files and update `root_cid` to a manifest
+    /// that references the refreshed lang CIDs.
+    #[arg(long = "gen-lang-cid", visible_alias = "lang-cid")]
+    gen_lang_cid: bool,
 
-    /// Directory containing `.ftl` locale files.
-    #[arg(long, default_value = "locales")]
-    locales_dir: PathBuf,
+    /// Directory containing `.ftl` lang files.
+    #[arg(long, default_value = "lang")]
+    lang_dir: PathBuf,
 
     /// Poll interval in milliseconds.
     #[arg(long, default_value_t = 100)]
@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
     let config = Config::from_args(&cli.ma, MA_DEFAULT_SLUG)?;
     config.init_logging()?;
 
-    // ── gen-root-cid: publish bootstrap tree + locales to IPFS, print root CID, exit ──
+    // ── gen-root-cid: publish bootstrap tree + lang files to IPFS, print root CID, exit ──
     if let Some(ref yaml_path) = cli.gen_root_cid {
         let publisher = IpfsDidPublisher::new(&config.kubo_rpc_url)
             .with_context(|| format!("invalid kubo_rpc_url: {}", config.kubo_rpc_url))?;
@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
         let result = bootstrap::run_bootstrap(
             yaml_path,
             &config.kubo_rpc_url,
-            &cli.locales_dir,
+            &cli.lang_dir,
             runtime_config,
             cli.root_cid.as_deref(),
         )
@@ -120,27 +120,27 @@ async fn main() -> Result<()> {
         info!(root_cid = %cid, "runtime head reset for this session");
     }
 
-    // ── gen-locales-cid: publish locales map only (no manifest rewrite) ───────
-    if cli.gen_locales_cid {
+    // ── gen-lang-cid: publish lang map only (no manifest rewrite) ───────
+    if cli.gen_lang_cid {
         let publisher = IpfsDidPublisher::new(&config.kubo_rpc_url)
             .with_context(|| format!("invalid kubo_rpc_url: {}", config.kubo_rpc_url))?;
         publisher
             .wait_until_ready(10)
             .await
-            .context("kubo RPC is not reachable for locales refresh")?;
+            .context("kubo RPC is not reachable for lang refresh")?;
 
         let refresh =
-            bootstrap::refresh_locales_in_manifest(&config.kubo_rpc_url, &cli.locales_dir)
+            bootstrap::refresh_lang_in_manifest(&config.kubo_rpc_url, &cli.lang_dir)
                 .await
-                .context("refreshing locales failed")?;
+                .context("refreshing lang failed")?;
         info!(
-            locales_cid = %refresh.locales_cid,
-            "Locales refreshed"
+            lang_cid = %refresh.lang_cid,
+            "Lang files refreshed"
         );
         return Ok(());
     }
 
-    let acl = acl::load_acl(cli.acl_file.as_deref())?;
+    let mut acl = acl::load_acl(cli.acl_file.as_deref())?;
 
     let ipfs_publisher_enabled = config
         .extra
@@ -169,7 +169,7 @@ async fn main() -> Result<()> {
 
     // ── Own DID document (ma extension uses protocol + runtime link) ─────────
     let mut root_cid = cli.root_cid.clone();
-    let locales_cid = bootstrap::get_locales_cid(&config);
+    let lang_cid = bootstrap::get_lang_cid(&config);
     // Først: bygg ma-extension uten runtime-link for å få DID
     let ma_base = endpoint
         .ma_extension()
@@ -248,11 +248,11 @@ async fn main() -> Result<()> {
         }
     }
 
-    // ── i18n: fetch locale via RuntimeManifest.locales from IPFS ─────────────
+    // ── i18n: fetch lang via RuntimeManifest.lang from IPFS ─────────────
     i18n::init(
         &cli.lang,
         &config.kubo_rpc_url,
-        locales_cid.as_deref(),
+        lang_cid.as_deref(),
         root_cid.as_deref(),
     )
     .await;
@@ -285,6 +285,21 @@ async fn main() -> Result<()> {
             kubo::dag_get(&config.kubo_rpc_url, rc).await;
         match manifest {
             Ok(m) => {
+                // If the manifest carries a root ACL and no --acl-file was
+                // provided, use the manifest ACL as the transport gate.
+                if cli.acl_file.is_none() {
+                    if let Some(ref link) = m.acl {
+                        match acl::load_acl_from_cid(&config.kubo_rpc_url, &link.cid).await {
+                            Ok(manifest_acl) => {
+                                info!(cid = %link.cid, "Root transport-gate ACL loaded from manifest");
+                                acl = manifest_acl;
+                            }
+                            Err(e) => {
+                                warn!(cid = %link.cid, error = %e, "failed to load root ACL from manifest; keeping file-based ACL");
+                            }
+                        }
+                    }
+                }
                 let mut entries = Vec::new();
                 // Root verb-ACL library: "acls.<name>"
                 for (acl_name, link) in &m.acls {
@@ -352,6 +367,7 @@ async fn main() -> Result<()> {
         ipfs_publisher_enabled,
         entity_names,
         root_cid: root_cid.clone(),
+        kubo_rpc_url: config.kubo_rpc_url.clone(),
         ..Default::default()
     }));
 

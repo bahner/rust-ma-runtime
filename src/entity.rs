@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
-pub type KindTree = BTreeMap<String, BTreeMap<String, KindRef>>;
+/// Flat map: protocol ID → kind reference.
+/// Keys are full protocol ID strings, e.g. `/ma/stateless/python/0.0.1`.
+pub type KindTree = BTreeMap<String, KindRef>;
 
 // ── IPLD link ─────────────────────────────────────────────────────────────────
 
@@ -206,8 +208,8 @@ pub struct NamespaceNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityNode {
     pub kind: String,
-    /// IPLD link to the Wasm plugin bytes stored on IPFS.
-    pub behavior: IpldLink,
+    /// CID of the Wasm plugin bytes stored on IPFS as a raw blob.
+    pub behavior: String,
     /// Entity verb-ACL — name string resolved via `acls.<name>` in the root
     /// manifest (e.g. `"fortune"`). Cached under `"acls.<name>"` at startup.
     /// Empty string means deny-all (fail-closed).
@@ -260,19 +262,7 @@ pub struct RuntimeManifest {
 impl RuntimeManifest {
     #[allow(dead_code)]
     pub fn kind_link(&self, protocol: &str) -> Option<&IpldLink> {
-        let (_, family, implementation, _) = split_kind_protocol(protocol)?;
-        Some(self.kinds.get(family)?.get(implementation)?.link())
-    }
-}
-
-#[allow(dead_code)]
-fn split_kind_protocol(protocol: &str) -> Option<(&str, &str, &str, &str)> {
-    // Expected: /ma/<family>/<implementation>/<version>
-    let parts: Vec<&str> = protocol.trim_matches('/').split('/').collect();
-    if parts.len() == 4 && parts[0] == "ma" {
-        Some((parts[0], parts[1], parts[2], parts[3]))
-    } else {
-        None
+        self.kinds.get(protocol).map(|r| r.link())
     }
 }
 
@@ -300,7 +290,7 @@ mod tests {
     fn serializing_entity_without_state_omits_state_field() {
         let node = EntityNode {
             kind: "/ma/stateless/python/0.0.1".to_string(),
-            behavior: IpldLink::new("bafybehavior"),
+            behavior: "bafybehavior".to_string(),
             acl: String::new(),
             state: None,
         };
@@ -316,7 +306,7 @@ mod tests {
     fn serializing_entity_always_includes_acl_field() {
         let node = EntityNode {
             kind: "/ma/stateless/python/0.0.1".to_string(),
-            behavior: IpldLink::new("bafybehavior"),
+            behavior: "bafybehavior".to_string(),
             acl: String::new(),
             state: None,
         };
@@ -331,7 +321,7 @@ mod tests {
     fn deserializing_entity_accepts_missing_state_field() {
         let raw = r#"{
             "kind": "/ma/stateless/python/0.0.1",
-            "behavior": {"/": "bafybehavior"},
+            "behavior": "bafybehavior",
             "acl": ""
         }"#;
 
@@ -346,7 +336,7 @@ mod tests {
     fn deserializing_entity_accepts_null_state_field() {
         let raw = r#"{
             "kind": "/ma/stateless/python/0.0.1",
-            "behavior": {"/": "bafybehavior"},
+            "behavior": "bafybehavior",
             "acl": "",
             "state": null
         }"#;

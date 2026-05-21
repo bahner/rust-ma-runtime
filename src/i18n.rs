@@ -1,7 +1,7 @@
 //! Fluent-based i18n for log messages.
 //!
-//! FTL locale files live on IPFS and are linked either from a standalone
-//! `locales_cid` map or from `RuntimeManifest.locales`.
+//! FTL lang files live on IPFS and are linked either from a standalone
+//! `lang_cid` map or from `RuntimeManifest.lang`.
 //! Call [`init`] once after Kubo is ready.
 //! Falls back to key-name messages if CIDs are absent or Kubo is unreachable,
 //! so early startup logs always produce *something*.
@@ -72,13 +72,13 @@ const MESSAGE_IDS: &[&str] = &[
 
 /// Initialise i18n by fetching the FTL file for `lang` from IPFS.
 ///
-/// `locales_cid` points to a standalone `{lang -> IPLD link}` map.
-/// `root_cid` is used as fallback for older setups that still keep locales in
+/// `lang_cid` points to a standalone `{lang -> IPLD link}` map.
+/// `root_cid` is used as fallback for older setups that still keep lang in
 /// the runtime manifest.
 /// Falls back to using key names as messages if fetching fails or CIDs are
 /// not yet configured.  Safe to call only once; subsequent calls are no-ops.
-pub async fn init(lang: &str, kubo_url: &str, locales_cid: Option<&str>, root_cid: Option<&str>) {
-    let messages = load_messages(lang, kubo_url, locales_cid, root_cid).await;
+pub async fn init(lang: &str, kubo_url: &str, lang_cid: Option<&str>, root_cid: Option<&str>) {
+    let messages = load_messages(lang, kubo_url, lang_cid, root_cid).await;
 
     let _ = MESSAGES.set(messages);
 }
@@ -133,27 +133,27 @@ fn fallback_messages() -> HashMap<String, String> {
         .collect()
 }
 
-fn pick_locale_cid<'a>(lang: &str, locales: &'a HashMap<String, IpldLink>) -> Option<&'a str> {
-    locales
+fn pick_lang_cid<'a>(lang: &str, lang_map: &'a HashMap<String, IpldLink>) -> Option<&'a str> {
+    lang_map
         .get(lang)
-        .or_else(|| locales.get("en"))
-        .or_else(|| locales.values().next())
+        .or_else(|| lang_map.get("en"))
+        .or_else(|| lang_map.values().next())
         .map(|l| l.cid.as_str())
 }
 
 async fn load_messages(
     lang: &str,
     kubo_url: &str,
-    locales_cid: Option<&str>,
+    lang_cid: Option<&str>,
     root_cid: Option<&str>,
 ) -> HashMap<String, String> {
-    if let Some(locales_cid) = locales_cid {
-        let locales: HashMap<String, IpldLink> = match kubo::dag_get(kubo_url, locales_cid).await {
+    if let Some(lang_cid) = lang_cid {
+        let lang_map: HashMap<String, IpldLink> = match kubo::dag_get(kubo_url, lang_cid).await {
             Ok(map) => map,
             Err(_) => return fallback_messages(),
         };
 
-        if let Some(cid) = pick_locale_cid(lang, &locales) {
+        if let Some(cid) = pick_lang_cid(lang, &lang_map) {
             return ma_core::cat_bytes(kubo_url, cid).await.map_or_else(
                 |_| fallback_messages(),
                 |bytes| {
@@ -173,7 +173,7 @@ async fn load_messages(
         Err(_) => return fallback_messages(),
     };
 
-    let cid = pick_locale_cid(lang, &manifest.lang);
+    let cid = pick_lang_cid(lang, &manifest.lang);
 
     match cid {
         Some(cid) => ma_core::cat_bytes(kubo_url, cid).await.map_or_else(

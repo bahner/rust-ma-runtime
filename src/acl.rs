@@ -49,19 +49,13 @@ pub fn parse_acl_key(key: &str) -> Option<(&str, &str)> {
     }
 }
 
-/// Fetch an ACL document by CID from IPFS and parse its `acl` field as [`AclMap`].
+/// Fetch an ACL document by CID from IPFS and deserialise it as [`AclMap`].
 ///
-/// The document must contain an `acl` key with a map of principal → permission string.
-/// The `kind` field (e.g. `/ma/acl/0.0.1`) is ignored; only `acl` is extracted.
+/// The document is stored as a raw DAG-CBOR map of principal → capabilities.
 pub async fn load_acl_from_cid(kubo_rpc_url: &str, cid: &str) -> Result<AclMap> {
-    #[derive(serde::Deserialize)]
-    struct AclDoc {
-        acl: AclMap,
-    }
-    let doc: AclDoc = crate::kubo::dag_get(kubo_rpc_url, cid)
+    crate::kubo::dag_get::<AclMap>(kubo_rpc_url, cid)
         .await
-        .with_context(|| format!("fetching ACL document {cid}"))?;
-    Ok(doc.acl)
+        .with_context(|| format!("fetching ACL document {cid}"))
 }
 
 const MA_DEFAULT_SLUG: &str = "ma";

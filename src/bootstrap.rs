@@ -15,36 +15,46 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use ma_core::ipfs_add;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+use crate::acl::AclMap;
 use crate::entity::{
     EntityNode, IpldLink, KindNode, KindRef, KindTree, PluginKind, RuntimeManifest,
 };
 use crate::kubo;
 use crate::plugin;
 
-pub const LOCALES_CID_KEY: &str = "locales_cid";
+pub const LANG_CID_KEY: &str = "lang_cid";
 
 // ── YAML bootstrap schema ─────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BootstrapYaml {
     pub runtime: BootstrapRuntime,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BootstrapRuntime {
     #[serde(default)]
     pub kinds: BootstrapKindsDict,
-    /// Entities defined under `entities:` in the YAML.
-    /// Keys are bare entity names (e.g. `"fortune"`), not `#`-prefixed.
+    /// Root transport-gate ACL — inline `AclMap` published to IPFS at bootstrap.
+    /// Controls who may use the RPC, inbox, and IPFS services.
+    /// If absent, the daemon falls back to `--acl-file` (or open access).
+    #[serde(default)]
+    pub acl: Option<AclMap>,
+    /// Entities: bare name → inline entity descriptor.
+    /// Bootstrap publishes each as a DAG-CBOR [`EntityNode`] and stores the CID
+    /// in the manifest. Keys are bare names (e.g. `"fortune"`), not `#`-prefixed.
     #[serde(default)]
     pub entities: HashMap<String, BootstrapEntity>,
+    /// Named ACL library: name → inline `AclMap` published to IPFS at bootstrap.
+    /// Reference an ACL by name in an EntityNode's `acl` field.
+    #[serde(default)]
+    pub acls: HashMap<String, AclMap>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BootstrapKind {
-    pub protocol: String,
     #[serde(default)]
     pub api: Vec<String>,
     #[serde(default)]
@@ -53,16 +63,42 @@ pub struct BootstrapKind {
     pub wasi: bool,
 }
 
-pub type BootstrapKindsDict = BTreeMap<String, BTreeMap<String, BootstrapKind>>;
+/// Flat map: protocol ID → kind descriptor.
+/// Keys are full protocol ID strings, e.g. `/ma/stateless/python/0.0.1`.
+pub type BootstrapKindsDict = BTreeMap<String, BootstrapKind>;
 
-#[derive(Debug, Deserialize)]
-pub struct BootstrapEntity {
-    pub kind: String,
-    pub behavior_cid: String,
-    /// Entity-level ACL reference path (e.g. `"ns.acl.write"`).
-    /// Empty string means deny-all.
-    #[serde(default)]
-    pub acl: String,
+/// Entity entry in the bootstrap YAML — either a bare CID or an inline descriptor.
+///
+/// ```yaml
+/// entities:
+///   # pre-published EntityNode — just the CID:
+///   rms: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
+///
+///   # inline — bootstrap builds and publishes the EntityNode:
+///   fortune:
+///     kind: /ma/stateless/python/0.0.1
+///     behavior: QmaBC...   # Wasm bytes CID
+///     acl: open            # optional; empty = deny-all
+/// ```
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum BootstrapEntity {
+    /// Pre-published [`EntityNode`] — the CID is stored directly in the manifest.
+    Cid(String),
+    /// Inline descriptor — bootstrap publishes the [`EntityNode`] to IPFS.
+    Inline {
+        /// Protocol ID of this entity's kind (e.g. `/ma/stateless/python/0.0.1`).
+        kind: String,
+        /// CID of the Wasm plugin bytes already stored on IPFS.
+        behavior: String,
+        /// Named ACL reference resolved via `acls.<name>` in the manifest.
+        /// Empty string = deny-all (fail-closed).
+        #[serde(default)]
+        acl: String,
+        /// Optional CID of persisted initial state (stateful entities only).
+        #[serde(default)]
+        state: Option<String>,
+    },
 }
 
 // ── Result type ───────────────────────────────────────────────────────────────
@@ -73,10 +109,10 @@ pub struct BootstrapResult {
     pub root_cid: String,
 }
 
-/// CIDs produced by a successful locales refresh run.
+/// CIDs produced by a successful lang refresh run.
 #[derive(Debug)]
-pub struct LocalesRefreshResult {
-    pub locales_cid: String,
+pub struct LangRefreshResult {
+    pub lang_cid: String,
 }
 
 // ── Core bootstrap logic ──────────────────────────────────────────────────────
@@ -86,7 +122,7 @@ pub struct LocalesRefreshResult {
 pub async fn run_bootstrap(
     yaml_path: &Path,
     kubo_url: &str,
-    locales_dir: &Path,
+    lang_dir: &Path,
     runtime_config: BTreeMap<String, serde_json::Value>,
     old_root_cid: Option<&str>,
 ) -> Result<BootstrapResult> {
@@ -97,7 +133,7 @@ pub async fn run_bootstrap(
     build_manifest(
         &yaml.runtime,
         kubo_url,
-        locales_dir,
+        lang_dir,
         runtime_config,
         old_root_cid,
     )
@@ -108,72 +144,85 @@ pub async fn run_bootstrap(
 pub async fn build_manifest(
     cfg: &BootstrapRuntime,
     kubo_url: &str,
-    locales_dir: &Path,
+    lang_dir: &Path,
     runtime_config: BTreeMap<String, serde_json::Value>,
     old_root_cid: Option<&str>,
 ) -> Result<BootstrapResult> {
-    let mut kinds_flat: Vec<BootstrapKind> = Vec::new();
 
     // 1. Publish kind nodes.
     let mut kinds: KindTree = BTreeMap::new();
-    for (family, impls) in &cfg.kinds {
-        for (implementation, bk) in impls {
-            let parsed = parse_kind_protocol(&bk.protocol)
-                .with_context(|| format!("invalid kind protocol: {}", bk.protocol))?;
-            if parsed.0 != family || parsed.1 != implementation {
-                return Err(anyhow!(
-                    "kind key-path {}/{} does not match protocol {}",
-                    family,
-                    implementation,
-                    bk.protocol
-                ));
-            }
-
-            kinds_flat.push(bk.clone());
-
-            let node = KindNode {
-                protocol: bk.protocol.clone(),
-                api: bk.api.clone(),
-                host_functions: bk.host_functions.clone(),
-                wasi: bk.wasi,
-            };
-            let cid = kubo::dag_put(kubo_url, &node)
-                .await
-                .with_context(|| format!("dag_put kind {}", bk.protocol))?;
-            tracing::info!(protocol = %bk.protocol, cid = %cid, "Published kind node");
-            let link = IpldLink::new(cid);
-            insert_kind_entry(&mut kinds, family, implementation, KindRef::Link(link));
-        }
+    for (protocol, bk) in &cfg.kinds {
+        let node = KindNode {
+            protocol: protocol.clone(),
+            api: bk.api.clone(),
+            host_functions: bk.host_functions.clone(),
+            wasi: bk.wasi,
+        };
+        let cid = kubo::dag_put(kubo_url, &node)
+            .await
+            .with_context(|| format!("dag_put kind {protocol}"))?;
+        tracing::info!(protocol = %protocol, cid = %cid, "Published kind node");
+        kinds.insert(protocol.clone(), KindRef::Link(IpldLink::new(cid)));
     }
 
-    // 2. Publish entity nodes.
-    let known_kinds: std::collections::HashSet<String> =
-        kinds_flat.iter().map(|k| k.protocol.clone()).collect();
+    // 2. Build and publish entity nodes.
     let mut entities_map: HashMap<String, IpldLink> = HashMap::new();
     for (name, be) in &cfg.entities {
-        if !known_kinds.is_empty() && !known_kinds.contains(&be.kind) {
-            return Err(anyhow!("entity {name} references unknown kind {}", be.kind));
-        }
-        let entity = build_bootstrap_entity_node(be);
-        let cid = kubo::dag_put(kubo_url, &entity)
-            .await
-            .with_context(|| format!("dag_put entity {name}"))?;
-        tracing::info!(name = %name, cid = %cid, "Published entity node");
-        entities_map.insert(name.clone(), IpldLink::new(cid));
+        let link = match be {
+            BootstrapEntity::Cid(cid) => {
+                tracing::info!(name = %name, cid = %cid, "Registering pre-published entity");
+                IpldLink::new(cid)
+            }
+            BootstrapEntity::Inline { kind, behavior, acl, state } => {
+                let node = EntityNode {
+                    kind: kind.clone(),
+                    behavior: behavior.clone(),
+                    acl: acl.clone(),
+                    state: state.as_deref().map(IpldLink::new),
+                };
+                let cid = kubo::dag_put(kubo_url, &node)
+                    .await
+                    .with_context(|| format!("dag_put entity {name}"))?;
+                tracing::info!(name = %name, cid = %cid, "Published entity node");
+                IpldLink::new(cid)
+            }
+        };
+        entities_map.insert(name.clone(), link);
     }
 
-    // 3. Publish locales and root manifest.
-    let locales = publish_locales(locales_dir, kubo_url).await?;
-    let _locales_cid = kubo::dag_put(kubo_url, &locales)
+    // 3. Publish named ACL nodes.
+    let mut acls_map: HashMap<String, IpldLink> = HashMap::new();
+    for (name, acl) in &cfg.acls {
+        let cid = kubo::dag_put(kubo_url, acl)
+            .await
+            .with_context(|| format!("dag_put acl {name}"))?;
+        tracing::info!(name = %name, cid = %cid, "Published ACL node");
+        acls_map.insert(name.clone(), IpldLink::new(cid));
+    }
+
+    // 3a. Publish root transport-gate ACL if provided.
+    let root_acl_link: Option<IpldLink> = if let Some(ref acl_map) = cfg.acl {
+        let cid = kubo::dag_put(kubo_url, acl_map)
+            .await
+            .context("dag_put root acl")?;
+        tracing::info!(cid = %cid, "Published root transport-gate ACL");
+        Some(IpldLink::new(cid))
+    } else {
+        None
+    };
+
+    // 4. Publish lang files and root manifest.
+    let lang = publish_lang(lang_dir, kubo_url).await?;
+    let _lang_cid = kubo::dag_put(kubo_url, &lang)
         .await
-        .context("dag_put locales map")?;
+        .context("dag_put lang map")?;
     let root = RuntimeManifest {
-        acl: None,
-        acls: std::collections::HashMap::new(),
+        acl: root_acl_link,
+        acls: acls_map,
         protocol: "/ma/runtime/0.1.0".to_string(),
         kinds,
         entities: entities_map,
-        lang: locales,
+        lang,
         config: runtime_config,
         namespaces: std::collections::HashMap::new(),
     };
@@ -197,37 +246,85 @@ pub async fn build_manifest(
     Ok(BootstrapResult { root_cid })
 }
 
-fn insert_kind_entry(tree: &mut KindTree, family: &str, implementation: &str, entry: KindRef) {
-    tree.entry(family.to_string())
-        .or_default()
-        .insert(implementation.to_string(), entry);
-}
+/// Export the current runtime manifest as a `BootstrapYaml` YAML string.
+///
+/// Fetches every linked IPLD node (kinds, entities, named ACLs, root ACL)
+/// from Kubo and reconstructs the full bootstrap descriptor so it can be
+/// edited and re-bootstrapped with `ma --gen-root-cid`.
+pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<String> {
+    let manifest: RuntimeManifest = kubo::dag_get(kubo_url, root_cid)
+        .await
+        .context("fetching root manifest")?;
 
-fn parse_kind_protocol(protocol: &str) -> Result<(&str, &str, &str)> {
-    let parts: Vec<&str> = protocol.trim_matches('/').split('/').collect();
-    if parts.len() == 4 && parts[0] == "ma" {
-        Ok((parts[1], parts[2], parts[3]))
+    // Kinds: fetch each KindNode by CID.
+    let mut kinds = BootstrapKindsDict::new();
+    for (protocol, kind_ref) in &manifest.kinds {
+        let node: KindNode = kubo::dag_get(kubo_url, &kind_ref.link().cid)
+            .await
+            .with_context(|| format!("fetching kind {protocol}"))?;
+        kinds.insert(
+            protocol.clone(),
+            BootstrapKind {
+                api: node.api,
+                host_functions: node.host_functions,
+                wasi: node.wasi,
+            },
+        );
+    }
+
+    // Entities: fetch each EntityNode and reconstruct inline descriptor.
+    let mut entities: HashMap<String, BootstrapEntity> = HashMap::new();
+    for (name, link) in &manifest.entities {
+        let node: EntityNode = kubo::dag_get(kubo_url, &link.cid)
+            .await
+            .with_context(|| format!("fetching entity {name}"))?;
+        entities.insert(
+            name.clone(),
+            BootstrapEntity::Inline {
+                kind: node.kind,
+                behavior: node.behavior,
+                acl: node.acl,
+                state: node.state.map(|s| s.cid),
+            },
+        );
+    }
+
+    // Named ACLs: fetch each AclMap by CID.
+    let mut acls: HashMap<String, AclMap> = HashMap::new();
+    for (name, link) in &manifest.acls {
+        let acl_map: AclMap = kubo::dag_get(kubo_url, &link.cid)
+            .await
+            .with_context(|| format!("fetching acl {name}"))?;
+        acls.insert(name.clone(), acl_map);
+    }
+
+    // Root transport-gate ACL.
+    let acl: Option<AclMap> = if let Some(ref link) = manifest.acl {
+        Some(
+            kubo::dag_get(kubo_url, &link.cid)
+                .await
+                .context("fetching root acl")?,
+        )
     } else {
-        Err(anyhow!(
-            "expected /ma/<family>/<implementation>/<version>, got: {protocol}"
-        ))
-    }
+        None
+    };
+
+    let yaml = BootstrapYaml {
+        runtime: BootstrapRuntime {
+            kinds,
+            acl,
+            entities,
+            acls,
+        },
+    };
+    serde_yaml::to_string(&yaml).context("serializing bootstrap YAML")
 }
 
-fn build_bootstrap_entity_node(be: &BootstrapEntity) -> EntityNode {
-    EntityNode {
-        kind: be.kind.clone(),
-        behavior: IpldLink::new(&be.behavior_cid),
-        acl: be.acl.clone(),
-        state: None,
-    }
-}
-
-/// Read standalone locale-map CID from config extra fields.
-pub fn get_locales_cid(config: &ma_core::Config) -> Option<String> {
+/// Read standalone lang-map CID from config extra fields.
+pub fn get_lang_cid(config: &ma_core::Config) -> Option<String> {
     config
         .extra
-        .get(LOCALES_CID_KEY)
+        .get(LANG_CID_KEY)
         .and_then(|v| v.as_str())
         .map(ToString::to_string)
 }
@@ -358,26 +455,26 @@ pub async fn save_all_entity_states(
     Ok(new_root_cid)
 }
 
-/// Re-publish all locale files from `locales_dir` and publish one locale-map CID.
-pub async fn refresh_locales_in_manifest(
+/// Re-publish all lang files from `lang_dir` and publish one lang-map CID.
+pub async fn refresh_lang_in_manifest(
     kubo_url: &str,
-    locales_dir: &Path,
-) -> Result<LocalesRefreshResult> {
-    let locales = publish_locales(locales_dir, kubo_url).await?;
-    let locales_cid = kubo::dag_put(kubo_url, &locales)
+    lang_dir: &Path,
+) -> Result<LangRefreshResult> {
+    let lang_map = publish_lang(lang_dir, kubo_url).await?;
+    let lang_cid = kubo::dag_put(kubo_url, &lang_map)
         .await
-        .context("publishing locales map")?;
+        .context("publishing lang map")?;
 
-    Ok(LocalesRefreshResult { locales_cid })
+    Ok(LangRefreshResult { lang_cid })
 }
 
-async fn publish_locales(locales_dir: &Path, kubo_url: &str) -> Result<HashMap<String, IpldLink>> {
-    let mut locales_map: HashMap<String, IpldLink> = HashMap::new();
-    let entries = std::fs::read_dir(locales_dir)
-        .with_context(|| format!("reading locales dir {}", locales_dir.display()))?;
+async fn publish_lang(lang_dir: &Path, kubo_url: &str) -> Result<HashMap<String, IpldLink>> {
+    let mut lang_map: HashMap<String, IpldLink> = HashMap::new();
+    let entries = std::fs::read_dir(lang_dir)
+        .with_context(|| format!("reading lang dir {}", lang_dir.display()))?;
 
     for entry in entries {
-        let entry = entry.with_context(|| format!("iterating {}", locales_dir.display()))?;
+        let entry = entry.with_context(|| format!("iterating {}", lang_dir.display()))?;
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -390,46 +487,23 @@ async fn publish_locales(locales_dir: &Path, kubo_url: &str) -> Result<HashMap<S
         };
 
         let bytes = std::fs::read(&path)
-            .with_context(|| format!("reading locale file {}", path.display()))?;
+            .with_context(|| format!("reading lang file {}", path.display()))?;
         let cid = ipfs_add(kubo_url, bytes)
             .await
-            .with_context(|| format!("ipfs_add locale {}", path.display()))?;
-        tracing::info!(lang = %lang, cid = %cid, "Published locale file");
-        locales_map.insert(lang.to_string(), IpldLink::new(cid));
+            .with_context(|| format!("ipfs_add lang {}", path.display()))?;
+        tracing::info!(lang = %lang, cid = %cid, "Published lang file");
+        lang_map.insert(lang.to_string(), IpldLink::new(cid));
     }
 
-    if locales_map.is_empty() {
+    if lang_map.is_empty() {
         return Err(anyhow!(
-            "no .ftl locale files found in {}",
-            locales_dir.display()
+            "no .ftl lang files found in {}",
+            lang_dir.display()
         ));
     }
 
-    Ok(locales_map)
+    Ok(lang_map)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{build_bootstrap_entity_node, BootstrapEntity};
-
-    #[test]
-    fn bootstrap_stateless_entity_serialization_omits_state_field() {
-        let be = BootstrapEntity {
-            kind: "/ma/stateless/python/0.0.1".to_string(),
-            behavior_cid: "bafybehavior".to_string(),
-            acl: String::new(),
-        };
-
-        let node = build_bootstrap_entity_node(&be);
-        let value = serde_json::to_value(&node).expect("serialize bootstrap entity");
-
-        assert!(
-            value.get("state").is_none(),
-            "state must be omitted for stateless bootstrap entity"
-        );
-        assert!(
-            value.get("acl").is_some(),
-            "acl must be present in serialized form"
-        );
-    }
-}
+mod tests {}
