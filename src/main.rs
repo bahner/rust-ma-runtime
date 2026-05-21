@@ -286,16 +286,43 @@ async fn main() -> Result<()> {
         match manifest {
             Ok(m) => {
                 let mut entries = Vec::new();
+                // Root verb-ACL library: "acls.<name>"
+                for (acl_name, link) in &m.acls {
+                    let cache_key = format!("acls.{acl_name}");
+                    match acl::load_acl_from_cid(&config.kubo_rpc_url, &link.cid).await {
+                        Ok(acl_map) => {
+                            info!(key = %cache_key, cid = %link.cid, "Root ACL loaded into cache");
+                            entries.push((cache_key, acl_map));
+                        }
+                        Err(e) => {
+                            warn!(key = %cache_key, cid = %link.cid, error = %e, "failed to load root ACL at startup");
+                        }
+                    }
+                }
                 for (ns_name, ns_node) in &m.namespaces {
-                    for (acl_name, link) in &ns_node.acl {
-                        let cache_key = format!("{ns_name}.acl.{acl_name}");
+                    // Namespace gate: "<ns>.acl"
+                    if let Some(link) = &ns_node.acl {
+                        let cache_key = format!("{ns_name}.acl");
+                        match acl::load_acl_from_cid(&config.kubo_rpc_url, &link.cid).await {
+                            Ok(acl_map) => {
+                                info!(key = %cache_key, cid = %link.cid, "Namespace gate ACL loaded into cache");
+                                entries.push((cache_key, acl_map));
+                            }
+                            Err(e) => {
+                                warn!(key = %cache_key, cid = %link.cid, error = %e, "failed to load namespace gate ACL at startup");
+                            }
+                        }
+                    }
+                    // Namespace verb-ACL library: "<ns>.acls.<name>"
+                    for (acl_name, link) in &ns_node.acls {
+                        let cache_key = format!("{ns_name}.acls.{acl_name}");
                         match acl::load_acl_from_cid(&config.kubo_rpc_url, &link.cid).await {
                             Ok(acl_map) => {
                                 info!(key = %cache_key, cid = %link.cid, "Named ACL loaded into cache");
                                 entries.push((cache_key, acl_map));
                             }
                             Err(e) => {
-                                warn!(key = %cache_key, cid = %link.cid, error = %e, "failed to load named ACL into cache at startup");
+                                warn!(key = %cache_key, cid = %link.cid, error = %e, "failed to load named ACL at startup");
                             }
                         }
                     }

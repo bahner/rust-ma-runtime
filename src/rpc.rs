@@ -9,7 +9,7 @@ use ma_core::{
 };
 use tracing::{debug, info, warn};
 
-use crate::acl::{acl_check, AclCache, AclMap, CAP_RPC};
+use crate::acl::{check_full, AclCache, AclMap, CAP_RPC};
 use crate::entity::{
     CastInput, EntityNode, IpldLink, LocalMessage, NamespaceNode, PluginCtx, PluginKind,
     RuntimeManifest, SendEnvelope,
@@ -38,7 +38,7 @@ pub async fn handle_rpc_message(
     acl: &AclMap,
     ctx: &RpcHandlerCtx<'_>,
 ) -> Result<()> {
-    acl_check(acl, &message.from, CAP_RPC)?;;
+    check_full(acl, &message.from, &[CAP_RPC], |_| async { Ok(vec![]) }).await?;
 
     if message.message_type != MESSAGE_TYPE_RPC {
         return Err(anyhow!(
@@ -115,6 +115,53 @@ async fn handle_entity_plugin_message(
     ctx: &RpcHandlerCtx<'_>,
 ) -> Result<()> {
     info!(fragment = %entity.fragment, from = %message.from, "{}", crate::i18n::t("entity-dispatched"));
+
+    // Entity verb-ACL enforcement.
+    // Extract the verb from the CBOR term (text atom or first array element).
+    let verb_str: Option<String> = match &term {
+        CborValue::Text(s) => Some(s.clone()),
+        CborValue::Array(items) => {
+            if let Some(CborValue::Text(s)) = items.first() {
+                Some(s.clone())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
+    if !entity.acl.is_empty() {
+        let acl_name = &entity.acl;
+        let acl_key = format!("acls.{acl_name}");
+        let maybe_acl = ctx.acl_cache.read().await.get(&acl_key).cloned();
+        if let Some(ref acl_map) = maybe_acl {
+            let verb_ref = verb_str.as_deref().unwrap_or("*");
+            let root_cid = current_root_cid(ctx).await.unwrap_or_default();
+            let url = ctx.kubo_rpc_url.to_string();
+            let rc = root_cid.clone();
+            crate::acl::check_full(acl_map, &message.from, &[verb_ref, "*"], |g| {
+                let url = url.clone();
+                let rc = rc.clone();
+                let g = g.to_string();
+                async move { crate::acl::fetch_group_members(&url, &g, &rc).await }
+            })
+            .await
+            .with_context(|| {
+                format!(
+                    "entity '{}' ACL denied {} calling {:?}",
+                    entity.fragment, message.from, verb_str
+                )
+            })?;
+        } else {
+            // ACL name set but not in cache → deny (fail-closed).
+            return Err(anyhow!(
+                "entity '{}' ACL '{}' not found in cache: access denied",
+                entity.fragment,
+                acl_name
+            ));
+        }
+    }
+    // Empty acl field → open access (no restriction at entity level).
 
     let mut content_bytes = Vec::new();
     ciborium::ser::into_writer(&term, &mut content_bytes)
@@ -554,35 +601,20 @@ async fn handle_entity_acl_field(
         ));
     }
     match (tail, args.as_slice()) {
-        // :edit <dag-cbor-bytes> — receive edited ACL from ego, store CID ref.
-        (Some("edit"), [CborValue::Bytes(dag_cbor)]) => {
-            let cid = crate::kubo::dag_put_raw(ctx.kubo_rpc_url, dag_cbor)
-                .await
-                .with_context(|| format!("dag_put_raw for ACL of entity {name}"))?;
-            let mut entity = fetch_entity_node(ctx, name).await?;
-            entity.acl = cid.clone();
-            let entity_cid = update_entity_node(ctx, name, &entity).await?;
-            info!(name = %name, acl_cid = %cid, entity_cid = %entity_cid, "entity ACL updated");
+        // No args — return current ACL name string.
+        (None, []) => {
+            let entity = fetch_entity_node(ctx, name).await?;
             let mut out = Vec::new();
-            ciborium::ser::into_writer(
-                &CborValue::Array(vec![
-                    CborValue::Text(":ok".to_string()),
-                    CborValue::Text(entity_cid),
-                ]),
-                &mut out,
-            )
-            .context("encoding edit-save reply CID")?;
+            ciborium::ser::into_writer(&CborValue::Text(entity.acl.clone()), &mut out)
+                .context("encoding entity ACL name as CBOR")?;
             send_rpc_reply(message, ctx, out).await
         }
-        // : <path-or-cid> — set ACL reference to a resolved CID.
-        (Some(""), [CborValue::Text(path)]) => {
-            let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, path)
-                .await
-                .with_context(|| format!("resolving ACL path {path}"))?;
+        // : <name> — set ACL name string (references root `acls.<name>`).
+        (Some(""), [CborValue::Text(acl_name)]) => {
             let mut entity = fetch_entity_node(ctx, name).await?;
-            entity.acl = cid.clone();
+            entity.acl = acl_name.clone();
             let entity_cid = update_entity_node(ctx, name, &entity).await?;
-            info!(name = %name, acl_cid = %cid, entity_cid = %entity_cid, "entity ACL set from path");
+            info!(name = %name, acl_name = %acl_name, entity_cid = %entity_cid, "entity ACL name set");
             let mut out = Vec::new();
             ciborium::ser::into_writer(
                 &CborValue::Array(vec![
@@ -592,6 +624,23 @@ async fn handle_entity_acl_field(
                 &mut out,
             )
             .context("encoding acl-set reply as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        // : — clear ACL name (entity becomes deny-all).
+        (Some(""), []) => {
+            let mut entity = fetch_entity_node(ctx, name).await?;
+            entity.acl = String::new();
+            let entity_cid = update_entity_node(ctx, name, &entity).await?;
+            info!(name = %name, entity_cid = %entity_cid, "entity ACL cleared");
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Text(entity_cid),
+                ]),
+                &mut out,
+            )
+            .context("encoding acl-clear reply as CBOR")?;
             send_rpc_reply(message, ctx, out).await
         }
         _ => Err(anyhow!("unknown entities.{name}.acl operation: {verb}")),
@@ -772,9 +821,37 @@ async fn handle_config_ns(
 // ── Namespace dispatching `:ns.*` ─────────────────────────────────────────────
 
 /// Handles that may not be used as namespace names.
-const RESERVED_NS: &[&str] = &["acl", "protocol", "kinds", "entities", "locales", "config"];
+const RESERVED_NS: &[&str] = &["acl", "acls", "protocol", "kinds", "entities", "locales", "config"];
 
-/// Routes `:ns`, `:ns.groups.*`, and `:ns.acl.*` operations.
+/// Check the namespace gate ACL for `caller` against `caps`.
+///
+/// Looks up `"<ns>.acl"` in the cache. If no gate is registered for the
+/// namespace, access is denied (fail-closed). On allow the function returns
+/// `Ok(())`; on deny it returns `Err`.
+async fn ns_acl_check(
+    ns: &str,
+    caller: &str,
+    caps: &[&str],
+    acl_cache: &AclCache,
+    kubo_rpc_url: &str,
+    root_cid: &str,
+) -> Result<()> {
+    let gate_key = format!("{ns}.acl");
+    let maybe_acl = acl_cache.read().await.get(&gate_key).cloned();
+    let acl = maybe_acl.ok_or_else(|| anyhow!("no gate ACL for namespace {ns}: access denied"))?;
+    let url = kubo_rpc_url.to_string();
+    let rc = root_cid.to_string();
+    crate::acl::check_full(&acl, caller, caps, |g| {
+        let url = url.clone();
+        let rc = rc.clone();
+        let g = g.to_string();
+        async move { crate::acl::fetch_group_members(&url, &g, &rc).await }
+    })
+    .await
+    .with_context(|| format!("namespace gate check failed for {caller} in {ns}"))
+}
+
+/// Routes `:ns`, `:ns.acl`, `:ns.acls.*`, and blob operations.
 async fn handle_namespace_op(
     message: &ma_core::Message,
     ns: &str,
@@ -790,8 +867,33 @@ async fn handle_namespace_op(
     }
     let category = rest.first().map_or("", String::as_str);
     let sub_rest: &[String] = if rest.len() > 1 { &rest[1..] } else { &[] };
+
+    // Gate check applies to blob operations only (not acl/acls management or ns root).
+    if matches!(category, "" | "acl" | "acls") {
+        // ACL management and namespace root are not gated.
+    } else {
+        // Blob op — enforce namespace gate.
+        if let Ok(root_cid) = current_root_cid(ctx).await {
+            let is_read = tail.is_none();
+            let caps: &[&str] = if is_read { &[category, "read", "*"] } else { &[category, "update", "*"] };
+            if let Err(e) = ns_acl_check(
+                ns,
+                &message.from,
+                caps,
+                &ctx.acl_cache,
+                ctx.kubo_rpc_url,
+                &root_cid,
+            )
+            .await
+            {
+                return send_rpc_error_reply(message, ctx, &e.to_string()).await;
+            }
+        }
+    }
+
     match category {
-        "acl" => handle_ns_acl(message, ns, sub_rest, tail, args, verb, ctx).await,
+        "acl" => handle_ns_acl_gate(message, ns, tail, args, verb, ctx).await,
+        "acls" => handle_ns_acls(message, ns, sub_rest, tail, args, verb, ctx).await,
         "" => handle_ns_root(message, ns, tail, args, verb, ctx).await,
         key => handle_ns_blob(message, ns, key, sub_rest, tail, args, verb, ctx).await,
     }
@@ -855,13 +957,106 @@ async fn handle_ns_root(
     }
 }
 
-/// `:ns.acl.*` — CID k/v store for named ACL documents.
+/// `:ns.acl` — namespace gate: single IPLD link to an `AclMap` document.
+///
+/// GET returns the gate CID. SET registers a new gate and reloads the cache.
+/// DELETE removes the gate (namespace becomes inaccessible to blob ops).
+async fn handle_ns_acl_gate(
+    message: &ma_core::Message,
+    ns: &str,
+    tail: Option<&str>,
+    args: Vec<CborValue>,
+    verb: &str,
+    ctx: &RpcHandlerCtx<'_>,
+) -> Result<()> {
+    match (tail, args.as_slice()) {
+        (None, []) => {
+            let root_cid = current_root_cid(ctx).await?;
+            let manifest: RuntimeManifest =
+                crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+            let ns_node = manifest
+                .namespaces
+                .get(ns)
+                .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
+            match &ns_node.acl {
+                Some(link) => {
+                    let mut out = Vec::new();
+                    ciborium::ser::into_writer(&CborValue::Text(link.cid.clone()), &mut out)
+                        .context("encoding ACL gate CID as CBOR")?;
+                    send_rpc_reply(message, ctx, out).await
+                }
+                None => {
+                    send_rpc_error_reply(message, ctx, &format!("no gate ACL for namespace {ns}"))
+                        .await
+                }
+            }
+        }
+        (Some(""), [CborValue::Text(cid)]) => {
+            let cid = cid.clone();
+            let new_root = with_manifest(ctx, |m| {
+                let ns_node = m
+                    .namespaces
+                    .get_mut(ns)
+                    .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
+                ns_node.acl = Some(IpldLink::new(&cid));
+                Ok(())
+            })
+            .await?;
+            let cache_key = format!("{ns}.acl");
+            match crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &cid).await {
+                Ok(acl_map) => {
+                    ctx.acl_cache.write().await.insert(cache_key.clone(), acl_map);
+                    info!(key = %cache_key, cid = %cid, "Namespace gate ACL loaded into cache");
+                }
+                Err(e) => {
+                    warn!(key = %cache_key, cid = %cid, error = %e, "failed to load namespace gate ACL into cache");
+                }
+            }
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Text(new_root),
+                ]),
+                &mut out,
+            )
+            .context("encoding acl-gate-set reply as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        (Some(""), []) => {
+            let new_root = with_manifest(ctx, |m| {
+                let ns_node = m
+                    .namespaces
+                    .get_mut(ns)
+                    .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
+                ns_node.acl = None;
+                Ok(())
+            })
+            .await?;
+            let cache_key = format!("{ns}.acl");
+            ctx.acl_cache.write().await.remove(&cache_key);
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Text(new_root),
+                ]),
+                &mut out,
+            )
+            .context("encoding acl-gate-delete reply as CBOR")?;
+            send_rpc_reply(message, ctx, out).await
+        }
+        _ => Err(anyhow!("unknown {ns}.acl operation: {verb}")),
+    }
+}
+
+/// `:ns.acls.*` — named verb-ACL library for the namespace.
 ///
 /// ACLs are stored as IPLD links to `kind: /ma/acl/0.0.1` documents and
 /// cached in memory as [`AclMap`]s for zero-overhead lookup at call time.
 /// Edit and publish to IPFS, then register the CID here.
 #[allow(clippy::too_many_lines)]
-async fn handle_ns_acl(
+async fn handle_ns_acls(
     message: &ma_core::Message,
     ns: &str,
     rest: &[String],
@@ -881,7 +1076,7 @@ async fn handle_ns_acl(
                     .get(ns)
                     .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
                 let names: Vec<CborValue> = ns_node
-                    .acl
+                    .acls
                     .keys()
                     .map(|k| CborValue::Text(k.clone()))
                     .collect();
@@ -896,7 +1091,7 @@ async fn handle_ns_acl(
                 .context("encoding ACL names as CBOR")?;
                 send_rpc_reply(message, ctx, out).await
             }
-            _ => Err(anyhow!("unknown {ns}.acl operation: {verb}")),
+            _ => Err(anyhow!("unknown {ns}.acls operation: {verb}")),
         },
         [acl_name] => {
             let acl_name = acl_name.clone();
@@ -910,9 +1105,9 @@ async fn handle_ns_acl(
                         .get(ns)
                         .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
                     let link = ns_node
-                        .acl
+                        .acls
                         .get(&acl_name)
-                        .ok_or_else(|| anyhow!("ACL not found: {ns}.acl.{acl_name}"))?;
+                        .ok_or_else(|| anyhow!("ACL not found: {ns}.acls.{acl_name}"))?;
                     let mut out = Vec::new();
                     ciborium::ser::into_writer(&CborValue::Text(link.cid.clone()), &mut out)
                         .context("encoding ACL CID as CBOR")?;
@@ -925,12 +1120,11 @@ async fn handle_ns_acl(
                             .namespaces
                             .get_mut(ns)
                             .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
-                        ns_node.acl.insert(acl_name.clone(), IpldLink::new(&cid));
+                        ns_node.acls.insert(acl_name.clone(), IpldLink::new(&cid));
                         Ok(())
                     })
                     .await?;
-                    // Fetch the ACL document and populate the in-memory cache.
-                    let cache_key = format!("{ns}.acl.{acl_name}");
+                    let cache_key = format!("{ns}.acls.{acl_name}");
                     match crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &cid).await {
                         Ok(acl_map) => {
                             ctx.acl_cache
@@ -960,11 +1154,11 @@ async fn handle_ns_acl(
                             .namespaces
                             .get_mut(ns)
                             .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
-                        ns_node.acl.remove(&acl_name);
+                        ns_node.acls.remove(&acl_name);
                         Ok(())
                     })
                     .await?;
-                    let cache_key = format!("{ns}.acl.{acl_name}");
+                    let cache_key = format!("{ns}.acls.{acl_name}");
                     ctx.acl_cache.write().await.remove(&cache_key);
                     let mut out = Vec::new();
                     ciborium::ser::into_writer(
@@ -977,10 +1171,10 @@ async fn handle_ns_acl(
                     .context("encoding acl-delete reply as CBOR")?;
                     send_rpc_reply(message, ctx, out).await
                 }
-                _ => Err(anyhow!("unknown {ns}.acl.{acl_name} operation: {verb}")),
+                _ => Err(anyhow!("unknown {ns}.acls.{acl_name} operation: {verb}")),
             }
         }
-        _ => Err(anyhow!("unknown {ns}.acl operation: {verb}")),
+        _ => Err(anyhow!("unknown {ns}.acls operation: {verb}")),
     }
 }
 

@@ -179,10 +179,15 @@ pub struct NamespaceNode {
     /// Optional description.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// Named ACL references. Each value is an IPLD link to an `AclMap` doc.
-    /// Traversable: `ipfs dag get …/<ns>/acl/<name>`.
+    /// Namespace gate — IPLD link to an `AclMap` document.
+    /// Required for any blob access; absent = deny all blob operations.
+    /// Cached at startup under key `"<ns>.acl"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acl: Option<IpldLink>,
+    /// Named verb-ACL library — flat map of name → IPLD link to `AclMap`.
+    /// Each entry is cached under `"<ns>.acls.<name>"`.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub acl: HashMap<String, IpldLink>,
+    pub acls: HashMap<String, IpldLink>,
     /// Free-form IPLD sub-trees for organisational use.
     /// Values must be IPLD-compatible JSON; CID links are automatically
     /// followed by `ipfs dag get`.
@@ -199,9 +204,9 @@ pub struct EntityNode {
     pub kind: String,
     /// IPLD link to the Wasm plugin bytes stored on IPFS.
     pub behavior: IpldLink,
-    /// Entity-level ACL — reference path to a named ACL in the namespace tree
-    /// (e.g. `"alice.acl.open"`). Resolved at check time by fetching from
-    /// the in-memory [`AclCache`]. Empty string means deny-all (fail-closed).
+    /// Entity verb-ACL — name string resolved via `acls.<name>` in the root
+    /// manifest (e.g. `"fortune"`). Cached under `"acls.<name>"` at startup.
+    /// Empty string means deny-all (fail-closed).
     #[serde(default)]
     pub acl: String,
     /// IPLD link to persisted state (optional).
@@ -212,12 +217,7 @@ pub struct EntityNode {
 
 /// Root IPLD node for this runtime.
 /// Stored as CID in `config.yaml` and published into the DID document under
-/// `ma.runtime`. Namespace data (`acls`) lives in [`NamespaceNode`]
-/// values addressed by namespace handle.
-///
-/// Path traversal example:
-/// `ipfs dag get /ipns/<did>/runtime/<handle>/acl/<name>` returns the
-/// ACL document directly (IPLD follows `{"/": "bafy…"}` links).
+/// `ma.runtime`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeManifest {
     /// Transport-level ACL — IPLD link to an ACL document.
@@ -225,6 +225,11 @@ pub struct RuntimeManifest {
     /// ACL supplied via `--acl-file`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acl: Option<IpldLink>,
+    /// Root-level verb-ACL library — name → IPLD link to `AclMap`.
+    /// Used by root entities (`entity.acl` resolves here).
+    /// Each entry cached at startup under `"acls.<name>"`.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub acls: HashMap<String, IpldLink>,
     /// Runtime protocol identifier (e.g. `"/ma/runtime/0.1.0"`).
     #[serde(default)]
     pub protocol: String,
@@ -239,8 +244,7 @@ pub struct RuntimeManifest {
     pub config: BTreeMap<String, serde_json::Value>,
     /// Namespace nodes keyed by handle (e.g. `"owner"`, `"alice"`).
     ///
-    /// Reserved handles that may not be used as namespace names:
-    /// `acl`, `protocol`, `kinds`, `entities`, `lang`, `config`.
+    /// Reserved handles: `acl`, `acls`, `protocol`, `kinds`, `entities`, `lang`, `config`.
     #[serde(flatten)]
     pub namespaces: HashMap<String, NamespaceNode>,
 }

@@ -173,7 +173,7 @@ async fn load_messages(
         Err(_) => return fallback_messages(),
     };
 
-    let cid = pick_locale_cid(lang, &manifest.locales);
+    let cid = pick_locale_cid(lang, &manifest.lang);
 
     match cid {
         Some(cid) => ma_core::cat_bytes(kubo_url, cid).await.map_or_else(

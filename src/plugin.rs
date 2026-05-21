@@ -106,6 +106,9 @@ pub fn new_entity_registry() -> EntityRegistry {
 pub struct EntityPlugin {
     pub fragment: String,
     pub kind: PluginKind,
+    /// ACL name string — resolved via `acls.<acl>` in the root manifest.
+    /// Empty string means deny-all (fail-closed).
+    pub acl: String,
     plugin: Mutex<Plugin>,
     /// Queue populated by the `ma_send` host function during a plugin call.
     send_queue: UserData<Vec<SendEnvelope>>,
@@ -184,6 +187,7 @@ impl EntityPlugin {
         Ok(Self {
             fragment,
             kind,
+            acl: node.acl.clone(),
             plugin: Mutex::new(plugin),
             send_queue,
             state,

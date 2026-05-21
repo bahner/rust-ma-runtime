@@ -169,10 +169,11 @@ pub async fn build_manifest(
         .context("dag_put locales map")?;
     let root = RuntimeManifest {
         acl: None,
+        acls: std::collections::HashMap::new(),
         protocol: "/ma/runtime/0.1.0".to_string(),
         kinds,
         entities: entities_map,
-        locales,
+        lang: locales,
         config: runtime_config,
         namespaces: std::collections::HashMap::new(),
     };

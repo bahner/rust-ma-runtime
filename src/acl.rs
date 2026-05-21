@@ -8,9 +8,18 @@ use ma_core::check_cap;
 use tokio::sync::RwLock;
 use tracing::info;
 
-pub use ma_core::{normalize_principal, validate_acl_map, AclMap, CAP_IPFS, CAP_RPC};
+pub use ma_core::{
+    normalize_principal, validate_acl_map, AclMap, CapabilityEntry, CAP_IPFS, CAP_RPC,
+};
 
-/// In-memory cache of named ACLs, keyed by `"<ns>.acl.<name>"`.
+/// In-memory cache of named ACLs.
+///
+/// Key conventions:
+/// | Key | Meaning |
+/// |-----|---------|
+/// | `"<ns>.acl"` | Namespace gate `AclMap` |
+/// | `"<ns>.acls.<name>"` | Namespace verb-ACL library entry |
+/// | `"acls.<name>"` | Root verb-ACL library entry |
 pub type AclCache = Arc<RwLock<HashMap<String, AclMap>>>;
 
 /// Create a new empty [`AclCache`].
@@ -18,21 +27,21 @@ pub fn new_acl_cache() -> AclCache {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
-/// Returns `true` if `key` matches the `<ns>.acl.<name>` pattern:
-/// exactly three dot-separated segments where the middle segment is `"acl"`.
+/// Returns `true` if `key` matches the `<ns>.acls.<name>` pattern:
+/// exactly three dot-separated segments where the middle segment is `"acls"`.
 #[allow(dead_code)]
 pub fn is_acl_key(key: &str) -> bool {
     let parts: Vec<&str> = key.split('.').collect();
-    parts.len() == 3 && parts[1] == "acl"
+    parts.len() == 3 && parts[1] == "acls"
 }
 
-/// Parse a `<ns>.acl.<name>` key into `(ns, name)`.
+/// Parse a `<ns>.acls.<name>` key into `(ns, name)`.
 ///
 /// Returns `None` if the key does not match the pattern.
 #[allow(dead_code)]
 pub fn parse_acl_key(key: &str) -> Option<(&str, &str)> {
     let parts: Vec<&str> = key.split('.').collect();
-    if parts.len() == 3 && parts[1] == "acl" {
+    if parts.len() == 3 && parts[1] == "acls" {
         Some((parts[0], parts[2]))
     } else {
         None
@@ -56,15 +65,6 @@ pub async fn load_acl_from_cid(kubo_rpc_url: &str, cid: &str) -> Result<AclMap> 
 
 const MA_DEFAULT_SLUG: &str = "ma";
 const OPEN_ACL_YAML: &str = include_str!("../default.acl");
-
-/// Transport-level ACL check.
-///
-/// Call with the appropriate capability string for the service:
-/// - `/ma/rpc/0.0.1`  — use `CAP_RPC`
-/// - `/ma/ipfs/0.0.1` — use `CAP_IPFS`
-pub fn acl_check(acl: &AclMap, from: &str, cap: &str) -> Result<()> {
-    check_cap(acl, from, cap).with_context(|| format!("access denied for {from}"))
-}
 
 fn default_acl_path() -> Result<PathBuf> {
     ProjectDirs::from("", "ma", "ma")
@@ -103,25 +103,104 @@ pub fn load_acl(explicit: Option<&std::path::Path>) -> Result<AclMap> {
     }
 }
 
-/// Check a verb-level allowlist for `caller`.
+/// Uniform async ACL check with group expansion.
 ///
-/// - `"*"` in the list → anyone may call
-/// - Otherwise → caller's bare identity must appear explicitly
+/// Evaluation order:
+/// 1. Explicit deny for `caller` or `"*"` → `Err` immediately (deny always wins).
+/// 2. `check_cap(acl, caller, cap)` for each cap in `caps` — first `Ok` returns.
+/// 3. For each cap: look for a `Grant(grantees)` entry keyed by that cap.
+///    Expand `group:…` refs via `resolve_group`; expand bare `did:ma:…` inline.
+///    Caller match → `Ok`.
+/// 4. Nothing matched → `Err`.
 ///
-/// The caller's DID is normalised (fragment stripped) before comparison.
-#[allow(dead_code)]
-pub fn verb_acl_allows(allowlist: &[String], caller: &str) -> bool {
+/// `caps` uses OR semantics — the caller only needs to satisfy one.
+///
+/// Use `|_| async { Ok(vec![]) }` as `resolve_group` when group resolution
+/// is not available (e.g. at the transport gate before the manifest loads).
+pub async fn check_full<F, Fut>(
+    acl: &AclMap,
+    caller: &str,
+    caps: &[&str],
+    resolve_group: F,
+) -> Result<()>
+where
+    F: Fn(&str) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<String>>>,
+{
     let normalized = normalize_principal(caller);
-    allowlist
-        .iter()
-        .any(|p| p == "*" || normalize_principal(p) == normalized)
+
+    // Step 1 — explicit deny wins unconditionally.
+    if matches!(acl.get(normalized), Some(CapabilityEntry::Deny)) {
+        return Err(anyhow::anyhow!("access denied for {caller}"));
+    }
+    if matches!(acl.get("*"), Some(CapabilityEntry::Deny)) {
+        return Err(anyhow::anyhow!("access denied for {caller} (wildcard deny)"));
+    }
+
+    // Step 2 — synchronous Allow check (handles principal entries + wildcard).
+    for &cap in caps {
+        if check_cap(acl, caller, cap).is_ok() {
+            return Ok(());
+        }
+    }
+
+    // Step 3 — Grant entries (capability → grantee list), async group expansion.
+    for &cap in caps {
+        if let Some(entry) = acl.get(cap) {
+            if let Some(grantees) = entry.grantees() {
+                for grantee in grantees {
+                    if grantee.starts_with("group:") {
+                        // Async group expansion.
+                        let members = resolve_group(grantee).await.unwrap_or_default();
+                        if members.iter().any(|m| normalize_principal(m) == normalized) {
+                            return Ok(());
+                        }
+                    } else {
+                        // Bare DID or other principal ref.
+                        if normalize_principal(grantee) == normalized {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "access denied for {caller}: none of {:?} permitted",
+        caps
+    ))
+}
+
+/// Resolve a `group:<handle>.<name>` reference to a list of member DIDs.
+///
+/// Traverses `/ipfs/<root_cid>/<handle>/<name>` using `ipfs dag resolve` +
+/// `ipfs dag get` and deserialises the result as `Vec<String>`.
+pub async fn fetch_group_members(
+    kubo_rpc_url: &str,
+    group_ref: &str,
+    root_cid: &str,
+) -> Result<Vec<String>> {
+    let without_prefix = group_ref
+        .strip_prefix("group:")
+        .ok_or_else(|| anyhow::anyhow!("invalid group ref: {group_ref}"))?;
+
+    // "handle.name" → "/ipfs/<root_cid>/handle/name"
+    let subpath: String = without_prefix.replace('.', "/");
+    let ipfs_path = format!("/ipfs/{root_cid}/{subpath}");
+
+    let resolved = crate::kubo::dag_resolve(kubo_rpc_url, &ipfs_path)
+        .await
+        .with_context(|| format!("resolving group path {ipfs_path}"))?;
+
+    crate::kubo::dag_get::<Vec<String>>(kubo_rpc_url, &resolved)
+        .await
+        .with_context(|| format!("fetching group members at {resolved}"))
 }
 
 #[cfg(test)]
 mod tests {
     use ma_core::{check_cap, AclMap, CapabilityEntry, CAP_IPFS, CAP_RPC};
-
-    use super::verb_acl_allows;
 
     fn allow(caps: &[&str]) -> CapabilityEntry {
         CapabilityEntry::from_caps(caps.iter().copied())
@@ -170,29 +249,87 @@ mod tests {
         assert!(check_cap(&AclMap::new(), "did:ma:alice", CAP_RPC).is_err());
     }
 
-    #[test]
-    fn verb_wildcard_allows_anyone() {
-        let list = vec!["*".to_string()];
-        assert!(verb_acl_allows(&list, "did:ma:alice"));
-        assert!(verb_acl_allows(&list, "did:ma:stranger"));
+    #[tokio::test]
+    async fn check_full_allow_via_allow_entry() {
+        use super::check_full;
+        let acl = m(&[("did:ma:alice", allow(&["read"]))]);
+        let result =
+            check_full(&acl, "did:ma:alice", &["read"], |_| async { Ok(vec![]) }).await;
+        assert!(result.is_ok());
     }
 
-    #[test]
-    fn verb_explicit_allows_listed_caller() {
-        let list = vec!["did:ma:alice".to_string()];
-        assert!(verb_acl_allows(&list, "did:ma:alice"));
-        assert!(!verb_acl_allows(&list, "did:ma:bob"));
+    #[tokio::test]
+    async fn check_full_deny_wins_over_grant() {
+        use super::check_full;
+        let acl = m(&[
+            ("did:ma:alice", CapabilityEntry::Deny),
+            (
+                "read",
+                CapabilityEntry::Grant(vec!["did:ma:alice".to_string()]),
+            ),
+        ]);
+        let result =
+            check_full(&acl, "did:ma:alice", &["read"], |_| async { Ok(vec![]) }).await;
+        assert!(result.is_err());
     }
 
-    #[test]
-    fn verb_empty_list_denies_all() {
-        let list: Vec<String> = vec![];
-        assert!(!verb_acl_allows(&list, "did:ma:alice"));
+    #[tokio::test]
+    async fn check_full_grant_entry_allows_direct_did() {
+        use super::check_full;
+        let acl = m(&[(
+            "fortune",
+            CapabilityEntry::Grant(vec!["did:ma:alice".to_string()]),
+        )]);
+        let result =
+            check_full(&acl, "did:ma:alice", &["fortune"], |_| async { Ok(vec![]) }).await;
+        assert!(result.is_ok());
     }
 
-    #[test]
-    fn verb_acl_normalizes_did_url_caller() {
-        let list = vec!["did:ma:alice".to_string()];
-        assert!(verb_acl_allows(&list, "did:ma:alice#sign"));
+    #[tokio::test]
+    async fn check_full_or_semantics_first_cap_wins() {
+        use super::check_full;
+        let acl = m(&[("did:ma:alice", allow(&["special"]))]);
+        // "read" would fail, "special" should succeed.
+        let result = check_full(&acl, "did:ma:alice", &["read", "special"], |_| async {
+            Ok(vec![])
+        })
+        .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn check_full_group_expansion_allows() {
+        use super::check_full;
+        let acl = m(&[(
+            "fortune",
+            CapabilityEntry::Grant(vec!["group:carlotta.friends".to_string()]),
+        )]);
+        let result = check_full(&acl, "did:ma:alice", &["fortune"], |g| {
+            let g = g.to_string();
+            async move {
+                if g == "group:carlotta.friends" {
+                    Ok(vec!["did:ma:alice".to_string()])
+                } else {
+                    Ok(vec![])
+                }
+            }
+        })
+        .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn check_full_group_expansion_denies_non_member() {
+        use super::check_full;
+        let acl = m(&[(
+            "fortune",
+            CapabilityEntry::Grant(vec!["group:carlotta.friends".to_string()]),
+        )]);
+        let result = check_full(&acl, "did:ma:stranger", &["fortune"], |_| async {
+            Ok(vec!["did:ma:alice".to_string()])
+        })
+        .await;
+        assert!(result.is_err());
     }
 }
+
