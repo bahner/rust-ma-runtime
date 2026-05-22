@@ -95,8 +95,9 @@ pub async fn pin_update(kubo_url: &str, old_cid: &str, new_cid: &str) -> Result<
         return Ok(());
     }
     let body = resp.text().await.unwrap_or_default();
-    // If the old CID was never pinned, fall back to a plain recursive pin.
-    if body.contains("not pinned") {
+    // Kubo returns "not recursively pinned already" (or similar) when the old
+    // CID was never pinned.  Fall back to a plain recursive pin of the new CID.
+    if body.contains("not recursively pinned") || body.contains("not pinned") {
         return pin_add(kubo_url, new_cid).await;
     }
     Err(anyhow!("pin/update {old_cid} → {new_cid} failed: {body}"))

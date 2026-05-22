@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use std::sync::Arc;
 use ma_core::ipfs::IpfsDidPublisher;
 use ma_core::ipfs::MA_IPNS_ALIAS_HASH_PREFIX;
 use ma_core::ipfs_add;
@@ -9,6 +8,7 @@ use ma_core::{
 };
 use reqwest::multipart;
 use serde::Deserialize;
+use std::sync::Arc;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 

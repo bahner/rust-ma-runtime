@@ -22,8 +22,6 @@ use crate::entity::{EntityNode, IpldLink, KindNode, KindTree, PluginKind, Runtim
 use crate::kubo;
 use crate::plugin;
 
-pub const LANG_CID_KEY: &str = "lang_cid";
-
 // ── YAML bootstrap schema ─────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -101,16 +99,10 @@ pub enum BootstrapEntity {
 
 // ── Result type ───────────────────────────────────────────────────────────────
 
-/// CIDs produced by a successful bootstrap run.
+/// Result of a successful bootstrap run.
 #[derive(Debug)]
 pub struct BootstrapResult {
     pub root_cid: String,
-}
-
-/// CIDs produced by a successful lang refresh run.
-#[derive(Debug)]
-pub struct LangRefreshResult {
-    pub lang_cid: String,
 }
 
 // ── Core bootstrap logic ──────────────────────────────────────────────────────
@@ -322,15 +314,6 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
     serde_yaml::to_string(&yaml).context("serializing bootstrap YAML")
 }
 
-/// Read standalone lang-map CID from config extra fields.
-pub fn get_lang_cid(config: &ma_core::Config) -> Option<String> {
-    config
-        .extra
-        .get(LANG_CID_KEY)
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string)
-}
-
 // ── Startup entity loading ────────────────────────────────────────────────────
 
 /// Fetch the `RuntimeManifest` at `root_cid`, load each entity plugin, and
@@ -457,19 +440,6 @@ pub async fn save_all_entity_states(
     Ok(new_root_cid)
 }
 
-/// Re-publish all lang files from `lang_dir` and publish one lang-map CID.
-pub async fn refresh_lang_in_manifest(
-    kubo_url: &str,
-    lang_dir: &Path,
-) -> Result<LangRefreshResult> {
-    let lang_map = publish_lang(lang_dir, kubo_url).await?;
-    let lang_cid = kubo::dag_put(kubo_url, &lang_map)
-        .await
-        .context("publishing lang map")?;
-
-    Ok(LangRefreshResult { lang_cid })
-}
-
 async fn publish_lang(lang_dir: &Path, kubo_url: &str) -> Result<HashMap<String, IpldLink>> {
     let mut lang_map: HashMap<String, IpldLink> = HashMap::new();
     let entries = std::fs::read_dir(lang_dir)
@@ -487,7 +457,6 @@ async fn publish_lang(lang_dir: &Path, kubo_url: &str) -> Result<HashMap<String,
         let Some(lang) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-
         let bytes = std::fs::read(&path)
             .with_context(|| format!("reading lang file {}", path.display()))?;
         let cid = ipfs_add(kubo_url, bytes)
@@ -496,14 +465,12 @@ async fn publish_lang(lang_dir: &Path, kubo_url: &str) -> Result<HashMap<String,
         tracing::info!(lang = %lang, cid = %cid, "Published lang file");
         lang_map.insert(lang.to_string(), IpldLink::new(cid));
     }
-
     if lang_map.is_empty() {
         return Err(anyhow!(
             "no .ftl lang files found in {}",
             lang_dir.display()
         ));
     }
-
     Ok(lang_map)
 }
 

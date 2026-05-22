@@ -417,8 +417,8 @@ async fn handle_root_acl(
                 Some(link) => {
                     let acl_map: AclMap =
                         crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &link.cid).await?;
-                    let yaml = serde_yaml::to_string(&acl_map)
-                        .context("serialising root ACL as YAML")?;
+                    let yaml =
+                        serde_yaml::to_string(&acl_map).context("serialising root ACL as YAML")?;
                     let mut out = Vec::new();
                     ciborium::ser::into_writer(
                         &CborValue::Array(vec![
@@ -430,9 +430,7 @@ async fn handle_root_acl(
                     .context("encoding root ACL reply as CBOR")?;
                     send_rpc_reply(message, ctx, out).await
                 }
-                None => {
-                    send_rpc_i18n_error(message, ctx, "no-root-acl").await
-                }
+                None => send_rpc_i18n_error(message, ctx, "no-root-acl").await,
             }
         }
         // SET — load a new ACL from the given CID
@@ -459,11 +457,36 @@ async fn handle_root_acl(
             .context("encoding root ACL set reply as CBOR")?;
             send_rpc_reply(message, ctx, out).await
         }
+        // EDIT SAVE — accept DAG-CBOR bytes from client, dag_put, register new ACL.
+        (Some("edit"), [CborValue::Bytes(dag_cbor)]) => {
+            let dag_cbor = dag_cbor.clone();
+            let cid = crate::kubo::dag_put_raw(ctx.kubo_rpc_url, &dag_cbor)
+                .await
+                .context("dag_put_raw for root ACL")?;
+            let acl_map: AclMap = crate::kubo::dag_get(ctx.kubo_rpc_url, &cid)
+                .await
+                .with_context(|| format!("loading updated root ACL from {cid}"))?;
+            let new_root = with_manifest(ctx, |m| {
+                m.acl = Some(IpldLink::new(&cid));
+                Ok(())
+            })
+            .await?;
+            *ctx.root_acl.write().await = acl_map;
+            info!(cid = %cid, "Root transport ACL updated via edit-save");
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Text(new_root),
+                ]),
+                &mut out,
+            )
+            .context("encoding root ACL edit-save reply")?;
+            send_rpc_reply(message, ctx, out).await
+        }
         // DELETE is refused — the root transport ACL must never be cleared.
         // Removing it would open the runtime to everyone.
-        (Some(""), []) => {
-            send_rpc_i18n_error(message, ctx, "refuse-delete-root").await
-        }
+        (Some(""), []) => send_rpc_i18n_error(message, ctx, "refuse-delete-root").await,
         _ => Err(anyhow!("unknown :acl operation: {verb}")),
     }
 }
@@ -486,9 +509,7 @@ async fn handle_entities_ns(
                     .context("encoding entity list as CBOR")?;
                 send_rpc_reply(message, ctx, out).await
             }
-            (Some(""), _) => {
-                send_rpc_i18n_error(message, ctx, "refuse-delete-root").await
-            }
+            (Some(""), _) => send_rpc_i18n_error(message, ctx, "refuse-delete-root").await,
             _ => Err(anyhow!("unknown entities operation: {verb}")),
         },
         1 => handle_single_entity(message, &rest[0], tail, args, verb, ctx).await,
@@ -598,9 +619,8 @@ async fn handle_single_entity(
                     state: None,
                 },
             };
-            let mut out = Vec::new();
-            ciborium::ser::into_writer(&entity, &mut out).context("encoding entity as CBOR")?;
-            send_rpc_reply(message, ctx, out).await
+            let yaml = serde_yaml::to_string(&entity).context("serialising entity node as YAML")?;
+            send_rpc_yaml_reply(message, ctx, yaml).await
         }
         (Some("edit"), [CborValue::Bytes(dag_cbor)]) => {
             let name = name.as_str();
@@ -875,9 +895,7 @@ async fn handle_kinds_ns(
             send_rpc_reply(message, ctx, out).await
         }
         // [":kinds:"] → delete root (protected — refuse)
-        (Some(""), []) => {
-            send_rpc_i18n_error(message, ctx, "refuse-delete-root").await
-        }
+        (Some(""), []) => send_rpc_i18n_error(message, ctx, "refuse-delete-root").await,
         _ => Err(anyhow!("unknown kinds operation: {verb}")),
     }
 }
@@ -901,9 +919,7 @@ async fn handle_config_ns(
                     .context("encoding config as CBOR")?;
                 send_rpc_reply(message, ctx, out).await
             }
-            (Some(""), _) => {
-                send_rpc_i18n_error(message, ctx, "refuse-delete-root").await
-            }
+            (Some(""), _) => send_rpc_i18n_error(message, ctx, "refuse-delete-root").await,
             _ => Err(anyhow!("unknown config operation: {verb}")),
         },
         [key] => match (tail, args.as_slice()) {
@@ -1066,9 +1082,7 @@ async fn handle_ns_root(
                         .context("encoding namespace node as CBOR")?;
                     send_rpc_reply(message, ctx, out).await
                 }
-                None => {
-                    send_rpc_i18n_error(message, ctx, "namespace-not-found").await
-                }
+                None => send_rpc_i18n_error(message, ctx, "namespace-not-found").await,
             }
         }
         // Create / upsert namespace: `[:ns:]`
@@ -1126,9 +1140,7 @@ async fn handle_ns_acl_gate(
                         .context("encoding ACL gate CID as CBOR")?;
                     send_rpc_reply(message, ctx, out).await
                 }
-                None => {
-                    send_rpc_i18n_error(message, ctx, "no-ns-gate-acl").await
-                }
+                None => send_rpc_i18n_error(message, ctx, "no-ns-gate-acl").await,
             }
         }
         (Some(""), [CborValue::Text(cid)]) => {
@@ -1460,6 +1472,23 @@ async fn send_rpc_reply(
     ctx: &RpcHandlerCtx<'_>,
     content: Vec<u8>,
 ) -> Result<()> {
+    send_rpc_reply_typed(incoming, ctx, "application/cbor", &content).await
+}
+
+async fn send_rpc_yaml_reply(
+    incoming: &ma_core::Message,
+    ctx: &RpcHandlerCtx<'_>,
+    yaml: String,
+) -> Result<()> {
+    send_rpc_reply_typed(incoming, ctx, "text/yaml", yaml.as_bytes()).await
+}
+
+async fn send_rpc_reply_typed(
+    incoming: &ma_core::Message,
+    ctx: &RpcHandlerCtx<'_>,
+    content_type: &str,
+    content: &[u8],
+) -> Result<()> {
     let sender = Did::try_from(incoming.from.as_str())
         .with_context(|| format!("invalid sender DID: {}", incoming.from))?;
 
@@ -1467,8 +1496,8 @@ async fn send_rpc_reply(
         ctx.our_did,
         &incoming.from,
         MESSAGE_TYPE_RPC_REPLY,
-        "application/cbor",
-        &content,
+        content_type,
+        content,
         ctx.signing_key,
     )
     .context("failed to build RPC reply")?;

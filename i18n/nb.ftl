@@ -1,4 +1,5 @@
 # ma-runtime – Norsk Bokmål
+lang-name = Norsk bokmål
 
 own-did-published = Eget DID-dokument publisert til IPNS
 own-did-publish-failed = Kunne ikke publisere eget DID-dokument

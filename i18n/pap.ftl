@@ -1,0 +1,65 @@
+# ma-runtime – Papiamentu
+lang-name = Papiamentu
+
+own-did-published = Dokumentu DID propio a keda publika na IPNS
+own-did-publish-failed = No a logra publica dokumentu DID propio
+own-did-publish-timeout = Publikashon di dokumentu DID propio a expira despues di 2 minit
+started = ma runtime a kuminsá
+shutdown-requested = Apagamento a keda pidi
+closing-endpoint = Serrando punto di iroh...
+shutdown-complete = Apagamento kompleto
+status-listening = Sèrber di status ta skiucha
+rpc-message-received = Mensahe RPC a keda risibí
+rpc-message-rejected = Mensahe RPC a keda rekasá
+ipfs-message-rejected = Mensahe IPFS a keda rekasá
+ctrlc-handler-failed = Handler Ctrl-C a fayá
+node-connected = Nodo a konektá na protokol
+received-encrypted-ma-msg = A risibí ma-msg enkriptá riba /ma/ipfs/0.0.1
+unknown-rpc-atom = Atom RPC deskonosí, ignorando
+rpc-reply-sent = Respuesta RPC a keda mandá
+ping-received = :ping a keda risibí, mandando :pong
+did-publish-request-received = A risibí petishon pa publica dokumentu DID
+document-published = Dokumentu a keda publika
+did-publish-cid-reply-sent = Respuesta CID pa publikashon DID a keda mandá
+did-publish-resolve-failed = No por resolbe mandado pa entregá respuesta ipfs-publish
+ipfs-store-request-received = A risibí petishon di almacenamentu IPFS
+ipfs-stored = Kontenido a keda almacená na IPFS
+ipfs-store-cid-reply-sent = Respuesta CID a keda mandá
+ipfs-store-resolve-failed = No por resolbe mandado pa entregá respuesta ipfs-store
+
+# Entity dispatch
+bootstrap-complete = Bootstrap kompleto
+entity-loaded = Plugin di entidad a keda kargá
+entity-load-failed = No a logra karga plugin di entidad
+entity-not-found = Entidad no a keda haña, ignorando RPC
+entity-dispatched = RPC a keda mandá na entidad
+entity-replied = Entidad a mandá respuesta RPC
+root-create-entity = #root: krea entidad
+root-list-entities = #root: lista entidad
+root-delete-entity = #root: bora entidad
+root-entity-updated = Manifest di runtime a keda aktualisa
+entity-created = Entidad a keda kreá
+entity-deleted = Entidad a keda borá
+entity-states-saving = Guardando estadonan di entidad na IPFS
+entity-state-saving = Guardando estado di entidad
+entity-state-saved = Estado di entidad a keda guardá
+entity-state-empty = Plugin a bolbe estado bashi, brinká
+entity-states-saved = Estadonan di entidad a keda guardá
+link-set = Link a keda shetá
+ftl-loaded = Mensahenan di lenguahe a keda kargá for di IPFS
+
+# First-run auto-init
+no-config-found = Ningun konfigurashon a keda haña.
+initialising-new-identity = Inicializando identidad nobo di runtime.
+generated-headless-config = Konfigurashon headless a keda generá.
+
+# Ownership / claim
+runtime-claimed = Runtime a keda reklamá.
+
+# Protected root elements
+refuse-delete-root = Rekasando eliminá elemento raís rekerí
+no-root-acl = Ningun ACL raís konfigurá — runtime ta operando sin kontrol di akseso
+namespace-not-found = Namespace no a keda haña
+no-ns-gate-acl = Ningun ACL di puerta konfigurá pa e namespace aki
+runtime-claim-persisted = Dueño a keda skirbí na konfigurashon.
+runtime-already-claimed = Runtime a keda reklamá ya.

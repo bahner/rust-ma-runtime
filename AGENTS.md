@@ -294,3 +294,34 @@ to the originating message's ID and is delivered via `endpoint.outbox()`.
 - All files written by ma-core (config, bundle) use mode `0600`.
 - The `iroh_secret_key` is only for the iroh QUIC transport layer; it is
   distinct from `ipns_secret_key` which roots the `did:ma` identity.
+
+## Internationalisation — `src/i18n.rs` + `lang/`
+
+Translation strings use `key = value` lines only. No attributes, selectors, or
+substitutions — all runtime keys are plain declarative log messages with no
+`{ $var }` placeholders.
+
+- `lang/en.ftl` — **canonical source**; defines all keys.
+- `lang/*.ftl` — all other supported locales.
+- Missing keys fall back to the key name string.
+- Technical terms kept verbatim: DID, IPFS, IPNS, RPC, ACL, iroh, CID,
+  `#root`, `/ma/ipfs/0.0.1`, `:ping`, `:pong`, Bootstrap, headless, Plugin,
+  manifest.
+- **When adding or changing any logged string**, update `lang/en.ftl` first,
+  then add/update the same key in every `lang/*.ftl` file that exists.
+  Never leave a key missing from any locale file.
+
+### `lang-name` key
+
+Every `lang/*.ftl` file **must** contain a `lang-name` key whose value is the
+language's own name for itself (autonym), e.g. `lang-name = Norsk bokmål`.
+
+### Adding a new language
+
+1. Create `lang/<code>.ftl` with all keys from `lang/en.ftl` translated,
+   including `lang-name = <autonym>`.
+2. Rebuild (`cargo build`). `build.rs` scans `lang/*.ftl` and regenerates
+   `BUNDLED_LANGS` automatically — no manual code change required.
+
+`BUNDLED_LANGS` is written to `$OUT_DIR/bundled_langs.rs` and `include!`-ed
+into `src/i18n.rs`. All FTL files in `lang/` are compiled into the binary.

@@ -1,4 +1,5 @@
 # ma-runtime – English
+lang-name = English
 
 own-did-published = Own DID document published to IPNS
 own-did-publish-failed = Failed to publish own DID document

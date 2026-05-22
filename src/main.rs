@@ -43,12 +43,7 @@ struct Cli {
     #[arg(long)]
     root_cid: Option<String>,
 
-    /// Re-publish all lang files and update `root_cid` to a manifest
-    /// that references the refreshed lang CIDs.
-    #[arg(long = "gen-lang-cid", visible_alias = "lang-cid")]
-    gen_lang_cid: bool,
-
-    /// Directory containing `.ftl` lang files.
+    /// Directory containing `.ftl` lang files (used by --gen-root-cid).
     #[arg(long, default_value = "lang")]
     lang_dir: PathBuf,
 
@@ -149,24 +144,7 @@ async fn main() -> Result<()> {
         info!(root_cid = %cid, "runtime head reset for this session");
     }
 
-    // ── gen-lang-cid: publish lang map only (no manifest rewrite) ───────
-    if cli.gen_lang_cid {
-        let publisher = IpfsDidPublisher::new(&config.kubo_rpc_url)
-            .with_context(|| format!("invalid kubo_rpc_url: {}", config.kubo_rpc_url))?;
-        publisher
-            .wait_until_ready(10)
-            .await
-            .context("kubo RPC is not reachable for lang refresh")?;
-
-        let refresh = bootstrap::refresh_lang_in_manifest(&config.kubo_rpc_url, &cli.lang_dir)
-            .await
-            .context("refreshing lang failed")?;
-        info!(
-            lang_cid = %refresh.lang_cid,
-            "Lang files refreshed"
-        );
-        return Ok(());
-    }
+    // ── gen-lang-cid has been replaced by `make src/i18n.json` ────────────
 
     let acl = acl::new_shared_acl(acl::AclMap::new()); // deny-all until manifest loads
 
@@ -197,7 +175,12 @@ async fn main() -> Result<()> {
 
     // ── Own DID document (ma extension uses protocol + runtime link) ─────────
     let mut root_cid = cli.root_cid.clone();
-    let lang_cid = bootstrap::get_lang_cid(&config);
+    let lang_cid = config
+        .extra
+        .get("i18n_cid")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .or_else(|| i18n::default_lang_cid().map(String::from));
     // Først: bygg ma-extension uten runtime-link for å få DID
     let ma_base = endpoint
         .ma_extension()
@@ -525,10 +508,8 @@ async fn main() -> Result<()> {
     );
 
     // ── Shared DID document resolver (cached, TTL configurable) ─────────────
-    let did_resolver_pos_ttl =
-        get_u64_setting(&config, "did_resolver_positive_ttl_secs", 300);
-    let did_resolver_neg_ttl =
-        get_u64_setting(&config, "did_resolver_negative_ttl_secs", 30);
+    let did_resolver_pos_ttl = get_u64_setting(&config, "did_resolver_positive_ttl_secs", 300);
+    let did_resolver_neg_ttl = get_u64_setting(&config, "did_resolver_negative_ttl_secs", 30);
     let shared_resolver = Arc::new(
         IpfsGatewayResolver::new(&config.kubo_rpc_url).with_cache_ttls(
             Duration::from_secs(did_resolver_pos_ttl),
