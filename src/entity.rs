@@ -349,12 +349,12 @@ pub struct RuntimeManifest {
     /// `did:ma:<ipns>#fortune` ↔ `entities["fortune"]`.
     pub entities: HashMap<String, IpldLink>,
     #[serde(default)]
-    pub lang: HashMap<String, IpldLink>,
+    pub i18n: HashMap<String, IpldLink>,
     #[serde(default)]
     pub config: BTreeMap<String, serde_json::Value>,
     /// Namespace nodes keyed by handle (e.g. `"owner"`, `"alice"`).
     ///
-    /// Reserved handles: `acl`, `acls`, `protocol`, `kinds`, `entities`, `lang`, `config`.
+    /// Reserved handles: `acl`, `acls`, `protocol`, `kinds`, `entities`, `i18n`, `config`.
     #[serde(flatten)]
     pub namespaces: HashMap<String, NamespaceNode>,
 }

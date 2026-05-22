@@ -43,17 +43,13 @@ struct Cli {
     #[arg(long)]
     root_cid: Option<String>,
 
-    /// Directory containing `.ftl` lang files (used by --gen-root-cid).
-    #[arg(long, default_value = "lang")]
-    lang_dir: PathBuf,
-
     /// Poll interval in milliseconds.
     #[arg(long, default_value_t = 100)]
     poll_ms: u64,
 
-    /// Language for log messages. Accepted: nb (default), en.
-    #[arg(long, default_value = "nb", env = "MA_LANG")]
-    lang: String,
+    /// Language for log messages. Falls back to `i18n:` in config.yaml, then "nb".
+    #[arg(long, env = "MA_I18N")]
+    i18n: Option<String>,
 
     /// Status web server bind address.
     #[arg(long, default_value = "127.0.0.1:5003")]
@@ -87,6 +83,16 @@ async fn main() -> Result<()> {
 
     let config = Config::from_args(&cli.ma, MA_DEFAULT_SLUG)?;
     config.init_logging()?;
+
+    // Compute from CLI / config.yaml only — manifest not loaded yet.
+    // For runtime startup the manifest fallback is applied later.
+    let effective_lang_base: Option<String> = cli.i18n.clone().or_else(|| {
+        config
+            .extra
+            .get("i18n")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+    });
 
     // ── Auto-generate headless config on first run ────────────────────────────
     // If the secret bundle is missing (true first-run state), generate a full
@@ -129,8 +135,8 @@ async fn main() -> Result<()> {
         let result = bootstrap::run_bootstrap(
             yaml_path,
             &config.kubo_rpc_url,
-            &cli.lang_dir,
             runtime_config,
+            effective_lang_base.as_deref().unwrap_or("nb"),
             cli.root_cid.as_deref(),
         )
         .await
@@ -257,9 +263,20 @@ async fn main() -> Result<()> {
         }
     }
 
-    // ── i18n: fetch lang via RuntimeManifest.lang from IPFS ─────────────
+    // ── i18n: fetch lang via RuntimeManifest.i18n from IPFS ────────────
+    // Priority: --i18n / MA_I18N > config.extra["i18n"] > manifest config.i18n (CID
+    // reverse-lookup) > "nb". The active FTL is cached in memory here.
+    let effective_lang = if let Some(ref lang) = effective_lang_base {
+        lang.clone()
+    } else if let Some(rc) = root_cid.as_deref() {
+        i18n::resolve_active_lang(&config.kubo_rpc_url, rc)
+            .await
+            .unwrap_or_else(|| "nb".to_string())
+    } else {
+        "nb".to_string()
+    };
     i18n::init(
-        &cli.lang,
+        &effective_lang,
         &config.kubo_rpc_url,
         lang_cid.as_deref(),
         root_cid.as_deref(),
@@ -406,7 +423,10 @@ async fn main() -> Result<()> {
     let cors_origins = status_cors_allowed_origins(&config);
     status::spawn_status_server(stats.clone(), acl.clone(), cli.status_bind, &cors_origins);
 
-    // Periodisk DID-republisering (hver 5. minutt) fra in-memory runtime-head.
+    // Periodisk DID-republisering fra in-memory runtime-head.
+    // Publiserer umiddelbart ved CID-endring; ellers maks én gang per dag (cache-oppvarming).
+    let did_publish_cache_warm_secs =
+        get_u64_setting(&config, "did_publish_cache_warm_secs", 86_400);
     let refresh_kubo_url = config.kubo_rpc_url.clone();
     let refresh_ma_base = ma_base.clone();
     let refresh_runtime_ipns_key = runtime_ipns_key;
@@ -418,11 +438,21 @@ async fn main() -> Result<()> {
     let refresh_stats = stats.clone();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(did_publish_interval_secs));
+        let mut last_published_cid: Option<String> = None;
+        let mut last_published_at = std::time::Instant::now()
+            .checked_sub(Duration::from_secs(did_publish_cache_warm_secs))
+            .unwrap_or(std::time::Instant::now());
         loop {
             ticker.tick().await;
             let Some(latest_root_cid) = refresh_stats.read().await.root_cid.clone() else {
                 continue;
             };
+            let cid_changed = last_published_cid.as_deref() != Some(latest_root_cid.as_str());
+            let cache_warm_elapsed =
+                last_published_at.elapsed() >= Duration::from_secs(did_publish_cache_warm_secs);
+            if !cid_changed && !cache_warm_elapsed {
+                continue;
+            }
             let runtime_cid = match Cid::try_from(latest_root_cid.as_str()) {
                 Ok(c) => c,
                 Err(err) => {
@@ -465,9 +495,11 @@ async fn main() -> Result<()> {
                 ),
             )
             .await;
+            let mut did_ok = false;
             match publish {
                 Ok(Ok(())) => {
-                    info!(runtime_cid = %latest_root_cid, "periodic DID publish succeeded");
+                    info!(runtime_cid = %latest_root_cid, cid_changed, "periodic DID publish succeeded");
+                    did_ok = true;
                 }
                 Ok(Err(err)) => {
                     error!(runtime_cid = %latest_root_cid, error = %format!("{err:#}"), "periodic DID publish failed");
@@ -475,7 +507,7 @@ async fn main() -> Result<()> {
                 Err(_) => error!(runtime_cid = %latest_root_cid, "periodic DID publish timed out"),
             }
 
-            match tokio::time::timeout(
+            let ipns_ok = match tokio::time::timeout(
                 Duration::from_secs(did_publish_timeout_secs),
                 ipfs::publish_runtime_root_cid(
                     &refresh_kubo_url,
@@ -487,14 +519,22 @@ async fn main() -> Result<()> {
             .await
             {
                 Ok(Ok(_)) => {
-                    info!(runtime_cid = %latest_root_cid, "periodic runtime_ipns publish succeeded");
+                    info!(runtime_cid = %latest_root_cid, cid_changed, "periodic runtime_ipns publish succeeded");
+                    true
                 }
                 Ok(Err(err)) => {
                     error!(runtime_cid = %latest_root_cid, error = %format!("{err:#}"), "periodic runtime_ipns publish failed");
+                    false
                 }
                 Err(_) => {
                     error!(runtime_cid = %latest_root_cid, "periodic runtime_ipns publish timed out");
+                    false
                 }
+            };
+
+            if did_ok && ipns_ok {
+                last_published_cid = Some(latest_root_cid);
+                last_published_at = std::time::Instant::now();
             }
         }
     });
@@ -517,13 +557,20 @@ async fn main() -> Result<()> {
         ),
     );
 
+    // ── Shared daemon config (enables runtime RPC writes + config.yaml save-back) ──
+    let shared_config: std::sync::Arc<tokio::sync::RwLock<Config>> =
+        std::sync::Arc::new(tokio::sync::RwLock::new(config));
+
     // ── Main event loop ────────────────────────────────────────────────────────
     let mut ticker = tokio::time::interval(Duration::from_millis(cli.poll_ms));
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
 
     loop {
         tokio::select! {
             _ = ticker.tick() => {
                 let now = status::now_unix_secs();
+                let kubo_url = shared_config.read().await.kubo_rpc_url.clone();
 
                 // Drain /ma/rpc/0.0.1
                 while let Some(mut message) = rpc_messages.pop(now) {
@@ -550,12 +597,13 @@ async fn main() -> Result<()> {
                             our_did: &our_did,
                             signing_key: &signing_key,
                             endpoint: &*endpoint,
-                            kubo_rpc_url: &config.kubo_rpc_url,
+                            kubo_rpc_url: &kubo_url,
                             resolver: Arc::clone(&shared_resolver),
                             entity_registry: entity_registry.clone(),
                             stats: stats.clone(),
                             acl_cache: acl_cache.clone(),
                             root_acl: acl.clone(),
+                            shared_config: Arc::clone(&shared_config),
                         },
                     )
                     .await
@@ -593,7 +641,7 @@ async fn main() -> Result<()> {
                                 our_did: &our_did,
                                 signing_key: &signing_key,
                                 endpoint: &*endpoint,
-                                kubo_rpc_url: &config.kubo_rpc_url,
+                                kubo_rpc_url: &kubo_url,
                                 publisher: &ipfs.publisher,
                                 resolver: Arc::clone(&shared_resolver),
                             },
@@ -608,11 +656,14 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            signal = tokio::signal::ctrl_c() => {
+            signal = &mut ctrl_c => {
                 if let Err(err) = signal {
                     error!(error = %err, "{}", i18n::t("ctrlc-handler-failed"));
                 }
+                eprintln!();
+                eprintln!("{}", i18n::t("shutdown-requested"));
                 info!("{}", i18n::t("shutdown-requested"));
+                let kubo_url = shared_config.read().await.kubo_rpc_url.clone();
 
                 // ── Persist entity states before exit ─────────────────────────
                 let active_root_cid = stats.read().await.root_cid.clone();
@@ -622,7 +673,7 @@ async fn main() -> Result<()> {
                         info!(count = %count, "{}", i18n::t("entity-states-saving"));
                         match bootstrap::save_all_entity_states(
                             rc,
-                            &config.kubo_rpc_url,
+                            &kubo_url,
                             &entity_registry,
                         )
                         .await
@@ -639,7 +690,7 @@ async fn main() -> Result<()> {
                     match tokio::time::timeout(
                         Duration::from_secs(did_publish_timeout_secs),
                         ipfs::publish_runtime_root_cid(
-                            &config.kubo_rpc_url,
+                            &kubo_url,
                             &runtime_ipns_key,
                             &latest_root_cid,
                             did_publish_lifetime_hours,

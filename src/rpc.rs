@@ -8,6 +8,7 @@ use ma_core::{
     ipfs_add, Did, DidDocumentResolver, IpfsGatewayResolver, Ipld, SigningKey, MESSAGE_TYPE_RPC,
     MESSAGE_TYPE_RPC_REPLY,
 };
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::acl::{check_full, AclCache, AclMap, SharedAcl, CAP_RPC};
@@ -19,6 +20,34 @@ use crate::plugin::EntityRegistry;
 use crate::status::SharedStats;
 
 pub const RPC_PROTOCOL_ID: &str = "/ma/rpc/0.0.1";
+
+// ── Config key tables ─────────────────────────────────────────────────────────
+
+/// Daemon config fields that may be read/written via RPC and are saved to
+/// `config.yaml` on change. Changes to `kubo_rpc_url` take effect immediately
+/// for all subsequent IPFS calls.
+const DAEMON_CONFIG_KEYS: &[&str] = &[
+    "kubo_rpc_url",
+    "kubo_key_alias",
+    "log_level",
+    "log_level_stdout",
+    "did_resolver_positive_ttl_secs",
+    "did_resolver_negative_ttl_secs",
+    "log_file",
+];
+
+/// Keys that are never exposed or writable via RPC.
+/// Any key beginning with `secret` is also blocked dynamically.
+const PROTECTED_CONFIG_KEYS: &[&str] = &[
+    "slug",
+    "secret_bundle",
+    "secret_bundle_passphrase",
+    "config_path",
+];
+
+fn is_protected_config_key(key: &str) -> bool {
+    PROTECTED_CONFIG_KEYS.contains(&key) || key.starts_with("secret")
+}
 
 // ── Handler context ────────────────────────────────────────────────────────────
 
@@ -33,6 +62,9 @@ pub struct RpcHandlerCtx<'a> {
     pub acl_cache: AclCache,
     /// Shared root transport ACL — owner may update at runtime via `:acl`.
     pub root_acl: SharedAcl,
+    /// Shared daemon config — RPC `:config.*` reads/writes go through this.
+    /// Changes to daemon config keys are saved to `config.yaml` immediately.
+    pub shared_config: Arc<RwLock<ma_core::Config>>,
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
@@ -911,66 +943,191 @@ async fn handle_config_ns(
     match rest {
         [] => match (tail, args.as_slice()) {
             (None | Some("edit"), []) => {
+                // Return the union of daemon config fields + manifest config,
+                // excluding all protected keys.
                 let root_cid = current_root_cid(ctx).await?;
                 let manifest: RuntimeManifest =
                     crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+                let mut combined = manifest.config.clone();
+                {
+                    let cfg = ctx.shared_config.read().await;
+                    for key in DAEMON_CONFIG_KEYS {
+                        let val = daemon_config_key_value(&cfg, key);
+                        if !val.is_null() {
+                            combined.insert(key.to_string(), val);
+                        }
+                    }
+                }
                 let mut out = Vec::new();
-                ciborium::ser::into_writer(&manifest.config, &mut out)
+                ciborium::ser::into_writer(&combined, &mut out)
                     .context("encoding config as CBOR")?;
                 send_rpc_reply(message, ctx, out).await
             }
             (Some(""), _) => send_rpc_i18n_error(message, ctx, "refuse-delete-root").await,
             _ => Err(anyhow!("unknown config operation: {verb}")),
         },
-        [key] => match (tail, args.as_slice()) {
-            (None | Some("edit"), []) => {
-                let root_cid = current_root_cid(ctx).await?;
-                let manifest: RuntimeManifest =
-                    crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
-                let val = manifest
-                    .config
-                    .get(key.as_str())
-                    .ok_or_else(|| anyhow!("config key not found: {key}"))?;
-                let mut out = Vec::new();
-                ciborium::ser::into_writer(val, &mut out)
-                    .context("encoding config value as CBOR")?;
-                send_rpc_reply(message, ctx, out).await
-            }
-            (Some(""), []) => {
-                let key = key.as_str().to_string();
-                with_manifest(ctx, |m| {
-                    m.config.remove(&key);
-                    Ok(())
-                })
-                .await?;
-                let mut out = Vec::new();
-                ciborium::ser::into_writer(&CborValue::Text(":ok".to_string()), &mut out)
-                    .context("encoding config-delete reply as CBOR")?;
-                send_rpc_reply(message, ctx, out).await
-            }
-            (Some(""), [CborValue::Text(value)]) => {
-                let key = key.as_str().to_string();
-                let json_val: serde_json::Value = serde_json::from_str(value.as_str())
-                    .unwrap_or_else(|_| serde_json::Value::String(value.clone()));
-                let new_root = with_manifest(ctx, |m| {
-                    m.config.insert(key, json_val);
-                    Ok(())
-                })
-                .await?;
-                let mut out = Vec::new();
-                ciborium::ser::into_writer(
-                    &CborValue::Array(vec![
-                        CborValue::Text(":ok".to_string()),
-                        CborValue::Text(new_root),
-                    ]),
-                    &mut out,
+        [key] => {
+            if is_protected_config_key(key.as_str()) {
+                return send_rpc_error_reply(
+                    message,
+                    ctx,
+                    &format!("config key '{key}' is protected"),
                 )
-                .context("encoding config-set reply as CBOR")?;
-                send_rpc_reply(message, ctx, out).await
+                .await;
             }
-            _ => Err(anyhow!("unknown config.{key} operation: {verb}")),
-        },
+            let is_daemon_key = DAEMON_CONFIG_KEYS.contains(&key.as_str());
+            match (tail, args.as_slice()) {
+                (None | Some("edit"), []) => {
+                    let val = if is_daemon_key {
+                        let cfg = ctx.shared_config.read().await;
+                        daemon_config_key_value(&cfg, key.as_str())
+                    } else {
+                        let root_cid = current_root_cid(ctx).await?;
+                        let manifest: RuntimeManifest =
+                            crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await?;
+                        manifest
+                            .config
+                            .get(key.as_str())
+                            .ok_or_else(|| anyhow!("config key not found: {key}"))?
+                            .clone()
+                    };
+                    let mut out = Vec::new();
+                    ciborium::ser::into_writer(&val, &mut out)
+                        .context("encoding config value as CBOR")?;
+                    send_rpc_reply(message, ctx, out).await
+                }
+                (Some(""), []) => {
+                    if is_daemon_key {
+                        return send_rpc_error_reply(
+                            message,
+                            ctx,
+                            &format!("daemon config key '{key}' cannot be deleted via RPC"),
+                        )
+                        .await;
+                    }
+                    let key = key.as_str().to_string();
+                    with_manifest(ctx, |m| {
+                        m.config.remove(&key);
+                        Ok(())
+                    })
+                    .await?;
+                    let mut out = Vec::new();
+                    ciborium::ser::into_writer(&CborValue::Text(":ok".to_string()), &mut out)
+                        .context("encoding config-delete reply as CBOR")?;
+                    send_rpc_reply(message, ctx, out).await
+                }
+                (Some(""), [CborValue::Text(value)]) => {
+                    let key = key.as_str().to_string();
+                    let json_val: serde_json::Value = serde_json::from_str(value.as_str())
+                        .unwrap_or_else(|_| serde_json::Value::String(value.clone()));
+                    if is_daemon_key {
+                        // Update daemon config in memory and persist to disk.
+                        set_daemon_config_key(
+                            &mut *ctx.shared_config.write().await,
+                            &key,
+                            &json_val,
+                        );
+                        if let Err(e) = ctx.shared_config.read().await.save() {
+                            warn!(key = %key, error = %e, "failed to save config.yaml after RPC update");
+                        }
+                        let mut out = Vec::new();
+                        ciborium::ser::into_writer(
+                            &CborValue::Text(":ok".to_string()),
+                            &mut out,
+                        )
+                        .context("encoding config-set reply as CBOR")?;
+                        return send_rpc_reply(message, ctx, out).await;
+                    }
+                    // Manifest config key — store in IPFS DAG.
+                    let new_root = with_manifest(ctx, |m| {
+                        m.config.insert(key.clone(), json_val.clone());
+                        Ok(())
+                    })
+                    .await?;
+                    // Language hot-swap: reload FTL messages immediately.
+                    if key == "i18n" {
+                        if let serde_json::Value::String(ref lang) = json_val {
+                            crate::i18n::switch_lang(lang, ctx.kubo_rpc_url).await;
+                        }
+                    }
+                    let mut out = Vec::new();
+                    ciborium::ser::into_writer(
+                        &CborValue::Array(vec![
+                            CborValue::Text(":ok".to_string()),
+                            CborValue::Text(new_root),
+                        ]),
+                        &mut out,
+                    )
+                    .context("encoding config-set reply as CBOR")?;
+                    send_rpc_reply(message, ctx, out).await
+                }
+                _ => Err(anyhow!("unknown config.{key} operation: {verb}")),
+            }
+        }
         _ => Err(anyhow!("unknown config operation: {verb}")),
+    }
+}
+
+/// Read a daemon config field as a `serde_json::Value` for RPC responses.
+/// Returns `Value::Null` for unknown or platform-guarded keys.
+fn daemon_config_key_value(cfg: &ma_core::Config, key: &str) -> serde_json::Value {
+    match key {
+        "kubo_rpc_url" => serde_json::Value::String(cfg.kubo_rpc_url.clone()),
+        "kubo_key_alias" => serde_json::Value::String(cfg.kubo_key_alias.clone()),
+        "log_level" => serde_json::Value::String(cfg.log_level.clone()),
+        "log_level_stdout" => serde_json::Value::String(cfg.log_level_stdout.clone()),
+        "did_resolver_positive_ttl_secs" => {
+            serde_json::Value::Number(cfg.did_resolver_positive_ttl_secs.into())
+        }
+        "did_resolver_negative_ttl_secs" => {
+            serde_json::Value::Number(cfg.did_resolver_negative_ttl_secs.into())
+        }
+        "log_file" => cfg
+            .log_file
+            .as_ref()
+            .map(|p| serde_json::Value::String(p.to_string_lossy().into_owned()))
+            .unwrap_or(serde_json::Value::Null),
+        _ => serde_json::Value::Null,
+    }
+}
+
+/// Apply a JSON value from RPC to the corresponding `Config` field in memory.
+fn set_daemon_config_key(cfg: &mut ma_core::Config, key: &str, val: &serde_json::Value) {
+    match key {
+        "kubo_rpc_url" => {
+            if let Some(s) = val.as_str() {
+                cfg.kubo_rpc_url = s.to_string();
+            }
+        }
+        "kubo_key_alias" => {
+            if let Some(s) = val.as_str() {
+                cfg.kubo_key_alias = s.to_string();
+            }
+        }
+        "log_level" => {
+            if let Some(s) = val.as_str() {
+                cfg.log_level = s.to_string();
+            }
+        }
+        "log_level_stdout" => {
+            if let Some(s) = val.as_str() {
+                cfg.log_level_stdout = s.to_string();
+            }
+        }
+        "did_resolver_positive_ttl_secs" => {
+            if let Some(n) = val.as_u64() {
+                cfg.did_resolver_positive_ttl_secs = n;
+            }
+        }
+        "did_resolver_negative_ttl_secs" => {
+            if let Some(n) = val.as_u64() {
+                cfg.did_resolver_negative_ttl_secs = n;
+            }
+        }
+        "log_file" => {
+            cfg.log_file = val.as_str().map(std::path::PathBuf::from);
+        }
+        _ => {}
     }
 }
 
@@ -978,7 +1135,7 @@ async fn handle_config_ns(
 
 /// Handles that may not be used as namespace names.
 const RESERVED_NS: &[&str] = &[
-    "acl", "acls", "protocol", "kinds", "entities", "lang", "config",
+    "acl", "acls", "protocol", "kinds", "entities", "i18n", "config",
 ];
 
 /// Check the namespace gate ACL for `caller` against `caps`.

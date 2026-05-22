@@ -93,6 +93,47 @@ or `MA_SECRET_BUNDLE_PASSPHRASE`, or in the YAML config).
 
 `kubo_rpc_url` defaults to `http://127.0.0.1:5001`.
 
+### Config key categories
+
+**`slug`** is CLI/env-only (`--slug` / `MA_SLUG`). It is **never written to
+`config.yaml`** — writing it there creates an unsolvable catch-22 (the runtime
+slug is needed to read the file that would tell it the slug). Set it via `--slug`
+or `MA_SLUG` env var only.
+
+**Protected keys** — never exposed or writable via `:config.*` RPC:
+
+| Key | Reason |
+|-----|--------|
+| `slug` | CLI/env-only (catch-22, see above) |
+| `secret_bundle` | Key material path — must not leak |
+| `secret_bundle_passphrase` | Secret — must never be exposed |
+| `config_path` | Internal path — not user-settable via RPC |
+| any key starting with `secret` | Blanket guard for future secret fields |
+
+**Daemon config keys** — readable and writable via `:config.<key>` RPC;
+changes take effect immediately in memory and are saved to `config.yaml`:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `kubo_rpc_url` | string | Kubo RPC API URL (effective on next IPFS call) |
+| `kubo_key_alias` | string | IPNS key alias in Kubo |
+| `log_level` | string | Log level for the log file |
+| `log_level_stdout` | string | Log level for stdout |
+| `did_resolver_positive_ttl_secs` | u64 | Cache TTL for resolved DIDs |
+| `did_resolver_negative_ttl_secs` | u64 | Cache TTL for failed DID lookups |
+| `log_file` | string or null | Path to log file |
+
+**Manifest config keys** — stored in the IPFS DAG (`manifest.config`), not in
+`config.yaml`. These persist across restarts only because they live in IPFS.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `i18n` | string | Active language BCP-47 tag (e.g. `nb`, `zh-Hans`) |
+| other | any | Free-form runtime metadata |
+
+Setting `i18n` via `:config.i18n: nb` takes effect immediately (calls
+`switch_lang()` to reload FTL translations in memory) and persists to IPFS.
+
 ### IPFS publisher toggle
 
 Add to `~/.config/ma/ma.yaml` to disable the IPFS publisher service:
