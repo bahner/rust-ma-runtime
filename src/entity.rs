@@ -150,9 +150,6 @@ impl IpldLink {
 
 // ── Local (intra-runtime) message ─────────────────────────────────────────────
 
-#[allow(dead_code)]
-pub const LOCAL_RPC_CONTENT_TYPE: &str = "application/x-ma-local-rpc";
-
 /// An intra-runtime message.  Follows the same schema as `ma_core::Message`
 /// but `from` and `to` may be bare fragments (`#fragment`) or full DIDs, and
 /// no signature is required — the runtime is the trusted authority for local
@@ -357,13 +354,6 @@ pub struct RuntimeManifest {
     /// Reserved handles: `acl`, `acls`, `protocol`, `kinds`, `entities`, `i18n`, `config`.
     #[serde(flatten)]
     pub namespaces: HashMap<String, NamespaceNode>,
-}
-
-impl RuntimeManifest {
-    #[allow(dead_code)]
-    pub fn kind_link(&self, protocol: &str) -> Option<&IpldLink> {
-        self.kinds.get_protocol(protocol)
-    }
 }
 
 // ── Plugin host-function I/O ──────────────────────────────────────────────────

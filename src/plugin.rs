@@ -251,16 +251,6 @@ impl EntityPlugin {
         })
     }
 
-    /// Returns `true` if the plugin has state not yet persisted to IPFS.
-    #[allow(dead_code)]
-    pub fn is_dirty(&self) -> bool {
-        self.state
-            .get()
-            .ok()
-            .and_then(|arc| arc.lock().ok().map(|s| s.dirty))
-            .unwrap_or(false)
-    }
-
     /// Record a successful IPFS persist: update the persisted snapshot and
     /// clear the dirty flag.  Call this after a successful `ipfs_add`.
     pub fn mark_saved(&self, saved_bytes: Vec<u8>) {
@@ -277,7 +267,6 @@ impl EntityPlugin {
     /// A well-behaved plugin responds by calling `ma_set_state(bytes)`.  If it
     /// doesn't, `Ok(None)` is returned and `dirty` is unchanged (tough luck).
     /// On IPFS success the `dirty` flag is cleared and the CID is returned.
-    #[allow(dead_code)]
     pub async fn trigger_save(&self, kubo_url: &str) -> Result<Option<String>> {
         tokio::task::block_in_place(|| {
             let mut plugin = self

@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use ma_core::check_cap;
 use tokio::sync::RwLock;
 
-pub use ma_core::{normalize_principal, AclMap, CapabilityEntry, CAP_IPFS, CAP_RPC, GROUP_PREFIX};
+pub use ma_core::{normalize_principal, AclMap, CapabilityEntry, CAP_CRUD, CAP_IPFS, CAP_RPC, GROUP_PREFIX};
 
 /// In-memory cache of named ACLs.
 ///
@@ -20,27 +20,6 @@ pub type AclCache = Arc<RwLock<HashMap<String, AclMap>>>;
 /// Create a new empty [`AclCache`].
 pub fn new_acl_cache() -> AclCache {
     Arc::new(RwLock::new(HashMap::new()))
-}
-
-/// Returns `true` if `key` matches the `<ns>.acls.<name>` pattern:
-/// exactly three dot-separated segments where the middle segment is `"acls"`.
-#[allow(dead_code)]
-pub fn is_acl_key(key: &str) -> bool {
-    let parts: Vec<&str> = key.split('.').collect();
-    parts.len() == 3 && parts[1] == "acls"
-}
-
-/// Parse a `<ns>.acls.<name>` key into `(ns, name)`.
-///
-/// Returns `None` if the key does not match the pattern.
-#[allow(dead_code)]
-pub fn parse_acl_key(key: &str) -> Option<(&str, &str)> {
-    let parts: Vec<&str> = key.split('.').collect();
-    if parts.len() == 3 && parts[1] == "acls" {
-        Some((parts[0], parts[2]))
-    } else {
-        None
-    }
 }
 
 /// Fetch an ACL document by CID from IPFS and deserialise it as [`AclMap`].

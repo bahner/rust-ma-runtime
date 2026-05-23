@@ -1,5 +1,6 @@
 mod acl;
 mod bootstrap;
+mod crud;
 mod entity;
 mod i18n;
 mod ipfs;
@@ -175,6 +176,17 @@ async fn main() -> Result<()> {
     let rpc_messages = endpoint.service(rpc::RPC_PROTOCOL_ID);
     let ipfs_messages = if ipfs_publisher_enabled {
         Some(endpoint.service(IPFS_PROTOCOL_ID))
+    } else {
+        None
+    };
+
+    let crud_enabled = config
+        .extra
+        .get("crud_service")
+        .and_then(serde_yaml::value::Value::as_bool)
+        .unwrap_or(true);
+    let mut crud_messages = if crud_enabled {
+        Some(endpoint.service(crud::CRUD_PROTOCOL_ID))
     } else {
         None
     };
@@ -441,7 +453,7 @@ async fn main() -> Result<()> {
         let mut last_published_cid: Option<String> = None;
         let mut last_published_at = std::time::Instant::now()
             .checked_sub(Duration::from_secs(did_publish_cache_warm_secs))
-            .unwrap_or(std::time::Instant::now());
+            .unwrap_or_else(std::time::Instant::now);
         loop {
             ticker.tick().await;
             let Some(latest_root_cid) = refresh_stats.read().await.root_cid.clone() else {
@@ -602,8 +614,6 @@ async fn main() -> Result<()> {
                             entity_registry: entity_registry.clone(),
                             stats: stats.clone(),
                             acl_cache: acl_cache.clone(),
-                            root_acl: acl.clone(),
-                            shared_config: Arc::clone(&shared_config),
                         },
                     )
                     .await
@@ -650,6 +660,34 @@ async fn main() -> Result<()> {
                         .await
                         {
                             warn!(error = %err, from = %message.from, "{}", i18n::t("ipfs-message-rejected"));
+                        }
+                        message.content.zeroize();
+                        message.signature.zeroize();
+                    }
+                }
+
+                // Drain /ma/crud/0.0.1
+                if let Some(ref mut crud_inbox) = crud_messages {
+                    while let Some(mut message) = crud_inbox.pop(now) {
+                        if let Err(err) = crud::handle_crud_message(
+                            &message,
+                            &*acl.read().await,
+                            &crud::CrudHandlerCtx {
+                                our_did: &our_did,
+                                signing_key: &signing_key,
+                                endpoint: &*endpoint,
+                                kubo_rpc_url: &kubo_url,
+                                resolver: Arc::clone(&shared_resolver),
+                                stats: stats.clone(),
+                                entity_registry: entity_registry.clone(),
+                                shared_config: Arc::clone(&shared_config),
+                                acl_cache: acl_cache.clone(),
+                                root_acl: acl.clone(),
+                            },
+                        )
+                        .await
+                        {
+                            warn!(error = %err, from = %message.from, "CRUD message rejected");
                         }
                         message.content.zeroize();
                         message.signature.zeroize();
@@ -742,10 +780,6 @@ fn runtime_manifest_config(
 ) -> std::collections::BTreeMap<String, serde_json::Value> {
     let mut out = std::collections::BTreeMap::new();
 
-    out.insert(
-        "slug".to_string(),
-        serde_json::Value::String(MA_DEFAULT_SLUG.to_string()),
-    );
     out.insert(
         "did_resolver_positive_ttl_secs".to_string(),
         serde_json::Value::from(get_u64_setting(
