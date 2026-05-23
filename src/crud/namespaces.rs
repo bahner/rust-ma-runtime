@@ -104,21 +104,13 @@ async fn handle_ns_root(
             let manifest = load_manifest(ctx).await?;
             match manifest.namespaces.get(ns) {
                 Some(ns_node) => send_crud_reply_cbor(message, reply_type, ctx, ns_node).await,
-                None => {
-                    send_crud_i18n_error(message, reply_type, ctx, "namespace-not-found").await
-                }
+                None => send_crud_i18n_error(message, reply_type, ctx, "namespace-not-found").await,
             }
         }
         // Create / upsert namespace
         (Some(""), _) => {
             if RESERVED_NS.contains(&ns) {
-                return send_crud_i18n_error(
-                    message,
-                    reply_type,
-                    ctx,
-                    "refuse-delete-root",
-                )
-                .await;
+                return send_crud_i18n_error(message, reply_type, ctx, "refuse-delete-root").await;
             }
             let new_root = with_manifest_crud(ctx, |m| {
                 m.namespaces
@@ -236,8 +228,7 @@ async fn handle_ns_acls(
                 .acls
                 .get(acl_name.as_str())
                 .ok_or_else(|| anyhow!("ACL not found: {ns}.acls.{acl_name}"))?;
-            send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(link.cid.clone()))
-                .await
+            send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(link.cid.clone())).await
         }
         ([acl_name], Some(""), [CborValue::Text(cid)]) => {
             let acl_name = acl_name.clone();
@@ -357,8 +348,8 @@ pub(super) async fn handle_root_acl(
                 Some(link) => {
                     let acl_map: AclMap =
                         crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &link.cid).await?;
-                    let yaml = serde_yaml::to_string(&acl_map)
-                        .context("serialising root ACL as YAML")?;
+                    let yaml =
+                        serde_yaml::to_string(&acl_map).context("serialising root ACL as YAML")?;
                     let cbor = CborValue::Array(vec![
                         CborValue::Text(":ok".to_string()),
                         CborValue::Text(yaml),

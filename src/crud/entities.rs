@@ -43,8 +43,7 @@ pub(super) async fn handle_entities_ns(
         0 => match (tail, args.as_slice()) {
             (None, []) => {
                 info!("{}", crate::i18n::t("root-list-entities"));
-                let names: Vec<String> =
-                    ctx.entity_registry.read().await.keys().cloned().collect();
+                let names: Vec<String> = ctx.entity_registry.read().await.keys().cloned().collect();
                 send_crud_reply_cbor(message, reply_type, ctx, &names).await
             }
             (Some(""), _) => {
@@ -125,8 +124,7 @@ async fn handle_single_entity(
                     state: None,
                 },
             };
-            let yaml =
-                serde_yaml::to_string(&entity).context("serialising entity node as YAML")?;
+            let yaml = serde_yaml::to_string(&entity).context("serialising entity node as YAML")?;
             send_crud_reply_yaml(message, reply_type, ctx, &yaml).await
         }
         (Some("edit"), [CborValue::Bytes(dag_cbor)]) => {

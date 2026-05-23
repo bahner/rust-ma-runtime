@@ -53,33 +53,29 @@ fn is_protected_config_key(key: &str) -> bool {
     is_protected_config_key_pub(key)
 }
 
-/// Read a daemon config field as a `serde_json::Value` for CRUD responses.
+/// Read a daemon config field as a `serde_yaml::Value` for CRUD responses.
 /// Returns `Value::Null` for unknown or platform-guarded keys.
-pub fn daemon_config_key_value_pub(cfg: &ma_core::Config, key: &str) -> serde_json::Value {
+pub fn daemon_config_key_value_pub(cfg: &ma_core::Config, key: &str) -> serde_yaml::Value {
     match key {
-        "kubo_rpc_url" => serde_json::Value::String(cfg.kubo_rpc_url.clone()),
-        "kubo_key_alias" => serde_json::Value::String(cfg.kubo_key_alias.clone()),
-        "log_level" => serde_json::Value::String(cfg.log_level.clone()),
-        "log_level_stdout" => serde_json::Value::String(cfg.log_level_stdout.clone()),
+        "kubo_rpc_url" => serde_yaml::Value::String(cfg.kubo_rpc_url.clone()),
+        "kubo_key_alias" => serde_yaml::Value::String(cfg.kubo_key_alias.clone()),
+        "log_level" => serde_yaml::Value::String(cfg.log_level.clone()),
+        "log_level_stdout" => serde_yaml::Value::String(cfg.log_level_stdout.clone()),
         "did_resolver_positive_ttl_secs" => {
-            serde_json::Value::Number(cfg.did_resolver_positive_ttl_secs.into())
+            serde_yaml::Value::Number(cfg.did_resolver_positive_ttl_secs.into())
         }
         "did_resolver_negative_ttl_secs" => {
-            serde_json::Value::Number(cfg.did_resolver_negative_ttl_secs.into())
+            serde_yaml::Value::Number(cfg.did_resolver_negative_ttl_secs.into())
         }
-        "log_file" => cfg.log_file.as_ref().map_or(serde_json::Value::Null, |p| {
-            serde_json::Value::String(p.to_string_lossy().into_owned())
+        "log_file" => cfg.log_file.as_ref().map_or(serde_yaml::Value::Null, |p| {
+            serde_yaml::Value::String(p.to_string_lossy().into_owned())
         }),
-        _ => serde_json::Value::Null,
+        _ => serde_yaml::Value::Null,
     }
 }
 
-/// Apply a JSON value from CRUD to the corresponding `Config` field in memory.
-pub fn set_daemon_config_key_pub(
-    cfg: &mut ma_core::Config,
-    key: &str,
-    val: &serde_json::Value,
-) {
+/// Apply a YAML value from CRUD to the corresponding `Config` field in memory.
+pub fn set_daemon_config_key_pub(cfg: &mut ma_core::Config, key: &str, val: &serde_yaml::Value) {
     match key {
         "kubo_rpc_url" => {
             if let Some(s) = val.as_str() {
@@ -118,49 +114,48 @@ pub fn set_daemon_config_key_pub(
     }
 }
 
-fn set_daemon_config_key(cfg: &mut ma_core::Config, key: &str, val: &serde_json::Value) {
+fn set_daemon_config_key(cfg: &mut ma_core::Config, key: &str, val: &serde_yaml::Value) {
     set_daemon_config_key_pub(cfg, key, val);
 }
 
-/// Convert a CBOR value to a `serde_json::Value` for storage in
-/// `RuntimeManifest.config` (which uses `serde_json::Value` as its
-/// value type). This lets clients send native CBOR types — text,
-/// integer, boolean, float, null, arrays, maps — rather than
-/// JSON-encoded strings.
-fn cbor_to_json(val: &CborValue) -> serde_json::Value {
+/// Convert a CBOR value to a `serde_yaml::Value` for storage in
+/// `RuntimeManifest.config`. Clients send native CBOR — text, integer,
+/// boolean, float, null, arrays, maps — and this maps it to the YAML
+/// value type that the config tree uses internally.
+fn cbor_to_yaml(val: &CborValue) -> serde_yaml::Value {
     match val {
-        CborValue::Null => serde_json::Value::Null,
-        CborValue::Bool(b) => serde_json::Value::Bool(*b),
-        CborValue::Integer(i) => {
-            if let Ok(n) = u64::try_from(*i) {
-                serde_json::Value::Number(n.into())
-            } else if let Ok(n) = i64::try_from(*i) {
-                serde_json::Value::Number(n.into())
-            } else {
-                serde_json::Value::Null
-            }
-        }
-        CborValue::Float(f) => serde_json::Number::from_f64(*f)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        CborValue::Text(s) => serde_json::Value::String(s.clone()),
-        CborValue::Bytes(b) => serde_json::Value::String(
-            b.iter().map(|byte| format!("{byte:02x}")).collect(),
+        CborValue::Bool(b) => serde_yaml::Value::Bool(*b),
+        CborValue::Integer(i) => u64::try_from(*i).map_or_else(
+            |_| {
+                i64::try_from(*i).map_or(serde_yaml::Value::Null, |n| {
+                    serde_yaml::Value::Number(n.into())
+                })
+            },
+            |n| serde_yaml::Value::Number(n.into()),
         ),
+        CborValue::Float(f) => serde_yaml::Value::Number((*f).into()),
+        CborValue::Text(s) => serde_yaml::Value::String(s.clone()),
+        CborValue::Bytes(b) => {
+            serde_yaml::Value::String(b.iter().fold(String::new(), |mut acc, byte| {
+                use std::fmt::Write;
+                let _ = write!(acc, "{byte:02x}");
+                acc
+            }))
+        }
         CborValue::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(cbor_to_json).collect())
+            serde_yaml::Value::Sequence(arr.iter().map(cbor_to_yaml).collect())
         }
         CborValue::Map(pairs) => {
-            let mut map = serde_json::Map::new();
+            let mut map = serde_yaml::Mapping::new();
             for (k, v) in pairs {
                 if let CborValue::Text(key) = k {
-                    map.insert(key.clone(), cbor_to_json(v));
+                    map.insert(serde_yaml::Value::String(key.clone()), cbor_to_yaml(v));
                 }
             }
-            serde_json::Value::Object(map)
+            serde_yaml::Value::Mapping(map)
         }
-        CborValue::Tag(_, inner) => cbor_to_json(inner),
-        _ => serde_json::Value::Null,
+        CborValue::Tag(_, inner) => cbor_to_yaml(inner),
+        _ => serde_yaml::Value::Null,
     }
 }
 
@@ -192,8 +187,8 @@ pub(super) async fn handle_config_ns(
                     drop(cfg);
                 }
                 if matches!(tail, Some("edit")) {
-                    let yaml = serde_yaml::to_string(&combined)
-                        .context("serialising config as YAML")?;
+                    let yaml =
+                        serde_yaml::to_string(&combined).context("serialising config as YAML")?;
                     send_crud_reply_yaml(message, reply_type, ctx, &yaml).await
                 } else {
                     send_crud_reply_cbor(message, reply_type, ctx, &combined).await
@@ -242,16 +237,19 @@ pub(super) async fn handle_config_ns(
                 daemon_config_key_value_pub(&cfg, key.as_str())
             } else {
                 let manifest = load_manifest(ctx).await?;
-                manifest.config.get(key.as_str()).cloned().unwrap_or_else(|| {
-                    if key == "i18n" {
-                        serde_json::Value::String(crate::i18n::runtime_lang())
-                    } else {
-                        serde_json::Value::Null
-                    }
-                })
+                manifest
+                    .config
+                    .get(key.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        if key == "i18n" {
+                            serde_yaml::Value::String(crate::i18n::runtime_lang())
+                        } else {
+                            serde_yaml::Value::Null
+                        }
+                    })
             };
-            let yaml =
-                serde_yaml::to_string(&val).context("serialising config value as YAML")?;
+            let yaml = serde_yaml::to_string(&val).context("serialising config value as YAML")?;
             send_crud_reply_yaml(message, reply_type, ctx, &yaml).await
         }
         (Some(""), []) => {
@@ -274,13 +272,9 @@ pub(super) async fn handle_config_ns(
         }
         (Some(""), [value]) => {
             let key = key.as_str().to_string();
-            let json_val = cbor_to_json(value);
+            let yaml_val = cbor_to_yaml(value);
             if is_daemon_key {
-                set_daemon_config_key(
-                    &mut *ctx.shared_config.write().await,
-                    &key,
-                    &json_val,
-                );
+                set_daemon_config_key(&mut *ctx.shared_config.write().await, &key, &yaml_val);
                 let save_result = ctx.shared_config.read().await.save();
                 if let Err(e) = save_result {
                     warn!(key = %key, error = %e, "failed to save config.yaml after CRUD update");
@@ -298,13 +292,13 @@ pub(super) async fn handle_config_ns(
                 .await;
             }
             let new_root = with_manifest_crud(ctx, |m| {
-                m.config.insert(key.clone(), json_val.clone());
+                m.config.insert(key.clone(), yaml_val.clone());
                 Ok(())
             })
             .await?;
             // Language hot-swap: reload FTL messages immediately.
             if key == "i18n" {
-                if let serde_json::Value::String(ref lang) = json_val {
+                if let serde_yaml::Value::String(ref lang) = yaml_val {
                     crate::i18n::switch_lang(lang, ctx.kubo_rpc_url).await;
                 }
             }

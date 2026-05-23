@@ -67,7 +67,9 @@ pub(super) async fn handle_kinds_ns(
                     .await?;
                     send_crud_ok_cid(message, reply_type, ctx, &new_root).await
                 }
-                _ => Err(anyhow!("kinds SET value must be [protocol_text, cbor_bytes]")),
+                _ => Err(anyhow!(
+                    "kinds SET value must be [protocol_text, cbor_bytes]"
+                )),
             }
         }
         // SET :kinds with protocol_text → delete that kind

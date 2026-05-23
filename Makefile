@@ -3,7 +3,7 @@ CARGO    := cargo
 RELEASE  := target/release/$(BINARY)
 DEBUG    := target/debug/$(BINARY)
 CLIPPY_STRICT := --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery
-SRCS     := Cargo.toml src/i18n.json $(shell find src -name '*.rs')
+SRCS     := Cargo.toml src/i18n.yaml $(shell find src -name '*.rs')
 PREFIX   ?= $(HOME)/.local/bin
 PUBLISH  := ma:bin/
 RUN_ARGS ?=
@@ -21,10 +21,10 @@ test:
 	$(CARGO) clippy $(CLIPPY_STRICT)
 
 # Publish all i18n/*.ftl files to IPFS and write the resulting CIDs to
-# src/i18n.json.  Requires `ipfs` (Kubo) and `jq` to be available.
+# src/i18n.yaml.  Requires `ipfs` (Kubo) and `jq` to be available.
 # This file is a build input: `make release` will rebuild the binary
 # whenever any FTL file changes.
-src/i18n.json: $(wildcard i18n/*.ftl)
+src/i18n.yaml: $(wildcard i18n/*.ftl)
 	@set -e; \
 	dag='{}'; \
 	for f in i18n/*.ftl; do \
@@ -33,10 +33,12 @@ src/i18n.json: $(wildcard i18n/*.ftl)
 		dag=$$(printf '%s' "$$dag" | jq --arg k "$$code" --arg v "$$cid" '. + {($$k): {"/": $$v}}'); \
 	done; \
 	lang_cid=$$(printf '%s' "$$dag" | ipfs dag put --input-codec dag-json --store-codec dag-cbor); \
-	printf '%s' "$$dag" \
-		| jq --arg lc "$$lang_cid" '{"i18n_cid": $$lc, "langs": map_values(.["/"])}' \
-		> src/i18n.json; \
-	echo "Written src/i18n.json (i18n_cid=$$lang_cid)"
+	{ \
+		printf 'i18n_cid: %s\n' "$$lang_cid"; \
+		printf 'langs:\n'; \
+		printf '%s' "$$dag" | jq -r 'to_entries[] | "  " + .key + ": " + .value["/"]'; \
+	} > src/i18n.yaml; \
+	echo "Written src/i18n.yaml (i18n_cid=$$lang_cid)"
 
 gen-kinds-cids:
 $(BINARY): $(RELEASE)
@@ -57,4 +59,4 @@ publish: $(BINARY)
 	scp $(BINARY) $(PUBLISH)
 
 distclean: clean
-	rm -rf Cargo.lock src/i18n.json
+	rm -rf Cargo.lock src/i18n.yaml

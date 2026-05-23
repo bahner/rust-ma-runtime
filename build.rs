@@ -15,7 +15,7 @@ fn main() {
     // Re-run whenever any FTL file is added, removed, or changed.
     println!("cargo:rerun-if-changed=i18n/");
     // Re-run when the compiled-in lang CID map is updated.
-    println!("cargo:rerun-if-changed=src/i18n.json");
+    println!("cargo:rerun-if-changed=src/i18n.yaml");
 
     let mut entries: Vec<(String, String)> = Vec::new();
 

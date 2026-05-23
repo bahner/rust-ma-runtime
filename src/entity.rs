@@ -348,7 +348,7 @@ pub struct RuntimeManifest {
     #[serde(default)]
     pub i18n: HashMap<String, IpldLink>,
     #[serde(default)]
-    pub config: BTreeMap<String, serde_json::Value>,
+    pub config: BTreeMap<String, serde_yaml::Value>,
     /// Namespace nodes keyed by handle (e.g. `"owner"`, `"alice"`).
     ///
     /// Reserved handles: `acl`, `acls`, `protocol`, `kinds`, `entities`, `i18n`, `config`.

@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
         info!(root_cid = %cid, "runtime head reset for this session");
     }
 
-    // ── gen-lang-cid has been replaced by `make src/i18n.json` ────────────
+    // ── gen-lang-cid has been replaced by `make src/i18n.yaml` ────────────
 
     let acl = acl::new_shared_acl(acl::AclMap::new()); // deny-all until manifest loads
 
@@ -777,12 +777,12 @@ fn get_u64_setting(config: &Config, key: &str, default: u64) -> u64 {
 
 fn runtime_manifest_config(
     config: &Config,
-) -> std::collections::BTreeMap<String, serde_json::Value> {
+) -> std::collections::BTreeMap<String, serde_yaml::Value> {
     let mut out = std::collections::BTreeMap::new();
 
     out.insert(
         "did_resolver_positive_ttl_secs".to_string(),
-        serde_json::Value::from(get_u64_setting(
+        serde_yaml::Value::from(get_u64_setting(
             config,
             "did_resolver_positive_ttl_secs",
             60,
@@ -790,7 +790,7 @@ fn runtime_manifest_config(
     );
     out.insert(
         "did_resolver_negative_ttl_secs".to_string(),
-        serde_json::Value::from(get_u64_setting(
+        serde_yaml::Value::from(get_u64_setting(
             config,
             "did_resolver_negative_ttl_secs",
             10,
@@ -798,7 +798,7 @@ fn runtime_manifest_config(
     );
     out.insert(
         "did_document_publishing_interval_secs".to_string(),
-        serde_json::Value::from(get_u64_setting(
+        serde_yaml::Value::from(get_u64_setting(
             config,
             "did_document_publishing_interval_secs",
             300,
@@ -806,7 +806,7 @@ fn runtime_manifest_config(
     );
     out.insert(
         "did_document_publishing_timeout_secs".to_string(),
-        serde_json::Value::from(get_u64_setting(
+        serde_yaml::Value::from(get_u64_setting(
             config,
             "did_document_publishing_timeout_secs",
             120,
@@ -814,7 +814,7 @@ fn runtime_manifest_config(
     );
     out.insert(
         "did_document_publishing_lifetime_hours".to_string(),
-        serde_json::Value::from(get_u64_setting(
+        serde_yaml::Value::from(get_u64_setting(
             config,
             "did_document_publishing_lifetime_hours",
             8760,
@@ -822,11 +822,11 @@ fn runtime_manifest_config(
     );
     out.insert(
         "ipns_publish_lifetime_hours".to_string(),
-        serde_json::Value::from(get_u64_setting(config, "ipns_publish_lifetime_hours", 8760)),
+        serde_yaml::Value::from(get_u64_setting(config, "ipns_publish_lifetime_hours", 8760)),
     );
     out.insert(
         "ipns_publish_resolve".to_string(),
-        serde_json::Value::from(
+        serde_yaml::Value::from(
             config
                 .extra
                 .get("ipns_publish_resolve")
@@ -836,7 +836,7 @@ fn runtime_manifest_config(
     );
     out.insert(
         "ipns_publish_allow_offline".to_string(),
-        serde_json::Value::from(
+        serde_yaml::Value::from(
             config
                 .extra
                 .get("ipns_publish_allow_offline")
@@ -846,10 +846,10 @@ fn runtime_manifest_config(
     );
     out.insert(
         "status_cors_allowed_origins".to_string(),
-        serde_json::Value::Array(
+        serde_yaml::Value::Sequence(
             status_cors_allowed_origins(config)
                 .into_iter()
-                .map(serde_json::Value::String)
+                .map(serde_yaml::Value::String)
                 .collect(),
         ),
     );

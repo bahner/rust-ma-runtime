@@ -62,8 +62,7 @@ where
     F: FnOnce(&mut RuntimeManifest) -> Result<()>,
 {
     let old_cid = current_root_cid(ctx).await?;
-    let mut manifest: RuntimeManifest =
-        crate::kubo::dag_get(ctx.kubo_rpc_url, &old_cid).await?;
+    let mut manifest: RuntimeManifest = crate::kubo::dag_get(ctx.kubo_rpc_url, &old_cid).await?;
     f(&mut manifest)?;
     let new_cid = crate::kubo::dag_put(ctx.kubo_rpc_url, &manifest).await?;
     if let Err(e) = crate::kubo::pin_update(ctx.kubo_rpc_url, &old_cid, &new_cid).await {
@@ -113,9 +112,7 @@ pub(super) async fn register_entity_plugin(
     name: &str,
     entity_node: &EntityNode,
 ) {
-    match crate::plugin::EntityPlugin::load(name.to_string(), entity_node, ctx.kubo_rpc_url)
-        .await
-    {
+    match crate::plugin::EntityPlugin::load(name.to_string(), entity_node, ctx.kubo_rpc_url).await {
         Ok(ep) => {
             ctx.entity_registry
                 .write()
@@ -265,11 +262,18 @@ async fn send_crud_reply_raw(
 
     match ctx
         .endpoint
-        .outbox(ctx.resolver.as_ref(), &sender.base_id(), ma_core::CRUD_PROTOCOL_ID)
+        .outbox(
+            ctx.resolver.as_ref(),
+            &sender.base_id(),
+            ma_core::CRUD_PROTOCOL_ID,
+        )
         .await
     {
         Ok(mut outbox) => {
-            outbox.send(&reply).await.context("CRUD reply send failed")?;
+            outbox
+                .send(&reply)
+                .await
+                .context("CRUD reply send failed")?;
             info!(to = %incoming.from, reply_to = %incoming.id, "CRUD reply sent");
         }
         Err(err) => {

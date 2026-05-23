@@ -83,12 +83,8 @@ pub async fn handle_rpc_message(
     let ping_text = match &term {
         CborValue::Text(s) => s.as_str(),
         _ => {
-            return send_rpc_error_reply(
-                message,
-                ctx,
-                "unfragmented RPC must be a text atom",
-            )
-            .await;
+            return send_rpc_error_reply(message, ctx, "unfragmented RPC must be a text atom")
+                .await;
         }
     };
     if ping_text == ":ping" {
@@ -108,8 +104,6 @@ fn extract_fragment<'a>(to: &'a str, our_did: &str) -> Option<&'a str> {
     let prefix = format!("{our_did}#");
     to.strip_prefix(prefix.as_str())
 }
-
-
 
 // ── Wasm entity dispatch ───────────────────────────────────────────────────────
 
@@ -271,7 +265,6 @@ async fn send_envelope(env: SendEnvelope, ctx: &RpcHandlerCtx<'_>, fragment: &st
     }
     Ok(())
 }
-
 
 async fn current_root_cid(ctx: &RpcHandlerCtx<'_>) -> Result<String> {
     ctx.stats

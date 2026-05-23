@@ -14,11 +14,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use ciborium::Value as CborValue;
 use ma_core::{
-    IpfsGatewayResolver, SigningKey,
-    MESSAGE_TYPE_CRUD_DELETE, MESSAGE_TYPE_CRUD_DELETE_REPLY,
-    MESSAGE_TYPE_CRUD_EDIT, MESSAGE_TYPE_CRUD_EDIT_REPLY,
-    MESSAGE_TYPE_CRUD_GET, MESSAGE_TYPE_CRUD_GET_REPLY,
-    MESSAGE_TYPE_CRUD_SET, MESSAGE_TYPE_CRUD_SET_REPLY,
+    IpfsGatewayResolver, SigningKey, MESSAGE_TYPE_CRUD_DELETE, MESSAGE_TYPE_CRUD_DELETE_REPLY,
+    MESSAGE_TYPE_CRUD_EDIT, MESSAGE_TYPE_CRUD_EDIT_REPLY, MESSAGE_TYPE_CRUD_GET,
+    MESSAGE_TYPE_CRUD_GET_REPLY, MESSAGE_TYPE_CRUD_SET, MESSAGE_TYPE_CRUD_SET_REPLY,
 };
 use tokio::sync::RwLock;
 
@@ -58,10 +56,7 @@ pub async fn handle_crud_message(
     dispatch_management(message, ctx).await
 }
 
-async fn dispatch_management(
-    message: &ma_core::Message,
-    ctx: &CrudHandlerCtx<'_>,
-) -> Result<()> {
+async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx<'_>) -> Result<()> {
     let path_owned: String;
     let tail_owned: Option<String>;
     let args: Vec<CborValue>;
@@ -108,10 +103,15 @@ async fn dispatch_management(
     let (ns, rest) = helpers::parse_path(&path_owned)?;
 
     match ns {
-        "entities" => entities::handle_entities_ns(message, &rest, tail, args, reply_type, ctx).await,
+        "entities" => {
+            entities::handle_entities_ns(message, &rest, tail, args, reply_type, ctx).await
+        }
         "kinds" => kinds::handle_kinds_ns(message, &rest, tail, args, reply_type, ctx).await,
         "config" => config::handle_config_ns(message, &rest, tail, args, reply_type, ctx).await,
         "acl" => namespaces::handle_root_acl(message, tail, args, reply_type, ctx).await,
-        other => namespaces::handle_namespace_op(message, other, &rest, tail, args, reply_type, ctx).await,
+        other => {
+            namespaces::handle_namespace_op(message, other, &rest, tail, args, reply_type, ctx)
+                .await
+        }
     }
 }
