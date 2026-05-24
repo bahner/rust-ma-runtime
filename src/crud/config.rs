@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use ciborium::Value as CborValue;
 use tracing::warn;
 
 use super::helpers::{
     load_manifest, send_crud_error, send_crud_i18n_error, send_crud_ok, send_crud_ok_cid,
-    send_crud_reply_cbor, send_crud_reply_yaml, with_manifest_crud,
+    send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -173,7 +173,7 @@ pub(super) async fn handle_config_ns(
     // No key segment — operate on config root.
     if rest.is_empty() {
         return match (tail, args.as_slice()) {
-            (None | Some("edit"), []) => {
+            (None, []) => {
                 let manifest = load_manifest(ctx).await?;
                 let mut combined = manifest.config.clone();
                 {
@@ -186,13 +186,7 @@ pub(super) async fn handle_config_ns(
                     }
                     drop(cfg);
                 }
-                if matches!(tail, Some("edit")) {
-                    let yaml =
-                        serde_yaml::to_string(&combined).context("serialising config as YAML")?;
-                    send_crud_reply_yaml(message, reply_type, ctx, &yaml).await
-                } else {
-                    send_crud_reply_cbor(message, reply_type, ctx, &combined).await
-                }
+                send_crud_reply_cbor(message, reply_type, ctx, &combined).await
             }
             (Some(""), _) => {
                 send_crud_i18n_error(message, reply_type, ctx, "refuse-delete-root").await
@@ -230,27 +224,6 @@ pub(super) async fn handle_config_ns(
                     .clone()
             };
             send_crud_reply_cbor(message, reply_type, ctx, &val).await
-        }
-        (Some("edit"), []) => {
-            let val = if is_daemon_key {
-                let cfg = ctx.shared_config.read().await;
-                daemon_config_key_value_pub(&cfg, key.as_str())
-            } else {
-                let manifest = load_manifest(ctx).await?;
-                manifest
-                    .config
-                    .get(key.as_str())
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        if key == "i18n" {
-                            serde_yaml::Value::String(crate::i18n::runtime_lang())
-                        } else {
-                            serde_yaml::Value::Null
-                        }
-                    })
-            };
-            let yaml = serde_yaml::to_string(&val).context("serialising config value as YAML")?;
-            send_crud_reply_yaml(message, reply_type, ctx, &yaml).await
         }
         (Some(""), []) => {
             if is_daemon_key {

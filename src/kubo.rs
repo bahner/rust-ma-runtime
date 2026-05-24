@@ -103,41 +103,6 @@ pub async fn pin_update(kubo_url: &str, old_cid: &str, new_cid: &str) -> Result<
     Err(anyhow!("pin/update {old_cid} → {new_cid} failed: {body}"))
 }
 
-/// Publish pre-encoded DAG-CBOR bytes as an IPLD node via Kubo.
-/// Use this when the caller has already serialised the node (e.g. received
-/// it over the wire). Returns the resulting CID string.
-pub async fn dag_put_raw(kubo_url: &str, dag_cbor: &[u8]) -> Result<String> {
-    let base = kubo_url.trim_end_matches('/');
-    let url = format!("{base}/api/v0/dag/put");
-
-    let part = multipart::Part::bytes(dag_cbor.to_vec())
-        .file_name("node.cbor")
-        .mime_str("application/octet-stream")?;
-    let form = multipart::Form::new().part("file", part);
-
-    let body = reqwest::Client::new()
-        .post(url)
-        .query(&[
-            ("store-codec", "dag-cbor"),
-            ("input-codec", "dag-cbor"),
-            ("pin", "false"),
-        ])
-        .multipart(form)
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
-
-    let parsed: DagPutResponse = serde_json::from_str(&body)
-        .map_err(|e| anyhow!("failed parsing dag/put response: {e} body={body}"))?;
-    parsed
-        .cid_upper
-        .or(parsed.cid)
-        .map(|c| c.slash)
-        .ok_or_else(|| anyhow!("missing CID in dag/put response: {body}"))
-}
-
 /// Fetch an IPLD node from Kubo and deserialise it from `dag-json`.
 pub async fn dag_get<T: DeserializeOwned>(kubo_url: &str, cid: &str) -> Result<T> {
     let base = kubo_url.trim_end_matches('/');

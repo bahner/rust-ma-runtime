@@ -4,8 +4,8 @@ use ciborium::Value as CborValue;
 use crate::entity::IpldLink;
 
 use super::helpers::{
-    load_manifest, send_crud_i18n_error, send_crud_ok, send_crud_ok_cid, send_crud_reply_cbor,
-    send_crud_reply_yaml, with_manifest_crud,
+    is_ipfs_path, load_manifest, send_crud_error, send_crud_i18n_error, send_crud_ok,
+    send_crud_ok_cid, send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -16,13 +16,12 @@ use super::CrudHandlerCtx;
 /// Protocol IDs contain slashes and cannot appear as dot-path segments, so
 /// individual kind mutations pass the protocol ID as part of the CBOR value:
 ///
-/// | Operation | Message type | Value                           |
-/// |-----------|-------------|--------------------------------|
-/// | List all  | GET         | —                              |
-/// | Edit list | EDIT        | —                              |
-/// | Upsert    | SET         | `[protocol_text, cbor_bytes]`  |
-/// | Delete    | SET         | `protocol_text`                |
-/// | Refuse    | DELETE      | —                              |
+/// | Operation | CRUD payload                                       |
+/// |-----------|---------------------------------------------------|
+/// | List all  | `[":get", ":kinds"]`                              |
+/// | Upsert    | `[":kinds", [protocol_text, "/ipfs/…"]]`          |
+/// | Delete    | `[":kinds", protocol_text]`                       |
+/// | Refuse    | `[":delete", ":kinds"]`                           |
 pub(super) async fn handle_kinds_ns(
     message: &ma_core::Message,
     rest: &[String],
@@ -43,23 +42,24 @@ pub(super) async fn handle_kinds_ns(
             let ids: Vec<String> = manifest.kinds.protocol_ids();
             send_crud_reply_cbor(message, reply_type, ctx, &ids).await
         }
-        // EDIT :kinds → list all protocol IDs as YAML
-        (Some("edit"), []) => {
-            let manifest = load_manifest(ctx).await?;
-            let ids: Vec<String> = manifest.kinds.protocol_ids();
-            let yaml = serde_yaml::to_string(&ids).context("serialising kinds list as YAML")?;
-            send_crud_reply_yaml(message, reply_type, ctx, &yaml).await
-        }
-        // SET :kinds with [protocol_text, cbor_bytes] → upsert kind
+        // SET :kinds with [protocol_text, "/ipfs/…"] → upsert kind
         (Some(""), [CborValue::Array(items)]) => {
             let items = items.clone();
             match items.as_slice() {
-                [CborValue::Text(protocol), CborValue::Bytes(cbor_bytes)] => {
+                [CborValue::Text(protocol), CborValue::Text(path)] => {
+                    if !is_ipfs_path(path) {
+                        return send_crud_error(
+                            message,
+                            reply_type,
+                            ctx,
+                            "kind value must be an IPFS path (/ipfs/, /ipns/, or /ipld/)",
+                        )
+                        .await;
+                    }
                     let protocol = protocol.clone();
-                    let cbor_bytes = cbor_bytes.clone();
-                    let cid = crate::kubo::dag_put_raw(ctx.kubo_rpc_url, &cbor_bytes)
+                    let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, path)
                         .await
-                        .context("dag_put kind")?;
+                        .with_context(|| format!("resolving kind path {path}"))?;
                     let new_root = with_manifest_crud(ctx, |m| {
                         m.kinds.insert_protocol(&protocol, IpldLink::new(&cid));
                         Ok(())
@@ -68,7 +68,7 @@ pub(super) async fn handle_kinds_ns(
                     send_crud_ok_cid(message, reply_type, ctx, &new_root).await
                 }
                 _ => Err(anyhow!(
-                    "kinds SET value must be [protocol_text, cbor_bytes]"
+                    "kinds upsert value must be [protocol_text, ipfs_path]"
                 )),
             }
         }

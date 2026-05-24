@@ -28,46 +28,60 @@ pub(super) fn parse_path(path: &str) -> Result<(&str, Vec<String>)> {
     Ok((ns, segs))
 }
 
-/// Decode the CBOR path atom (`:ns.key`) from raw message content.
-pub(super) fn decode_path_atom(content: &[u8]) -> Result<String> {
-    let val: CborValue =
-        ciborium::de::from_reader(content).context("invalid CBOR in CRUD path atom")?;
-    match val {
-        CborValue::Text(s) => Ok(s),
-        _ => Err(anyhow!("CRUD path atom must be a CBOR text string")),
-    }
+/// Decoded CRUD operation from a single incoming message payload.
+pub(super) enum CrudOp {
+    /// `[":get", ":path"]`
+    Get(String),
+    /// `[":path", value]` — value is a CBOR scalar or IPFS path text
+    Set(String, CborValue),
+    /// `[":delete", ":path"]`
+    Delete(String),
 }
 
-/// Decode a CRUD edit payload.
+/// Decode a `application/x-ma-crud` payload.
 ///
-/// Only a plain text path atom `":path"` is accepted.
-/// Saving an edited value must use `crud-set` instead.
-pub(super) fn decode_edit_payload(content: &[u8]) -> Result<String> {
+/// Payload must be a two-element CBOR array:
+/// - `[":get", ":path"]` → GET
+/// - `[":delete", ":path"]` → DELETE
+/// - `[":path", value]` → SET
+pub(super) fn decode_crud_payload(content: &[u8]) -> Result<CrudOp> {
     let val: CborValue =
-        ciborium::de::from_reader(content).context("invalid CBOR in CRUD edit payload")?;
-    match val {
-        CborValue::Text(path) => Ok(path),
+        ciborium::de::from_reader(content).context("invalid CBOR in CRUD payload")?;
+    let CborValue::Array(items) = val else {
+        return Err(anyhow!("CRUD payload must be a 2-element CBOR array"));
+    };
+    if items.len() != 2 {
+        return Err(anyhow!(
+            "CRUD payload must be a 2-element CBOR array, got {}",
+            items.len()
+        ));
+    }
+    let mut it = items.into_iter();
+    let first = it.next().expect("len==2");
+    let second = it.next().expect("len==2");
+    match first {
+        CborValue::Text(verb) if verb == ":get" => {
+            let CborValue::Text(path) = second else {
+                return Err(anyhow!("CRUD get: path must be a text string"));
+            };
+            Ok(CrudOp::Get(path))
+        }
+        CborValue::Text(verb) if verb == ":delete" => {
+            let CborValue::Text(path) = second else {
+                return Err(anyhow!("CRUD delete: path must be a text string"));
+            };
+            Ok(CrudOp::Delete(path))
+        }
+        CborValue::Text(path) => Ok(CrudOp::Set(path, second)),
         _ => Err(anyhow!(
-            "CRUD edit payload must be a text path atom (use crud-set to save)"
+            "CRUD payload: first element must be a text path or verb"
         )),
     }
 }
 
-/// Decode `[path_atom, value]` from a crud-set payload.
-pub(super) fn decode_set_payload(content: &[u8]) -> Result<(String, CborValue)> {
-    let val: CborValue =
-        ciborium::de::from_reader(content).context("invalid CBOR in CRUD set payload")?;
-    match val {
-        CborValue::Array(mut items) if items.len() == 2 => {
-            let value = items.pop().expect("len==2");
-            let path_cbor = items.pop().expect("len==2");
-            let CborValue::Text(path) = path_cbor else {
-                return Err(anyhow!("CRUD set path must be a CBOR text string"));
-            };
-            Ok((path, value))
-        }
-        _ => Err(anyhow!("CRUD set payload must be a two-element CBOR array")),
-    }
+/// Return `true` if `s` is a normative IPFS path (`/ipfs/`, `/ipns/`, `/ipld/`).
+pub(super) fn is_ipfs_path(s: &str) -> bool {
+    s.starts_with("/ipfs/") || s.starts_with("/ipns/") || s.starts_with("/ipld/")
 }
 
 // ── Manifest helpers ───────────────────────────────────────────────────────────
@@ -233,24 +247,6 @@ pub(super) async fn send_crud_reply_cbor<T: serde::Serialize + Sync>(
 ) -> Result<()> {
     let mut out = Vec::new();
     ciborium::ser::into_writer(value, &mut out).context("encoding CBOR reply")?;
-    send_crud_reply(incoming, reply_type, ctx, &out).await
-}
-
-pub(super) async fn send_crud_reply_yaml(
-    incoming: &ma_core::Message,
-    reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
-    yaml: &str,
-) -> Result<()> {
-    let mut out = Vec::new();
-    ciborium::ser::into_writer(
-        &CborValue::Array(vec![
-            CborValue::Text(":ok".to_string()),
-            CborValue::Text(yaml.to_string()),
-        ]),
-        &mut out,
-    )
-    .context("encoding [:ok, yaml] edit reply")?;
     send_crud_reply(incoming, reply_type, ctx, &out).await
 }
 

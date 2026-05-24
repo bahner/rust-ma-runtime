@@ -7,7 +7,7 @@ use crate::entity::{EntityNode, IpldLink};
 
 use super::helpers::{
     load_manifest, register_entity_plugin, send_crud_i18n_error, send_crud_ok, send_crud_ok_cid,
-    send_crud_reply, send_crud_reply_cbor, send_crud_reply_yaml, with_manifest_crud,
+    send_crud_reply, send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -113,39 +113,6 @@ async fn handle_single_entity(
             info!(name = %name, cid = %cid, "{}", crate::i18n::t("entity-created"));
             send_crud_ok_cid(message, reply_type, ctx, &new_root).await
         }
-        (Some("edit"), []) => {
-            let manifest = load_manifest(ctx).await?;
-            let entity: EntityNode = match manifest.entities.get(name.as_str()) {
-                Some(link) => crate::kubo::dag_get(ctx.kubo_rpc_url, &link.cid).await?,
-                None => EntityNode {
-                    kind: String::new(),
-                    behavior: String::new(),
-                    acl: String::new(),
-                    state: None,
-                },
-            };
-            let yaml = serde_yaml::to_string(&entity).context("serialising entity node as YAML")?;
-            send_crud_reply_yaml(message, reply_type, ctx, &yaml).await
-        }
-        (Some(""), [CborValue::Bytes(dag_cbor)]) => {
-            // Set entity from DAG-CBOR bytes — requires `create` + `entities` in root ACL.
-            check_entity_management_cap(message, ctx, &["create", "entities"]).await?;
-            let name = name.as_str();
-            let cid = crate::kubo::dag_put_raw(ctx.kubo_rpc_url, dag_cbor)
-                .await
-                .with_context(|| format!("dag_put_raw for entity {name}"))?;
-            let entity_node: EntityNode = crate::kubo::dag_get(ctx.kubo_rpc_url, &cid)
-                .await
-                .with_context(|| format!("validating entity node at {cid}"))?;
-            with_manifest_crud(ctx, |m| {
-                m.entities.insert(name.to_string(), IpldLink::new(&cid));
-                Ok(())
-            })
-            .await?;
-            register_entity_plugin(ctx, name, &entity_node).await;
-            info!(name = %name, cid = %cid, "{}", crate::i18n::t("entity-created"));
-            send_crud_ok_cid(message, reply_type, ctx, &cid).await
-        }
         _ => Err(anyhow!("unknown entities.{name} operation")),
     }
 }
@@ -193,8 +160,8 @@ async fn handle_entity_field(
         return Err(anyhow!("empty field path in entity.{name}"));
     };
 
-    // Generic GET / :edit — works for any leaf field without field-specific code.
-    if matches!(tail, None | Some("edit")) && args.is_empty() && sub_path.is_empty() {
+    // Generic GET — works for any leaf field without field-specific code.
+    if matches!(tail, None) && args.is_empty() && sub_path.is_empty() {
         let entity = fetch_entity_node(ctx, name).await?;
         let mut entity_cbor = Vec::new();
         ciborium::ser::into_writer(&entity, &mut entity_cbor)

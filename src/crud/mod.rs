@@ -1,7 +1,13 @@
 //! `/ma/crud/0.0.1` — structured data management service.
 //!
-//! Handles four content types (get/edit/set/delete) addressed to named paths
-//! in the runtime manifest tree.  See `ma-spec/ma-crud-service-v1.md`.
+//! Single message type `application/x-ma-crud`. The operation is encoded in
+//! the CBOR payload:
+//!
+//!   GET:    `[":get",    ":ns.key"]`
+//!   SET:    `[":ns.key", value]`   — value is a scalar or `/ipfs/…` path
+//!   DELETE: `[":delete", ":ns.key"]`
+//!
+//! All replies use `application/x-ma-crud-reply`.
 
 mod config;
 mod create;
@@ -14,11 +20,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use ciborium::Value as CborValue;
-use ma_core::{
-    IpfsGatewayResolver, SigningKey, MESSAGE_TYPE_CRUD_DELETE, MESSAGE_TYPE_CRUD_DELETE_REPLY,
-    MESSAGE_TYPE_CRUD_EDIT, MESSAGE_TYPE_CRUD_EDIT_REPLY, MESSAGE_TYPE_CRUD_GET,
-    MESSAGE_TYPE_CRUD_GET_REPLY, MESSAGE_TYPE_CRUD_SET, MESSAGE_TYPE_CRUD_SET_REPLY,
-};
+use ma_core::{IpfsGatewayResolver, SigningKey, MESSAGE_TYPE_CRUD, MESSAGE_TYPE_CRUD_REPLY};
 use tokio::sync::RwLock;
 
 use crate::acl::{check_full, AclCache, AclMap, SharedAcl, CAP_CRUD};
@@ -62,49 +64,39 @@ pub async fn handle_crud_message(
 }
 
 async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx<'_>) -> Result<()> {
+    if message.message_type != MESSAGE_TYPE_CRUD {
+        return helpers::send_crud_error(
+            message,
+            MESSAGE_TYPE_CRUD_REPLY,
+            ctx,
+            &format!("wrong-protocol: {}", message.message_type),
+        )
+        .await;
+    }
+
     let path_owned: String;
     let tail_owned: Option<String>;
     let args: Vec<CborValue>;
-    let reply_type: &str;
 
-    match message.message_type.as_str() {
-        MESSAGE_TYPE_CRUD_GET => {
-            path_owned = helpers::decode_path_atom(&message.payload())?;
+    match helpers::decode_crud_payload(&message.payload())? {
+        helpers::CrudOp::Get(path) => {
+            path_owned = path;
             tail_owned = None;
             args = vec![];
-            reply_type = MESSAGE_TYPE_CRUD_GET_REPLY;
         }
-        MESSAGE_TYPE_CRUD_EDIT => {
-            let path = helpers::decode_edit_payload(&message.payload())?;
+        helpers::CrudOp::Set(path, value) => {
             path_owned = path;
-            tail_owned = Some("edit".to_string());
-            args = vec![];
-            reply_type = MESSAGE_TYPE_CRUD_EDIT_REPLY;
-        }
-        MESSAGE_TYPE_CRUD_SET => {
-            let (p, v) = helpers::decode_set_payload(&message.payload())?;
-            path_owned = p;
             tail_owned = Some(String::new());
-            args = vec![v];
-            reply_type = MESSAGE_TYPE_CRUD_SET_REPLY;
+            args = vec![value];
         }
-        MESSAGE_TYPE_CRUD_DELETE => {
-            path_owned = helpers::decode_path_atom(&message.payload())?;
+        helpers::CrudOp::Delete(path) => {
+            path_owned = path;
             tail_owned = Some(String::new());
             args = vec![];
-            reply_type = MESSAGE_TYPE_CRUD_DELETE_REPLY;
-        }
-        other => {
-            return helpers::send_crud_error(
-                message,
-                MESSAGE_TYPE_CRUD_GET_REPLY,
-                ctx,
-                &format!("wrong-protocol: {other}"),
-            )
-            .await;
         }
     }
 
+    let reply_type = MESSAGE_TYPE_CRUD_REPLY;
     let tail: Option<&str> = tail_owned.as_deref();
     let (ns, rest) = helpers::parse_path(&path_owned)?;
 

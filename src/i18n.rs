@@ -116,11 +116,23 @@ const MESSAGE_IDS: &[&str] = &[
     "runtime-claimed",
     "runtime-claim-persisted",
     "runtime-already-claimed",
-    // Client-facing RPC error replies
+    // ACL
+    "acl-owners-access",
+    // CRUD infrastructure
+    "crud-message-received",
+    "crud-acl-updated",
+    // Client-facing CRUD / RPC error replies
     "refuse-delete-root",
     "no-root-acl",
     "namespace-not-found",
     "no-ns-gate-acl",
+    "namespace-created",
+    "namespace-already-exists",
+    "namespace-name-reserved",
+    "namespace-create-denied",
+    "namespace-create-usage",
+    "rpc-not-text-atom",
+    "rpc-unknown-verb",
 ];
 
 /// Initialise i18n by loading all compiled-in FTL bundles and fetching any
