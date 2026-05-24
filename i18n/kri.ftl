@@ -76,3 +76,12 @@ namespace-create-denied = Namespace kreshan: access deni
 namespace-create-usage = Aw fo yuz: :create <nem>
 crud-message-received = CRUD mesej don rish
 crud-acl-updated = Root transport ACL don chenj
+
+# CRUD validation errors
+blob-value-ipfs-path = di blob valu must bi wan IPFS pat (/ipfs/, /ipns/, or /ipld/)
+acl-value-ipfs-path = di ACL valu must bi wan IPFS pat (/ipfs/, /ipns/, or /ipld/)
+kind-value-ipfs-path = di kind valu must bi wan IPFS pat (/ipfs/, /ipns/, or /ipld/)
+config-key-protected = config ki '%key%' na pɔtɛkt
+config-key-no-delete = daemon config ki '%key%' kɛn nɔt bi dilit
+config-key-not-manifest = config ki '%key%' na nɔ nɔ manifest config ki
+wrong-crud-protocol = rɔng CRUD protokɔl: %type%

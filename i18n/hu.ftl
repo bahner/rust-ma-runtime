@@ -76,3 +76,12 @@ namespace-create-denied = Névtér létrehozás: hozzáférés megtagadva
 namespace-create-usage = Használat: :create <név>
 crud-message-received = CRUD üzenet érkezett
 crud-acl-updated = Gyökér-átviteli ACL frissítve
+
+# CRUD validation errors
+blob-value-ipfs-path = a blob értékének IPFS elérési útnak kell lennie (/ipfs/, /ipns/ vagy /ipld/)
+acl-value-ipfs-path = az ACL értékének IPFS elérési útnak kell lennie (/ipfs/, /ipns/ vagy /ipld/)
+kind-value-ipfs-path = a kind értékének IPFS elérési útnak kell lennie (/ipfs/, /ipns/ vagy /ipld/)
+config-key-protected = a '%key%' config kulcs védett
+config-key-no-delete = a '%key%' daemon config kulcs nem törölhető
+config-key-not-manifest = a '%key%' config kulcs nem ismert manifest config kulcs
+wrong-crud-protocol = helytelen CRUD protokoll: %type%

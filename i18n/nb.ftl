@@ -76,3 +76,12 @@ namespace-already-exists = Navnerommet eksisterer allerede
 namespace-name-reserved = Reservert navneromsnavn
 namespace-create-denied = Navnerom oppretting: tilgang nektet
 namespace-create-usage = Bruk: :create <navn>
+
+# CRUD validation errors
+blob-value-ipfs-path = blob-verdien må være en IPFS-sti (/ipfs/, /ipns/ eller /ipld/)
+acl-value-ipfs-path = ACL-verdien må være en IPFS-sti (/ipfs/, /ipns/ eller /ipld/)
+kind-value-ipfs-path = kind-verdien må være en IPFS-sti (/ipfs/, /ipns/ eller /ipld/)
+config-key-protected = config-nøkkelen '%key%' er beskyttet
+config-key-no-delete = daemon-config-nøkkelen '%key%' kan ikke slettes
+config-key-not-manifest = config-nøkkelen '%key%' er ikke en kjent manifest config-nøkkel
+wrong-crud-protocol = feil CRUD-protokoll: %type%

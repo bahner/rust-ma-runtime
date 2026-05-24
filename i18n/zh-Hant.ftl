@@ -76,3 +76,12 @@ namespace-create-denied = 建立命名空間：存取被拒絕
 namespace-create-usage = 用法：:create <名稱>
 crud-message-received = 收到 CRUD 訊息
 crud-acl-updated = 根傳輸 ACL 已更新
+
+# CRUD validation errors
+blob-value-ipfs-path = blob 值必須是 IPFS 路徑（/ipfs/、/ipns/ 或 /ipld/）
+acl-value-ipfs-path = ACL 值必須是 IPFS 路徑（/ipfs/、/ipns/ 或 /ipld/）
+kind-value-ipfs-path = kind 值必須是 IPFS 路徑（/ipfs/、/ipns/ 或 /ipld/）
+config-key-protected = config 鍵 '%key%' 受保護
+config-key-no-delete = 無法刪除 daemon config 鍵 '%key%'
+config-key-not-manifest = config 鍵 '%key%' 不是已知的 manifest config 鍵
+wrong-crud-protocol = 錯誤的 CRUD 協議：%type%

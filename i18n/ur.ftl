@@ -76,3 +76,12 @@ namespace-create-denied = نیم اسپیس بنانا: رسائی سے انکا
 namespace-create-usage = استعمال: :create <نام>
 crud-message-received = CRUD پیغام موصول ہوا
 crud-acl-updated = روٹ ٹرانسپورٹ ACL اپ ڈیٹ ہوئی
+
+# CRUD validation errors
+blob-value-ipfs-path = blob کی قدر ایک IPFS راستہ (/ipfs/، /ipns/، یا /ipld/) ہونی چاہیے
+acl-value-ipfs-path = ACL کی قدر ایک IPFS راستہ (/ipfs/، /ipns/، یا /ipld/) ہونی چاہیے
+kind-value-ipfs-path = kind کی قدر ایک IPFS راستہ (/ipfs/، /ipns/، یا /ipld/) ہونی چاہیے
+config-key-protected = config کی چابی '%key%' محفوظ ہے
+config-key-no-delete = daemon config کی چابی '%key%' کو حذف نہیں کیا جا سکتا
+config-key-not-manifest = config کی چابی '%key%' ایک معروف manifest config چابی نہیں ہے
+wrong-crud-protocol = غلط CRUD پروٹوکول: %type%

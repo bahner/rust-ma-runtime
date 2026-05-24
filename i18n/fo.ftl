@@ -76,3 +76,12 @@ namespace-create-denied = Stovnan navnaróm: atgongd nektað
 namespace-create-usage = Nýtsla: :create <navn>
 crud-message-received = CRUD-boð móttikið
 crud-acl-updated = Root-transport-ACL uppfært
+
+# CRUD validation errors
+blob-value-ipfs-path = blob-virðið skal vera ein IPFS-leið (/ipfs/, /ipns/ ella /ipld/)
+acl-value-ipfs-path = ACL-virðið skal vera ein IPFS-leið (/ipfs/, /ipns/ ella /ipld/)
+kind-value-ipfs-path = kind-virðið skal vera ein IPFS-leið (/ipfs/, /ipns/ ella /ipld/)
+config-key-protected = config-lykillinn '%key%' er verndaður
+config-key-no-delete = daemon-config-lykillinn '%key%' kann ikki slettast
+config-key-not-manifest = config-lykillinn '%key%' er ikki ein kendur manifest-config-lykill
+wrong-crud-protocol = rang CRUD-protokoll: %type%

@@ -76,3 +76,12 @@ namespace-create-denied = Vardų erdvės sukūrimas: prieiga atmesta
 namespace-create-usage = Naudojimas: :create <vardas>
 crud-message-received = Gauta CRUD žinutė
 crud-acl-updated = Šakninis transporto ACL atnaujintas
+
+# CRUD validation errors
+blob-value-ipfs-path = blob reikšmė turi būti IPFS kelias (/ipfs/, /ipns/ arba /ipld/)
+acl-value-ipfs-path = ACL reikšmė turi būti IPFS kelias (/ipfs/, /ipns/ arba /ipld/)
+kind-value-ipfs-path = kind reikšmė turi būti IPFS kelias (/ipfs/, /ipns/ arba /ipld/)
+config-key-protected = konfigūracijos raktas '%key%' yra apsaugotas
+config-key-no-delete = daemon konfigūracijos rakto '%key%' negalima ištrinti
+config-key-not-manifest = konfigūracijos raktas '%key%' nėra žinomas manifest config raktas
+wrong-crud-protocol = neteisingas CRUD protokolas: %type%

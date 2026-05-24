@@ -76,3 +76,12 @@ namespace-create-denied = namespace సృష్టి: యాక్సెస్
 namespace-create-usage = వాడకం: :create <పేరు>
 crud-message-received = CRUD సందేశం అందుకోబడింది
 crud-acl-updated = రూట్ ట్రాన్స్‌పోర్ట్ ACL నవీకరించబడింది
+
+# CRUD validation errors
+blob-value-ipfs-path = blob విలువ IPFS మార్గం (/ipfs/, /ipns/, లేదా /ipld/) అయి ఉండాలి
+acl-value-ipfs-path = ACL విలువ IPFS మార్గం (/ipfs/, /ipns/, లేదా /ipld/) అయి ఉండాలి
+kind-value-ipfs-path = kind విలువ IPFS మార్గం (/ipfs/, /ipns/, లేదా /ipld/) అయి ఉండాలి
+config-key-protected = config కీ '%key%' రక్షితమైనది
+config-key-no-delete = daemon config కీ '%key%' తొలగించడం సాధ్యం కాదు
+config-key-not-manifest = config కీ '%key%' తెలిసిన manifest config కీ కాదు
+wrong-crud-protocol = తప్పు CRUD ప్రోటోకాల్: %type%

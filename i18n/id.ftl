@@ -76,3 +76,12 @@ namespace-create-denied = Pembuatan namespace: akses ditolak
 namespace-create-usage = Penggunaan: :create <nama>
 crud-message-received = Pesan CRUD diterima
 crud-acl-updated = ACL transport root diperbarui
+
+# CRUD validation errors
+blob-value-ipfs-path = nilai blob harus berupa jalur IPFS (/ipfs/, /ipns/, atau /ipld/)
+acl-value-ipfs-path = nilai ACL harus berupa jalur IPFS (/ipfs/, /ipns/, atau /ipld/)
+kind-value-ipfs-path = nilai kind harus berupa jalur IPFS (/ipfs/, /ipns/, atau /ipld/)
+config-key-protected = kunci config '%key%' dilindungi
+config-key-no-delete = kunci config daemon '%key%' tidak dapat dihapus
+config-key-not-manifest = kunci config '%key%' bukan kunci manifest config yang dikenal
+wrong-crud-protocol = protokol CRUD salah: %type%

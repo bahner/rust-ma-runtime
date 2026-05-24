@@ -76,3 +76,12 @@ namespace-create-denied = Création d'espace de noms: accès refusé
 namespace-create-usage = Utilisation: :create <nom>
 crud-message-received = Message CRUD reçu
 crud-acl-updated = ACL de transport racine mise à jour
+
+# CRUD validation errors
+blob-value-ipfs-path = la valeur blob doit être un chemin IPFS (/ipfs/, /ipns/ ou /ipld/)
+acl-value-ipfs-path = la valeur ACL doit être un chemin IPFS (/ipfs/, /ipns/ ou /ipld/)
+kind-value-ipfs-path = la valeur kind doit être un chemin IPFS (/ipfs/, /ipns/ ou /ipld/)
+config-key-protected = la clé de config '%key%' est protégée
+config-key-no-delete = la clé de config '%key%' du démon ne peut pas être supprimée
+config-key-not-manifest = la clé de config '%key%' n'est pas une clé de manifest config connue
+wrong-crud-protocol = mauvais protocole CRUD : %type%

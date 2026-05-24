@@ -76,3 +76,12 @@ namespace-create-denied = Criação de espaço de nomes: acesso negado
 namespace-create-usage = Uso: :create <nome>
 crud-message-received = Mensagem CRUD recebida
 crud-acl-updated = ACL de transporte raiz atualizada
+
+# CRUD validation errors
+blob-value-ipfs-path = o valor blob deve ser um caminho IPFS (/ipfs/, /ipns/ ou /ipld/)
+acl-value-ipfs-path = o valor ACL deve ser um caminho IPFS (/ipfs/, /ipns/ ou /ipld/)
+kind-value-ipfs-path = o valor kind deve ser um caminho IPFS (/ipfs/, /ipns/ ou /ipld/)
+config-key-protected = a chave de config '%key%' está protegida
+config-key-no-delete = a chave de config '%key%' do daemon não pode ser eliminada
+config-key-not-manifest = a chave de config '%key%' não é uma chave de manifest config conhecida
+wrong-crud-protocol = protocolo CRUD incorreto: %type%

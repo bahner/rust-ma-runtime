@@ -76,3 +76,12 @@ namespace-create-denied = Mekim espas nem: no privilidzis
 namespace-create-usage = Yusim: :create <nem>
 crud-message-received = CRUD mesej i kam pinis
 crud-acl-updated = Root transport ACL i nupela pinis
+
+# CRUD validation errors
+blob-value-ipfs-path = nemb bilong blob i mas kamap IPFS rot (/ipfs/, /ipns/, o /ipld/)
+acl-value-ipfs-path = nemb bilong ACL i mas kamap IPFS rot (/ipfs/, /ipns/, o /ipld/)
+kind-value-ipfs-path = nemb bilong kind i mas kamap IPFS rot (/ipfs/, /ipns/, o /ipld/)
+config-key-protected = config ki '%key%' i gat banis
+config-key-no-delete = i no inap rausim daemon config ki '%key%'
+config-key-not-manifest = config ki '%key%' i no wan manifest config ki we ol save
+wrong-crud-protocol = CRUD protokol i rong: %type%

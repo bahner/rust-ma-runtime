@@ -76,3 +76,12 @@ namespace-create-denied = 네임스페이스 생성: 접근 거부됨
 namespace-create-usage = 사용법: :create <이름>
 crud-message-received = CRUD 메시지 수신됨
 crud-acl-updated = 루트 전송 ACL 업데이트됨
+
+# CRUD validation errors
+blob-value-ipfs-path = blob 값은 IPFS 경로(/ipfs/, /ipns/, 또는 /ipld/)여야 합니다
+acl-value-ipfs-path = ACL 값은 IPFS 경로(/ipfs/, /ipns/, 또는 /ipld/)여야 합니다
+kind-value-ipfs-path = kind 값은 IPFS 경로(/ipfs/, /ipns/, 또는 /ipld/)여야 합니다
+config-key-protected = config 키 '%key%'은 보호되어 있습니다
+config-key-no-delete = daemon config 키 '%key%'은 삭제할 수 없습니다
+config-key-not-manifest = config 키 '%key%'은 알려진 manifest config 키가 아닙니다
+wrong-crud-protocol = 잘못된 CRUD 프로토콜: %type%

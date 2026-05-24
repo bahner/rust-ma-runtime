@@ -76,3 +76,12 @@ namespace-create-denied = Famoronana namespace: toherana ny fidirana
 namespace-create-usage = Fampiasana: :create <anarana>
 crud-message-received = Voaraisina ny hafatra CRUD
 crud-acl-updated = Navao ny ACL fitaterana fototra
+
+# CRUD validation errors
+blob-value-ipfs-path = ny soatoavina blob dia tsy maintsy lalana IPFS (/ipfs/, /ipns/, na /ipld/)
+acl-value-ipfs-path = ny soatoavina ACL dia tsy maintsy lalana IPFS (/ipfs/, /ipns/, na /ipld/)
+kind-value-ipfs-path = ny soatoavina kind dia tsy maintsy lalana IPFS (/ipfs/, /ipns/, na /ipld/)
+config-key-protected = ny fanalahidin'ny config '%key%' dia voaro
+config-key-no-delete = ny fanalahidin'ny daemon config '%key%' dia tsy azo esorina
+config-key-not-manifest = ny fanalahidin'ny config '%key%' dia tsy fanalahidy manifest config fantatra
+wrong-crud-protocol = diso ny CRUD protocol: %type%

@@ -76,3 +76,12 @@ namespace-create-denied = Ukwenza i-namespace: ukufikelela kwenqiwe
 namespace-create-usage = Ukusetyenziswa: :create <igama>
 crud-message-received = Umyalezo we-CRUD ufunyenwe
 crud-acl-updated = I-ACL yothutho lwe-root ibuyekeziwe
+
+# CRUD validation errors
+blob-value-ipfs-path = ixabiso le-blob kufuneka libe yindlela ye-IPFS (/ipfs/, /ipns/, okanye /ipld/)
+acl-value-ipfs-path = ixabiso le-ACL kufuneka libe yindlela ye-IPFS (/ipfs/, /ipns/, okanye /ipld/)
+kind-value-ipfs-path = ixabiso le-kind kufuneka libe yindlela ye-IPFS (/ipfs/, /ipns/, okanye /ipld/)
+config-key-protected = isitshixo se-config '%key%' sikhuselelwe
+config-key-no-delete = isitshixo se-config se-daemon '%key%' asinakufinywa
+config-key-not-manifest = isitshixo se-config '%key%' asiyositshixo se-manifest config esaziwa
+wrong-crud-protocol = iphrothokholi ye-CRUD engalunganga: %type%

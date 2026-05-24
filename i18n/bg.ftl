@@ -76,3 +76,12 @@ namespace-create-denied = Създаване на пространство от 
 namespace-create-usage = Употреба: :create <ime>
 crud-message-received = Получено CRUD съобщение
 crud-acl-updated = Основният транспортен ACL е актуализиран
+
+# CRUD validation errors
+blob-value-ipfs-path = стойността на blob трябва да е IPFS път (/ipfs/, /ipns/ или /ipld/)
+acl-value-ipfs-path = стойността на ACL трябва да е IPFS път (/ipfs/, /ipns/ или /ipld/)
+kind-value-ipfs-path = стойността на kind трябва да е IPFS път (/ipfs/, /ipns/ или /ipld/)
+config-key-protected = конфигурационният ключ '%key%' е защитен
+config-key-no-delete = конфигурационният ключ '%key%' на демона не може да бъде изтрит
+config-key-not-manifest = конфигурационният ключ '%key%' не е познат ключ на manifest config
+wrong-crud-protocol = грешен CRUD протокол: %type%

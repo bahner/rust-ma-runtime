@@ -76,3 +76,12 @@ namespace-create-denied = Ịmepụta namespace: ọ jụrụ nnabata
 namespace-create-usage = Ojiji: :create <aha>
 crud-message-received = Enwetara ozi CRUD
 crud-acl-updated = ACL nkwurita isi emegharịrị
+
+# CRUD validation errors
+blob-value-ipfs-path = uru blob ga-abụrịrị ụzọ IPFS (/ipfs/, /ipns/, ma ọ bụ /ipld/)
+acl-value-ipfs-path = uru ACL ga-abụrịrị ụzọ IPFS (/ipfs/, /ipns/, ma ọ bụ /ipld/)
+kind-value-ipfs-path = uru kind ga-abụrịrị ụzọ IPFS (/ipfs/, /ipns/, ma ọ bụ /ipld/)
+config-key-protected = igodo config '%key%' na-echekwa
+config-key-no-delete = igodo config daemon '%key%' enweghị ike ihichapụ ya
+config-key-not-manifest = igodo config '%key%' abụghị igodo manifest config ama ama
+wrong-crud-protocol = protocol CRUD dị njọ: %type%

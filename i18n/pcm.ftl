@@ -76,3 +76,12 @@ namespace-create-denied = Namespace create: access deny
 namespace-create-usage = How to use: :create <name>
 crud-message-received = CRUD message don reach
 crud-acl-updated = Root transport ACL don update
+
+# CRUD validation errors
+blob-value-ipfs-path = di blob value must bi IPFS path (/ipfs/, /ipns/, or /ipld/)
+acl-value-ipfs-path = di ACL value must bi IPFS path (/ipfs/, /ipns/, or /ipld/)
+kind-value-ipfs-path = di kind value must bi IPFS path (/ipfs/, /ipns/, or /ipld/)
+config-key-protected = config key '%key%' dey protected
+config-key-no-delete = daemon config key '%key%' no fit delete
+config-key-not-manifest = config key '%key%' no be known manifest config key
+wrong-crud-protocol = wrong CRUD protocol: %type%

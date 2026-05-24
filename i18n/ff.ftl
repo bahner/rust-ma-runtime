@@ -76,3 +76,12 @@ namespace-create-denied = Jaɓirgol namespace: waɗaaɗo
 namespace-create-usage = Golle: :create <innde>
 crud-message-received = Tinnde CRUD heɓii
 crud-acl-updated = Root transport ACL humpitaama
+
+# CRUD validation errors
+blob-value-ipfs-path = kerol blob waawi woodde laawol IPFS (/ipfs/, /ipns/, walaa /ipld/)
+acl-value-ipfs-path = kerol ACL waawi woodde laawol IPFS (/ipfs/, /ipns/, walaa /ipld/)
+kind-value-ipfs-path = kerol kind waawi woodde laawol IPFS (/ipfs/, /ipns/, walaa /ipld/)
+config-key-protected = sorol config '%key%' nder keerol
+config-key-no-delete = sorol config daemon '%key%' waawaa wanaa
+config-key-not-manifest = sorol config '%key%' alaa e sorol manifest config gannduɗi
+wrong-crud-protocol = protokol CRUD moƴƴi alaa: %type%

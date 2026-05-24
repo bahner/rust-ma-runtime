@@ -76,3 +76,12 @@ namespace-create-denied = Stvaranje prostora imena: pristup odbijen
 namespace-create-usage = Upotreba: :create <naziv>
 crud-message-received = Primljena CRUD poruka
 crud-acl-updated = Korijenski transportni ACL ažuriran
+
+# CRUD validation errors
+blob-value-ipfs-path = vrijednost blob mora biti IPFS putanja (/ipfs/, /ipns/ ili /ipld/)
+acl-value-ipfs-path = vrijednost ACL mora biti IPFS putanja (/ipfs/, /ipns/ ili /ipld/)
+kind-value-ipfs-path = vrijednost kind mora biti IPFS putanja (/ipfs/, /ipns/ ili /ipld/)
+config-key-protected = config ključ '%key%' je zaštićen
+config-key-no-delete = daemon config ključ '%key%' ne može se brisati
+config-key-not-manifest = config ključ '%key%' nije poznati manifest config ključ
+wrong-crud-protocol = pogrešan CRUD protokol: %type%

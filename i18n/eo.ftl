@@ -76,3 +76,12 @@ namespace-create-denied = Kreado de nomspaco: aliro malakceptita
 namespace-create-usage = Uzado: :create <nomo>
 crud-message-received = CRUD-mesaĝo ricevita
 crud-acl-updated = Radika transporta ACL ĝisdatigita
+
+# CRUD validation errors
+blob-value-ipfs-path = la valoro de blob devas esti IPFS-vojo (/ipfs/, /ipns/, aŭ /ipld/)
+acl-value-ipfs-path = la valoro de ACL devas esti IPFS-vojo (/ipfs/, /ipns/, aŭ /ipld/)
+kind-value-ipfs-path = la valoro de kind devas esti IPFS-vojo (/ipfs/, /ipns/, aŭ /ipld/)
+config-key-protected = la agorda ŝlosilo '%key%' estas protektita
+config-key-no-delete = la daemon-agorda ŝlosilo '%key%' ne povas esti forigita
+config-key-not-manifest = la agorda ŝlosilo '%key%' ne estas konata manifest-agorda ŝlosilo
+wrong-crud-protocol = malĝusta CRUD-protokolo: %type%

@@ -78,3 +78,12 @@ namespace-create-denied = namespace tek-out: beshkaise owkwa-hamma
 namespace-create-usage = koman: :create <nem>
 crud-message-received = CRUD sako bringin
 crud-acl-updated = root transport ACL haaɗtaare
+
+# CRUD validation errors
+blob-value-ipfs-path = di blob walowit muss bik a IPFS towchu (/ipfs/, /ipns/, o /ipld/)
+acl-value-ipfs-path = di ACL walowit muss bik a IPFS towchu (/ipfs/, /ipns/, o /ipld/)
+kind-value-ipfs-path = di kind walowit muss bik a IPFS towchu (/ipfs/, /ipns/, o /ipld/)
+config-key-protected = config keyit '%key%' iz setanyeng
+config-key-no-delete = daemon config keyit '%key%' du bik delowda
+config-key-not-manifest = config keyit '%key%' nuk kowl manifest config keyit
+wrong-crud-protocol = wrong CRUD protokowl: %type%

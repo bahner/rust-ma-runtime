@@ -161,7 +161,7 @@ async fn handle_entity_field(
     };
 
     // Generic GET — works for any leaf field without field-specific code.
-    if matches!(tail, None) && args.is_empty() && sub_path.is_empty() {
+    if tail.is_none() && args.is_empty() && sub_path.is_empty() {
         let entity = fetch_entity_node(ctx, name).await?;
         let mut entity_cbor = Vec::new();
         ciborium::ser::into_writer(&entity, &mut entity_cbor)

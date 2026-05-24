@@ -76,3 +76,12 @@ namespace-create-denied = สร้าง namespace: ปฏิเสธการ
 namespace-create-usage = การใช้งาน: :create <ชื่อ>
 crud-message-received = ได้รับข้อความ CRUD
 crud-acl-updated = อัปเดต ACL การขนส่งรูทแล้ว
+
+# CRUD validation errors
+blob-value-ipfs-path = ค่า blob ต้องเป็น IPFS path (/ipfs/, /ipns/, หรือ /ipld/)
+acl-value-ipfs-path = ค่า ACL ต้องเป็น IPFS path (/ipfs/, /ipns/, หรือ /ipld/)
+kind-value-ipfs-path = ค่า kind ต้องเป็น IPFS path (/ipfs/, /ipns/, หรือ /ipld/)
+config-key-protected = คีย์ config '%key%' ได้รับการป้องกัน
+config-key-no-delete = ไม่สามารถลบคีย์ config '%key%' ของ daemon ได้
+config-key-not-manifest = คีย์ config '%key%' ไม่ใช่คีย์ manifest config ที่รู้จัก
+wrong-crud-protocol = CRUD protocol ผิดพลาด: %type%

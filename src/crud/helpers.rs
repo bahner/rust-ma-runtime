@@ -190,6 +190,25 @@ pub(super) async fn send_crud_i18n_error(
     send_crud_error(incoming, reply_type, ctx, &crate::i18n::t_lang(&lang, key)).await
 }
 
+/// Like [`send_crud_i18n_error`] but substitutes `%name%` placeholders in the
+/// translated message before sending.
+pub(super) async fn send_crud_i18n_errorf(
+    incoming: &ma_core::Message,
+    reply_type: &str,
+    ctx: &CrudHandlerCtx<'_>,
+    key: &str,
+    args: &[(&str, &str)],
+) -> Result<()> {
+    let lang = caller_lang(&incoming.from, ctx.resolver.as_ref()).await;
+    send_crud_error(
+        incoming,
+        reply_type,
+        ctx,
+        &crate::i18n::tf_lang(&lang, key, args),
+    )
+    .await
+}
+
 // ── Reply helpers ──────────────────────────────────────────────────────────────
 
 pub(super) async fn send_crud_ok(

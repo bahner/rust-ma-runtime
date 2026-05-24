@@ -80,3 +80,12 @@ namespace-create-denied = ናምስፔስ መፍጠር፦ ፍቃድ ተከልክ
 namespace-create-usage = አጠቃቀም: :create <ስም>
 crud-message-received = CRUD መልዕክት ተቀብሏል
 crud-acl-updated = Root transport ACL ታደሰ
+
+# CRUD validation errors
+blob-value-ipfs-path = የ blob እሴት የ IPFS ዱካ (/ipfs/, /ipns/, ወይም /ipld/) መሆን አለበት
+acl-value-ipfs-path = የ ACL እሴት የ IPFS ዱካ (/ipfs/, /ipns/, ወይም /ipld/) መሆን አለበት
+kind-value-ipfs-path = የ kind እሴት የ IPFS ዱካ (/ipfs/, /ipns/, ወይም /ipld/) መሆን አለበት
+config-key-protected = የ config ቁልፍ '%key%' ጥበቃ ስር ነው
+config-key-no-delete = የ daemon config ቁልፍ '%key%' ሊሰረዝ አይችልም
+config-key-not-manifest = የ config ቁልፍ '%key%' የሚታወቅ manifest config ቁልፍ አይደለም
+wrong-crud-protocol = ስህተት CRUD ፕሮቶኮል: %type%

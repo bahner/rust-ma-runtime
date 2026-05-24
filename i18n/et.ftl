@@ -76,3 +76,12 @@ namespace-create-denied = Nimeruumi loomine: juurdepääs keelatud
 namespace-create-usage = Kasutus: :create <nimi>
 crud-message-received = CRUD-sõnum vastu võetud
 crud-acl-updated = Juurtranspordi ACL uuendati
+
+# CRUD validation errors
+blob-value-ipfs-path = blobi väärtus peab olema IPFS-tee (/ipfs/, /ipns/ või /ipld/)
+acl-value-ipfs-path = ACL-i väärtus peab olema IPFS-tee (/ipfs/, /ipns/ või /ipld/)
+kind-value-ipfs-path = kind-i väärtus peab olema IPFS-tee (/ipfs/, /ipns/ või /ipld/)
+config-key-protected = konfiguratsioonivõti '%key%' on kaitstud
+config-key-no-delete = deemoni konfiguratsioonivõtit '%key%' ei saa kustutada
+config-key-not-manifest = konfiguratsioonivõti '%key%' ei ole teadaolev manifest config võti
+wrong-crud-protocol = vale CRUD-protokoll: %type%

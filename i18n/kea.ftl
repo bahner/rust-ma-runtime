@@ -76,3 +76,12 @@ namespace-create-denied = Kriason di namespace: azesu ngadu
 namespace-create-usage = Uzu: :create <nomi>
 crud-message-received = Mensajen CRUD resibidu
 crud-acl-updated = ACL di transporte raiz atualizada
+
+# CRUD validation errors
+blob-value-ipfs-path = valur di blob ten di ser un kaminhu IPFS (/ipfs/, /ipns/, ou /ipld/)
+acl-value-ipfs-path = valur di ACL ten di ser un kaminhu IPFS (/ipfs/, /ipns/, ou /ipld/)
+kind-value-ipfs-path = valur di kind ten di ser un kaminhu IPFS (/ipfs/, /ipns/, ou /ipld/)
+config-key-protected = xavi di config '%key%' sta protejidu
+config-key-no-delete = ka da eliminá xavi di config '%key%' di daemon
+config-key-not-manifest = xavi di config '%key%' ka é un xavi di manifest config konxidu
+wrong-crud-protocol = protokolu CRUD eradu: %type%

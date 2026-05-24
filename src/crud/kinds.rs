@@ -4,8 +4,8 @@ use ciborium::Value as CborValue;
 use crate::entity::IpldLink;
 
 use super::helpers::{
-    is_ipfs_path, load_manifest, send_crud_error, send_crud_i18n_error, send_crud_ok,
-    send_crud_ok_cid, send_crud_reply_cbor, with_manifest_crud,
+    is_ipfs_path, load_manifest, send_crud_i18n_error, send_crud_ok, send_crud_ok_cid,
+    send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -48,11 +48,11 @@ pub(super) async fn handle_kinds_ns(
             match items.as_slice() {
                 [CborValue::Text(protocol), CborValue::Text(path)] => {
                     if !is_ipfs_path(path) {
-                        return send_crud_error(
+                        return send_crud_i18n_error(
                             message,
                             reply_type,
                             ctx,
-                            "kind value must be an IPFS path (/ipfs/, /ipns/, or /ipld/)",
+                            "kind-value-ipfs-path",
                         )
                         .await;
                     }

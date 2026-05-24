@@ -76,3 +76,12 @@ namespace-create-denied = Vytvorenie priestoru názvov: prístup zamietnutý
 namespace-create-usage = Použitie: :create <názov>
 crud-message-received = Prijatá správa CRUD
 crud-acl-updated = Koreňový transportný ACL aktualizovaný
+
+# CRUD validation errors
+blob-value-ipfs-path = hodnota blob musí byť IPFS cesta (/ipfs/, /ipns/ alebo /ipld/)
+acl-value-ipfs-path = hodnota ACL musí byť IPFS cesta (/ipfs/, /ipns/ alebo /ipld/)
+kind-value-ipfs-path = hodnota kind musí byť IPFS cesta (/ipfs/, /ipns/ alebo /ipld/)
+config-key-protected = konfiguračný kľúč '%key%' je chránený
+config-key-no-delete = konfiguračný kľúč '%key%' démona nie je možné odstrániť
+config-key-not-manifest = konfiguračný kľúč '%key%' nie je známym kľúčom manifest config
+wrong-crud-protocol = nesprávny protokol CRUD: %type%

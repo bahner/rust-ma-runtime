@@ -76,3 +76,12 @@ namespace-create-denied = Stofnun nafnrýmis: aðgangur hafnað
 namespace-create-usage = Notkun: :create <nafn>
 crud-message-received = CRUD skilaboð móttekin
 crud-acl-updated = Rót-flutnings-ACL uppfærð
+
+# CRUD validation errors
+blob-value-ipfs-path = blob-gildið verður að vera IPFS-slóð (/ipfs/, /ipns/ eða /ipld/)
+acl-value-ipfs-path = ACL-gildið verður að vera IPFS-slóð (/ipfs/, /ipns/ eða /ipld/)
+kind-value-ipfs-path = kind-gildið verður að vera IPFS-slóð (/ipfs/, /ipns/ eða /ipld/)
+config-key-protected = stillingarlykillinn '%key%' er varinn
+config-key-no-delete = ekki er hægt að eyða stillingarlykli '%key%' þjónustunnar
+config-key-not-manifest = stillingarlykillinn '%key%' er ekki þekktur manifest-stillingarlykill
+wrong-crud-protocol = rangur CRUD-samskiptaregla: %type%

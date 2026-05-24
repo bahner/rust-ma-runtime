@@ -76,3 +76,12 @@ namespace-create-denied = Abuurista magaca-goobta: gelitaanka waa la diiday
 namespace-create-usage = Isticmaalka: :create <magac>
 crud-message-received = Fariin CRUD la helay
 crud-acl-updated = ACL gaadhsiinta xidiga waa la cusboonaysiiyay
+
+# CRUD validation errors
+blob-value-ipfs-path = qiimaha blob waa inuu noqdaa jidka IPFS (/ipfs/, /ipns/, ama /ipld/)
+acl-value-ipfs-path = qiimaha ACL waa inuu noqdaa jidka IPFS (/ipfs/, /ipns/, ama /ipld/)
+kind-value-ipfs-path = qiimaha kind waa inuu noqdaa jidka IPFS (/ipfs/, /ipns/, ama /ipld/)
+config-key-protected = furaha config '%key%' waa la ilaaliyo
+config-key-no-delete = furaha config '%key%' ee daemon lama tirtiri karo
+config-key-not-manifest = furaha config '%key%' maaha furah manifest config la garanayo
+wrong-crud-protocol = protokoolka CRUD ee khaldan: %type%

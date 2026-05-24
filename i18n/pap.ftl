@@ -76,3 +76,12 @@ namespace-create-denied = Kreashon di namespace: akseso a nega
 namespace-create-usage = Uso: :create <non>
 crud-message-received = Mensahe CRUD risibí
 crud-acl-updated = Root transport ACL aktualisá
+
+# CRUD validation errors
+blob-value-ipfs-path = e valor di blob mester ta un caminda IPFS (/ipfs/, /ipns/, of /ipld/)
+acl-value-ipfs-path = e valor di ACL mester ta un caminda IPFS (/ipfs/, /ipns/, of /ipld/)
+kind-value-ipfs-path = e valor di kind mester ta un caminda IPFS (/ipfs/, /ipns/, of /ipld/)
+config-key-protected = e yabi di config '%key%' ta protehá
+config-key-no-delete = e yabi di config '%key%' di daemon no por wòrdu borá
+config-key-not-manifest = e yabi di config '%key%' no ta un yabi di manifest config konosí
+wrong-crud-protocol = protokòl CRUD rong: %type%

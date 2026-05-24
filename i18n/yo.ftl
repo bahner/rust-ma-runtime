@@ -76,3 +76,12 @@ namespace-create-denied = Ṣíṣẹ namespace: wọle kọ
 namespace-create-usage = Lilo: :create <orukọ>
 crud-message-received = A gba ifiranṣẹ CRUD
 crud-acl-updated = ACL ọna gbigbe gbongbon ti ni imudojuiwọn
+
+# CRUD validation errors
+blob-value-ipfs-path = iye blob gbọdọ jẹ ọna IPFS (/ipfs/, /ipns/, tabi /ipld/)
+acl-value-ipfs-path = iye ACL gbọdọ jẹ ọna IPFS (/ipfs/, /ipns/, tabi /ipld/)
+kind-value-ipfs-path = iye kind gbọdọ jẹ ọna IPFS (/ipfs/, /ipns/, tabi /ipld/)
+config-key-protected = bọtini config '%key%' ni aabo
+config-key-no-delete = bọtini config '%key%' ti daemon ko le parẹ
+config-key-not-manifest = bọtini config '%key%' kii ṣe bọtini manifest config ti a mọ
+wrong-crud-protocol = ilana CRUD ti ko tọ: %type%

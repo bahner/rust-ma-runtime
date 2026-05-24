@@ -76,3 +76,12 @@ namespace-create-denied = Ƙirƙirar sarari: an hana samun dama
 namespace-create-usage = Amfani: :create <suna>
 crud-message-received = An karɓi saƙon CRUD
 crud-acl-updated = An sabunta ACL na jigilar tushe
+
+# CRUD validation errors
+blob-value-ipfs-path = darajar blob dole ta zama hanyar IPFS (/ipfs/, /ipns/, ko /ipld/)
+acl-value-ipfs-path = darajar ACL dole ta zama hanyar IPFS (/ipfs/, /ipns/, ko /ipld/)
+kind-value-ipfs-path = darajar kind dole ta zama hanyar IPFS (/ipfs/, /ipns/, ko /ipld/)
+config-key-protected = maɓallin config '%key%' yana ƙarƙashin kariya
+config-key-no-delete = ba za a iya share maɓallin config '%key%' na daemon ba
+config-key-not-manifest = maɓallin config '%key%' ba shi ne maɓallin manifest config da aka sani ba
+wrong-crud-protocol = kuskuren CRUD protocol: %type%

@@ -3,7 +3,7 @@ use ciborium::Value as CborValue;
 use tracing::warn;
 
 use super::helpers::{
-    load_manifest, send_crud_error, send_crud_i18n_error, send_crud_ok, send_crud_ok_cid,
+    load_manifest, send_crud_i18n_error, send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid,
     send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
@@ -200,11 +200,12 @@ pub(super) async fn handle_config_ns(
     };
 
     if is_protected_config_key(key.as_str()) {
-        return send_crud_error(
+        return send_crud_i18n_errorf(
             message,
             reply_type,
             ctx,
-            &format!("config key '{key}' is protected"),
+            "config-key-protected",
+            &[("key", key.as_str())],
         )
         .await;
     }
@@ -227,11 +228,12 @@ pub(super) async fn handle_config_ns(
         }
         (Some(""), []) => {
             if is_daemon_key {
-                return send_crud_error(
+                return send_crud_i18n_errorf(
                     message,
                     reply_type,
                     ctx,
-                    &format!("daemon config key '{key}' cannot be deleted"),
+                    "config-key-no-delete",
+                    &[("key", key.as_str())],
                 )
                 .await;
             }
@@ -256,11 +258,12 @@ pub(super) async fn handle_config_ns(
             }
             // Manifest config key — only known keys may be written.
             if !MANIFEST_CONFIG_KEYS.contains(&key.as_str()) {
-                return send_crud_error(
+                return send_crud_i18n_errorf(
                     message,
                     reply_type,
                     ctx,
-                    &format!("config key '{key}' is not a known manifest config key"),
+                    "config-key-not-manifest",
+                    &[("key", key.as_str())],
                 )
                 .await;
             }

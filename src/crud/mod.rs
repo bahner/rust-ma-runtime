@@ -65,11 +65,12 @@ pub async fn handle_crud_message(
 
 async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx<'_>) -> Result<()> {
     if message.message_type != MESSAGE_TYPE_CRUD {
-        return helpers::send_crud_error(
+        return helpers::send_crud_i18n_errorf(
             message,
             MESSAGE_TYPE_CRUD_REPLY,
             ctx,
-            &format!("wrong-protocol: {}", message.message_type),
+            "wrong-crud-protocol",
+            &[("type", &message.message_type)],
         )
         .await;
     }

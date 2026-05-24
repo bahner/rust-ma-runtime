@@ -76,3 +76,12 @@ namespace-create-denied = إنشاء مساحة الاسم: تم رفض الوص
 namespace-create-usage = الاستخدام: :create <الاسم>
 crud-message-received = تم استقبال رسالة CRUD
 crud-acl-updated = تم تحديث ACL نقل الجذر
+
+# CRUD validation errors
+blob-value-ipfs-path = يجب أن تكون قيمة blob مسار IPFS (/ipfs/ أو /ipns/ أو /ipld/)
+acl-value-ipfs-path = يجب أن تكون قيمة ACL مسار IPFS (/ipfs/ أو /ipns/ أو /ipld/)
+kind-value-ipfs-path = يجب أن تكون قيمة kind مسار IPFS (/ipfs/ أو /ipns/ أو /ipld/)
+config-key-protected = مفتاح config '%key%' محمي
+config-key-no-delete = لا يمكن حذف مفتاح config '%key%' للخادم
+config-key-not-manifest = مفتاح config '%key%' ليس مفتاح manifest config معروفاً
+wrong-crud-protocol = بروتوكول CRUD خاطئ: %type%

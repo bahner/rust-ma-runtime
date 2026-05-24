@@ -78,3 +78,12 @@ namespace-create-denied = Namespace creation: Babylon nah allow dis
 namespace-create-usage = Riddim: :create <name>
 crud-message-received = CRUD message come inna Zion
 crud-acl-updated = Root transport ACL rise up new
+
+# CRUD validation errors
+blob-value-ipfs-path = di blob value mus be a IPFS path (/ipfs/, /ipns/, or /ipld/)
+acl-value-ipfs-path = di ACL value mus be a IPFS path (/ipfs/, /ipns/, or /ipld/)
+kind-value-ipfs-path = di kind value mus be a IPFS path (/ipfs/, /ipns/, or /ipld/)
+config-key-protected = config key '%key%' is inna protection
+config-key-no-delete = daemon config key '%key%' cyan delete
+config-key-not-manifest = config key '%key%' nah known manifest config key
+wrong-crud-protocol = wrong CRUD protocol: %type%

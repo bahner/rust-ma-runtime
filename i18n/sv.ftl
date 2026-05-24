@@ -76,3 +76,12 @@ namespace-create-denied = Skapa namnrymd: åtkomst nekad
 namespace-create-usage = Användning: :create <namn>
 crud-message-received = CRUD-meddelande mottaget
 crud-acl-updated = Root-transport-ACL uppdaterad
+
+# CRUD validation errors
+blob-value-ipfs-path = blob-värdet måste vara en IPFS-sökväg (/ipfs/, /ipns/ eller /ipld/)
+acl-value-ipfs-path = ACL-värdet måste vara en IPFS-sökväg (/ipfs/, /ipns/ eller /ipld/)
+kind-value-ipfs-path = kind-värdet måste vara en IPFS-sökväg (/ipfs/, /ipns/ eller /ipld/)
+config-key-protected = config-nyckeln '%key%' är skyddad
+config-key-no-delete = daemon-config-nyckeln '%key%' kan inte tas bort
+config-key-not-manifest = config-nyckeln '%key%' är inte en känd manifest config-nyckel
+wrong-crud-protocol = fel CRUD-protokoll: %type%

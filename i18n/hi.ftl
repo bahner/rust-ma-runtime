@@ -76,3 +76,12 @@ namespace-create-denied = नेमस्पेस बनाना: पहुं
 namespace-create-usage = उपयोग: :create <नाम>
 crud-message-received = CRUD संदेश प्राप्त
 crud-acl-updated = रूट ट्रान्सपोर्ट ACL अपडेट हुआ
+
+# CRUD validation errors
+blob-value-ipfs-path = blob मूल्य एक IPFS पथ (/ipfs/, /ipns/, या /ipld/) होना चाहिए
+acl-value-ipfs-path = ACL मूल्य एक IPFS पथ (/ipfs/, /ipns/, या /ipld/) होना चाहिए
+kind-value-ipfs-path = kind मूल्य एक IPFS पथ (/ipfs/, /ipns/, या /ipld/) होना चाहिए
+config-key-protected = config कुंजी '%key%' सुरक्षित है
+config-key-no-delete = daemon config कुंजी '%key%' हटाई नहीं जा सकती
+config-key-not-manifest = config कुंजी '%key%' एक ज्ञात manifest config कुंजी नहीं है
+wrong-crud-protocol = गलत CRUD प्रोटोकॉल: %type%

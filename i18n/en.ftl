@@ -75,3 +75,12 @@ namespace-already-exists = Namespace already exists
 namespace-name-reserved = Reserved namespace name
 namespace-create-denied = Namespace create: access denied
 namespace-create-usage = Usage: :create <name>
+
+# CRUD validation errors
+blob-value-ipfs-path = blob value must be an IPFS path (/ipfs/, /ipns/, or /ipld/)
+acl-value-ipfs-path = ACL value must be an IPFS path (/ipfs/, /ipns/, or /ipld/)
+kind-value-ipfs-path = kind value must be an IPFS path (/ipfs/, /ipns/, or /ipld/)
+config-key-protected = config key '%key%' is protected
+config-key-no-delete = daemon config key '%key%' cannot be deleted
+config-key-not-manifest = config key '%key%' is not a known manifest config key
+wrong-crud-protocol = wrong CRUD protocol: %type%

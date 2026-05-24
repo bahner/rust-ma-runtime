@@ -76,3 +76,12 @@ namespace-create-denied = Nimiavaruuden luonti: pääsy kielletty
 namespace-create-usage = Käyttö: :create <nimi>
 crud-message-received = CRUD-viesti vastaanotettu
 crud-acl-updated = Juuri-kuljetuksen ACL päivitetty
+
+# CRUD validation errors
+blob-value-ipfs-path = blob-arvon on oltava IPFS-polku (/ipfs/, /ipns/ tai /ipld/)
+acl-value-ipfs-path = ACL-arvon on oltava IPFS-polku (/ipfs/, /ipns/ tai /ipld/)
+kind-value-ipfs-path = kind-arvon on oltava IPFS-polku (/ipfs/, /ipns/ tai /ipld/)
+config-key-protected = config-avain '%key%' on suojattu
+config-key-no-delete = daemon-config-avainta '%key%' ei voi poistaa
+config-key-not-manifest = config-avain '%key%' ei ole tunnettu manifest config -avain
+wrong-crud-protocol = väärä CRUD-protokolla: %type%

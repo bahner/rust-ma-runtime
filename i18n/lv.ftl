@@ -76,3 +76,12 @@ namespace-create-denied = Nosaukumvietas izveide: piekļuve liegta
 namespace-create-usage = Lietošana: :create <nosaukums>
 crud-message-received = Saņemts CRUD ziņojums
 crud-acl-updated = Saknes transporta ACL atjaunināts
+
+# CRUD validation errors
+blob-value-ipfs-path = blob vērtībai jābūt IPFS ceļam (/ipfs/, /ipns/ vai /ipld/)
+acl-value-ipfs-path = ACL vērtībai jābūt IPFS ceļam (/ipfs/, /ipns/ vai /ipld/)
+kind-value-ipfs-path = kind vērtībai jābūt IPFS ceļam (/ipfs/, /ipns/ vai /ipld/)
+config-key-protected = konfigurācijas atslēga '%key%' ir aizsargāta
+config-key-no-delete = daemon konfigurācijas atslēgu '%key%' nevar dzēst
+config-key-not-manifest = konfigurācijas atslēga '%key%' nav zināma manifest config atslēga
+wrong-crud-protocol = nepareizs CRUD protokols: %type%

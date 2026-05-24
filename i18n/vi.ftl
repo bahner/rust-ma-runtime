@@ -76,3 +76,12 @@ namespace-create-denied = Tạo namespace: từ chối truy cập
 namespace-create-usage = Cách dùng: :create <tên>
 crud-message-received = Nhận được tin nhắn CRUD
 crud-acl-updated = Đã cập nhật ACL vận chuyển gốc
+
+# CRUD validation errors
+blob-value-ipfs-path = giá trị blob phải là đường dẫn IPFS (/ipfs/, /ipns/ hoặc /ipld/)
+acl-value-ipfs-path = giá trị ACL phải là đường dẫn IPFS (/ipfs/, /ipns/ hoặc /ipld/)
+kind-value-ipfs-path = giá trị kind phải là đường dẫn IPFS (/ipfs/, /ipns/ hoặc /ipld/)
+config-key-protected = khóa config '%key%' được bảo vệ
+config-key-no-delete = khóa config '%key%' của daemon không thể xóa
+config-key-not-manifest = khóa config '%key%' không phải là khóa manifest config đã biết
+wrong-crud-protocol = giao thức CRUD sai: %type%

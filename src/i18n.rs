@@ -133,6 +133,14 @@ const MESSAGE_IDS: &[&str] = &[
     "namespace-create-usage",
     "rpc-not-text-atom",
     "rpc-unknown-verb",
+    // Client-facing CRUD validation errors
+    "blob-value-ipfs-path",
+    "acl-value-ipfs-path",
+    "kind-value-ipfs-path",
+    "config-key-protected",
+    "config-key-no-delete",
+    "config-key-not-manifest",
+    "wrong-crud-protocol",
 ];
 
 /// Initialise i18n by loading all compiled-in FTL bundles and fetching any
@@ -162,6 +170,18 @@ pub async fn init(lang: &str, kubo_url: &str, lang_cid: Option<&str>, root_cid: 
 pub fn t(id: &str) -> String {
     let lang = runtime_lang();
     t_lang(&lang, id)
+}
+
+/// Like [`t_lang`] but substitutes `%name%` placeholders in the translated
+/// string with caller-supplied values.  Placeholders use `%name%` syntax
+/// (not Fluent `{ $name }`) so the FTL values remain plain text.
+#[must_use]
+pub fn tf_lang(lang: &str, id: &str, args: &[(&str, &str)]) -> String {
+    let mut s = t_lang(lang, id);
+    for (name, value) in args {
+        s = s.replace(&format!("%{name}%"), value);
+    }
+    s
 }
 
 /// Return the localised string for `id` in `lang`.

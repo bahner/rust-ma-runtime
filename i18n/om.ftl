@@ -76,3 +76,12 @@ namespace-create-denied = Namespace uumuu: seenuu dhorkaame
 namespace-create-usage = Itti-fayyadama: :create <maqaa>
 crud-message-received = Ergaa CRUD fudhatame
 crud-acl-updated = ACL geejjibaa bu'uuraa haaromfame
+
+# CRUD validation errors
+blob-value-ipfs-path = gatiin blob karaa IPFS (/ipfs/, /ipns/, ykn /ipld/) ta'uu qaba
+acl-value-ipfs-path = gatiin ACL karaa IPFS (/ipfs/, /ipns/, ykn /ipld/) ta'uu qaba
+kind-value-ipfs-path = gatiin kind karaa IPFS (/ipfs/, /ipns/, ykn /ipld/) ta'uu qaba
+config-key-protected = murtoo config '%key%' eeggama
+config-key-no-delete = murtoo config daemon '%key%' haqamuu hin danda'amu
+config-key-not-manifest = murtoo config '%key%' murtoo manifest config beekamaa miti
+wrong-crud-protocol = protokoola CRUD dogoggoraa: %type%

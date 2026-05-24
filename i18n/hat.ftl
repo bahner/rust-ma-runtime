@@ -76,3 +76,12 @@ namespace-create-denied = Kreye espas non: aksè refize
 namespace-create-usage = Itilizasyon: :create <non>
 crud-message-received = Mesaj CRUD resevwa
 crud-acl-updated = ACL transpò rasin mete ajou
+
+# CRUD validation errors
+blob-value-ipfs-path = valè blob la dwe yon chemen IPFS (/ipfs/, /ipns/, oswa /ipld/)
+acl-value-ipfs-path = valè ACL la dwe yon chemen IPFS (/ipfs/, /ipns/, oswa /ipld/)
+kind-value-ipfs-path = valè kind la dwe yon chemen IPFS (/ipfs/, /ipns/, oswa /ipld/)
+config-key-protected = kle config '%key%' la pwoteje
+config-key-no-delete = yo pa ka efase kle config '%key%' daemon an
+config-key-not-manifest = kle config '%key%' la pa yon kle manifest config ki konnen
+wrong-crud-protocol = move protokòl CRUD: %type%

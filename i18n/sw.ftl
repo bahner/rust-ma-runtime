@@ -76,3 +76,12 @@ namespace-create-denied = Uundaji wa nafasi ya jina: ufikiaji umekataliwa
 namespace-create-usage = Matumizi: :create <jina>
 crud-message-received = Ujumbe wa CRUD umepokelewa
 crud-acl-updated = ACL ya usafirishaji mzizi imesasishwa
+
+# CRUD validation errors
+blob-value-ipfs-path = thamani ya blob lazima iwe njia ya IPFS (/ipfs/, /ipns/, au /ipld/)
+acl-value-ipfs-path = thamani ya ACL lazima iwe njia ya IPFS (/ipfs/, /ipns/, au /ipld/)
+kind-value-ipfs-path = thamani ya kind lazima iwe njia ya IPFS (/ipfs/, /ipns/, au /ipld/)
+config-key-protected = funguo ya config '%key%' inalindwa
+config-key-no-delete = funguo ya config ya daemon '%key%' haiwezi kufutwa
+config-key-not-manifest = funguo ya config '%key%' si funguo inayojulikana ya manifest config
+wrong-crud-protocol = itifaki mbaya ya CRUD: %type%

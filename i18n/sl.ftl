@@ -76,3 +76,12 @@ namespace-create-denied = Ustvarjanje imenskega prostora: dostop zavrnjen
 namespace-create-usage = Uporaba: :create <ime>
 crud-message-received = Prejeto CRUD sporočilo
 crud-acl-updated = Korenski transportni ACL posodobljen
+
+# CRUD validation errors
+blob-value-ipfs-path = vrednost blob mora biti pot IPFS (/ipfs/, /ipns/ ali /ipld/)
+acl-value-ipfs-path = vrednost ACL mora biti pot IPFS (/ipfs/, /ipns/ ali /ipld/)
+kind-value-ipfs-path = vrednost kind mora biti pot IPFS (/ipfs/, /ipns/ ali /ipld/)
+config-key-protected = konfiguracijski ključ '%key%' je zaščiten
+config-key-no-delete = konfiguracijski ključ '%key%' demona ni mogoče izbrisati
+config-key-not-manifest = konfiguracijski ključ '%key%' ni znan ključ manifest config
+wrong-crud-protocol = napačen protokol CRUD: %type%

@@ -76,3 +76,12 @@ namespace-create-denied = Ad alanı oluşturma: erişim reddedildi
 namespace-create-usage = Kullanım: :create <ad>
 crud-message-received = CRUD mesajı alındı
 crud-acl-updated = Kök taşıma ACL'si güncellendi
+
+# CRUD validation errors
+blob-value-ipfs-path = blob değeri bir IPFS yolu (/ipfs/, /ipns/ veya /ipld/) olmalıdır
+acl-value-ipfs-path = ACL değeri bir IPFS yolu (/ipfs/, /ipns/ veya /ipld/) olmalıdır
+kind-value-ipfs-path = kind değeri bir IPFS yolu (/ipfs/, /ipns/ veya /ipld/) olmalıdır
+config-key-protected = config anahtarı '%key%' korunmaktadır
+config-key-no-delete = daemon config anahtarı '%key%' silinemez
+config-key-not-manifest = config anahtarı '%key%' bilinen bir manifest config anahtarı değil
+wrong-crud-protocol = yanlış CRUD protokolü: %type%

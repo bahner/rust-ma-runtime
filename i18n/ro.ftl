@@ -76,3 +76,12 @@ namespace-create-denied = Creare spațiu de nume: acces refuzat
 namespace-create-usage = Utilizare: :create <nume>
 crud-message-received = Mesaj CRUD primit
 crud-acl-updated = ACL de transport rădăcină actualizat
+
+# CRUD validation errors
+blob-value-ipfs-path = valoarea blob trebuie să fie o cale IPFS (/ipfs/, /ipns/ sau /ipld/)
+acl-value-ipfs-path = valoarea ACL trebuie să fie o cale IPFS (/ipfs/, /ipns/ sau /ipld/)
+kind-value-ipfs-path = valoarea kind trebuie să fie o cale IPFS (/ipfs/, /ipns/ sau /ipld/)
+config-key-protected = cheia de config '%key%' este protejată
+config-key-no-delete = cheia de config '%key%' a daemon-ului nu poate fi ștearsă
+config-key-not-manifest = cheia de config '%key%' nu este o cheie de manifest config cunoscută
+wrong-crud-protocol = protocol CRUD greșit: %type%

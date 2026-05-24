@@ -6,8 +6,8 @@ use crate::acl::AclCache;
 use crate::entity::{IpldLink, NamespaceNode};
 
 use super::helpers::{
-    acl_cache_update, current_root_cid, is_ipfs_path, load_manifest, send_crud_error,
-    send_crud_i18n_error, send_crud_ok_cid, send_crud_reply_cbor, with_manifest_crud,
+    acl_cache_update, current_root_cid, is_ipfs_path, load_manifest, send_crud_i18n_error,
+    send_crud_ok_cid, send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -68,7 +68,7 @@ pub(super) async fn handle_namespace_op(
             } else {
                 &[category, "update", "*"]
             };
-            if let Err(e) = ns_acl_check(
+            if let Err(_e) = ns_acl_check(
                 ns,
                 &message.from,
                 caps,
@@ -78,7 +78,7 @@ pub(super) async fn handle_namespace_op(
             )
             .await
             {
-                return send_crud_error(message, reply_type, ctx, &e.to_string()).await;
+                return send_crud_i18n_error(message, reply_type, ctx, "no-ns-gate-acl").await;
             }
         }
     }
@@ -302,13 +302,8 @@ async fn handle_ns_blob(
         }
         (Some(""), [CborValue::Text(path)]) if sub_path.is_empty() => {
             if !is_ipfs_path(path) {
-                return send_crud_error(
-                    message,
-                    reply_type,
-                    ctx,
-                    "blob value must be an IPFS path (/ipfs/, /ipns/, or /ipld/)",
-                )
-                .await;
+                return send_crud_i18n_error(message, reply_type, ctx, "blob-value-ipfs-path")
+                    .await;
             }
             let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, path)
                 .await
@@ -365,13 +360,7 @@ pub(super) async fn handle_root_acl(
         }
         (Some(""), [CborValue::Text(path)]) => {
             if !is_ipfs_path(path) {
-                return send_crud_error(
-                    message,
-                    reply_type,
-                    ctx,
-                    "ACL value must be an IPFS path (/ipfs/, /ipns/, or /ipld/)",
-                )
-                .await;
+                return send_crud_i18n_error(message, reply_type, ctx, "acl-value-ipfs-path").await;
             }
             let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, path)
                 .await
