@@ -2,8 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use ciborium::Value as CborValue;
 use tracing::{debug, info};
 
-use crate::acl::{AclCache, AclMap, OWNERS_PRINCIPAL};
-use ma_core::CapabilityEntry;
+use crate::acl::{AclCache, AclMap};
 use crate::entity::{IpldLink, NamespaceNode};
 
 use super::helpers::{
@@ -329,6 +328,46 @@ async fn handle_ns_blob(
             info!(ns = %ns, key = %key, "blob deleted");
             send_crud_ok_cid(message, reply_type, ctx, &new_root).await
         }
+        (Some("edit"), []) if sub_path.is_empty() => {
+            let manifest = load_manifest(ctx).await?;
+            let ns_node = manifest
+                .namespaces
+                .get(ns)
+                .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
+            let maybe_cid = ns_node
+                .extra
+                .get(key)
+                .and_then(|v| v.get("/"))
+                .and_then(|v| v.as_str());
+            let yaml = match maybe_cid {
+                Some(cid) => {
+                    let val: serde_yaml::Value =
+                        crate::kubo::dag_get(ctx.kubo_rpc_url, cid).await?;
+                    serde_yaml::to_string(&val).context("serialising blob as YAML")?
+                }
+                None => String::new(),
+            };
+            send_crud_reply_yaml(message, reply_type, ctx, &yaml).await
+        }
+        (Some("edit"), [CborValue::Bytes(dag_cbor)]) if sub_path.is_empty() => {
+            let dag_cbor = dag_cbor.clone();
+            let cid = crate::kubo::dag_put_raw(ctx.kubo_rpc_url, &dag_cbor)
+                .await
+                .with_context(|| format!("dag_put_raw for {ns}.{key}"))?;
+            let new_root = with_manifest_crud(ctx, |m| {
+                let ns_node = m
+                    .namespaces
+                    .get_mut(ns)
+                    .ok_or_else(|| anyhow!("namespace not found: {ns}"))?;
+                ns_node
+                    .extra
+                    .insert(key.to_string(), serde_json::json!({ "/": cid }));
+                Ok(())
+            })
+            .await?;
+            info!(ns = %ns, key = %key, cid = %cid, "blob updated via edit");
+            send_crud_ok_cid(message, reply_type, ctx, &new_root).await
+        }
         _ => Err(anyhow!("unknown {ns}.{key} operation")),
     }
 }
@@ -349,11 +388,8 @@ pub(super) async fn handle_root_acl(
                 Some(link) => crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &link.cid).await?,
                 None => AclMap::new(),
             };
-            // Always ensure +owners is present — the save path requires it and
-            // the user needs a valid starting point even on a fresh/stale ACL.
-            acl_map
-                .entry(OWNERS_PRINCIPAL.to_string())
-                .or_insert_with(|| CapabilityEntry::from_caps(["*"]));
+            // Always inject +owners so the user sees it in the starting point.
+            crate::acl::inject_owners(&mut acl_map);
             let yaml =
                 serde_yaml::to_string(&acl_map).context("serialising root ACL as YAML")?;
             send_crud_reply_yaml(message, reply_type, ctx, &yaml).await
@@ -363,9 +399,6 @@ pub(super) async fn handle_root_acl(
             let acl_map = crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &cid)
                 .await
                 .with_context(|| format!("loading root ACL from {cid}"))?;
-            if !matches!(acl_map.get(OWNERS_PRINCIPAL), Some(CapabilityEntry::Allow(caps)) if caps.contains("*")) {
-                return send_crud_i18n_error(message, reply_type, ctx, "acl-missing-owners").await;
-            }
             let new_root = with_manifest_crud(ctx, |m| {
                 m.acl = Some(IpldLink::new(&cid));
                 Ok(())
@@ -375,25 +408,27 @@ pub(super) async fn handle_root_acl(
             info!(from = %message.from, cid = %cid, "{}", crate::i18n::t("crud-acl-updated"));
             send_crud_ok_cid(message, reply_type, ctx, &new_root).await
         }
-        (Some("edit"), [CborValue::Bytes(dag_cbor)]) => {
+        (Some(""), [CborValue::Bytes(dag_cbor)]) => {
             let dag_cbor = dag_cbor.clone();
-            let cid = crate::kubo::dag_put_raw(ctx.kubo_rpc_url, &dag_cbor)
+            // Deserialise, then inject `+owners` so it is always baked into
+            // the stored CID — regardless of whether ego sent it or not.
+            let mut acl_map: AclMap = ciborium::from_reader(dag_cbor.as_slice())
+                .context("deserialising incoming ACL DAG-CBOR")?;
+            crate::acl::inject_owners(&mut acl_map);
+            let cid = crate::kubo::dag_put(ctx.kubo_rpc_url, &acl_map)
                 .await
-                .context("dag_put_raw for root ACL")?;
-            let acl_map: AclMap = crate::kubo::dag_get(ctx.kubo_rpc_url, &cid)
+                .context("dag_put for root ACL")?;
+            let acl_map = crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &cid)
                 .await
                 .with_context(|| format!("loading updated root ACL from {cid}"))?;
-            if !matches!(acl_map.get(OWNERS_PRINCIPAL), Some(CapabilityEntry::Allow(caps)) if caps.contains("*")) {
-                return send_crud_i18n_error(message, reply_type, ctx, "acl-missing-owners").await;
-            }
-            let new_root = with_manifest_crud(ctx, |m| {
+            with_manifest_crud(ctx, |m| {
                 m.acl = Some(IpldLink::new(&cid));
                 Ok(())
             })
             .await?;
             *ctx.root_acl.write().await = acl_map;
             info!(from = %message.from, cid = %cid, "{}", crate::i18n::t("crud-acl-updated"));
-            send_crud_ok_cid(message, reply_type, ctx, &new_root).await
+            send_crud_ok_cid(message, reply_type, ctx, &cid).await
         }
         // DELETE is refused — the root transport ACL must never be cleared.
         (Some(""), []) => {

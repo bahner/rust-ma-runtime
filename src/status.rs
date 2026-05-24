@@ -353,7 +353,7 @@ pub async fn grant_owners_in_acl(acl: &SharedAcl, owners: &[String]) {
 /// and `config.owners` set. Returns the resulting root CID.
 ///
 /// Called once during `POST /claim` when no manifest exists yet.
-pub(crate) async fn bootstrap_minimal_manifest(
+pub async fn bootstrap_minimal_manifest(
     kubo_rpc_url: &str,
     owners: &[String],
 ) -> anyhow::Result<String> {

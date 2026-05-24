@@ -127,7 +127,9 @@ async fn handle_single_entity(
             let yaml = serde_yaml::to_string(&entity).context("serialising entity node as YAML")?;
             send_crud_reply_yaml(message, reply_type, ctx, &yaml).await
         }
-        (Some("edit"), [CborValue::Bytes(dag_cbor)]) => {
+        (Some(""), [CborValue::Bytes(dag_cbor)]) => {
+            // Set entity from DAG-CBOR bytes — requires `create` + `entities` in root ACL.
+            check_entity_management_cap(message, ctx, &["create", "entities"]).await?;
             let name = name.as_str();
             let cid = crate::kubo::dag_put_raw(ctx.kubo_rpc_url, dag_cbor)
                 .await

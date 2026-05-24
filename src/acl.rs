@@ -4,15 +4,22 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use ma_core::check_cap;
 use tokio::sync::RwLock;
+use tracing::debug;
 
 pub use ma_core::{
     normalize_principal, AclMap, CapabilityEntry, CAP_CRUD, CAP_IPFS, CAP_RPC, GROUP_PREFIX,
 };
 
-/// The group principal that must always be present in the root transport-gate ACL.
+/// The group principal that always holds wildcard capabilities in every in-memory ACL.
 ///
-/// Removing this entry is rejected by the CRUD handler so that the owners
-/// group cannot inadvertently lose access to the runtime.
+/// `+owners: ["*"]` is injected by [`inject_owners`] and [`load_acl_from_cid`]
+/// at load time so it is visible when a user edits the ACL document. Documents
+/// stored on IPFS do not need to include this entry.
+///
+/// At transport and CRUD gates the actual enforcement is done by [`is_owner`],
+/// which checks the in-memory owner list directly without IPFS group resolution.
+/// This guarantees that owners can never be locked out even if the ACL document
+/// is empty or wrong.
 pub const OWNERS_PRINCIPAL: &str = "+owners";
 
 /// In-memory cache of named ACLs.
@@ -30,13 +37,37 @@ pub fn new_acl_cache() -> AclCache {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
+/// Always inject `+owners: ["*"]` into an [`AclMap`] loaded from a document.
+///
+/// This entry is purely cosmetic — it makes the owner group visible when
+/// editing the ACL. Actual enforcement at transport and CRUD gates is done
+/// by [`is_owner`], which bypasses `check_full` entirely for in-memory owners.
+pub fn inject_owners(acl: &mut AclMap) {
+    acl.insert(
+        OWNERS_PRINCIPAL.to_string(),
+        CapabilityEntry::from_caps(["*"]),
+    );
+}
+
+/// Return `true` if `caller` is in the in-memory owners list.
+///
+/// Owners always pass transport and CRUD gates unconditionally — call this
+/// before [`check_full`] to guarantee they can never be locked out.
+pub fn is_owner(owners: &[String], caller: &str) -> bool {
+    let normalized = normalize_principal(caller);
+    owners.iter().any(|o| normalize_principal(o) == normalized)
+}
+
 /// Fetch an ACL document by CID from IPFS and deserialise it as [`AclMap`].
 ///
-/// The document is stored as a raw DAG-CBOR map of principal → capabilities.
+/// [`inject_owners`] is applied after deserialisation so `+owners: ["*"]`
+/// is always present in the returned map.
 pub async fn load_acl_from_cid(kubo_rpc_url: &str, cid: &str) -> Result<AclMap> {
-    crate::kubo::dag_get::<AclMap>(kubo_rpc_url, cid)
+    let mut acl = crate::kubo::dag_get::<AclMap>(kubo_rpc_url, cid)
         .await
-        .with_context(|| format!("fetching ACL document {cid}"))
+        .with_context(|| format!("fetching ACL document {cid}"))?;
+    inject_owners(&mut acl);
+    Ok(acl)
 }
 
 /// Shared, mutable root transport-gate ACL.
@@ -115,6 +146,9 @@ where
                     .iter()
                     .any(|c| cap_set.contains(*c) || cap_set.contains("*"))
             {
+                if key == OWNERS_PRINCIPAL {
+                    debug!(caller = %caller, "{}", crate::i18n::t("acl-owners-access"));
+                }
                 return Ok(());
             }
         }

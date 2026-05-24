@@ -42,7 +42,10 @@ pub async fn handle_rpc_message(
     // this runtime.
     let intra_runtime = message.from.starts_with(&format!("{}#", ctx.our_did));
     if !intra_runtime {
-        check_full(acl, &message.from, &[CAP_RPC], |_| async { Ok(vec![]) }).await?;
+        let owners = ctx.stats.read().await.owners.clone();
+        if !crate::acl::is_owner(&owners, &message.from) {
+            check_full(acl, &message.from, &[CAP_RPC], |_| async { Ok(vec![]) }).await?;
+        }
     }
 
     if message.message_type != MESSAGE_TYPE_RPC {

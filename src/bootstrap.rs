@@ -15,11 +15,10 @@ use std::{
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::acl::{AclMap, OWNERS_PRINCIPAL};
+use crate::acl::AclMap;
 use crate::entity::{EntityNode, IpldLink, KindNode, KindTree, PluginKind, RuntimeManifest};
 use crate::kubo;
 use crate::plugin;
-use ma_core::CapabilityEntry;
 
 // ── YAML bootstrap schema ─────────────────────────────────────────────────────
 
@@ -194,13 +193,10 @@ pub async fn build_manifest(
     }
 
     // 3a. Publish root transport-gate ACL.
-    // Always seed OWNERS_PRINCIPAL: ["*"] so the owners group has access out of the box.
+    // +owners: ["*"] is injected at load time — no need to embed it in the document.
     let root_acl_link: Option<IpldLink> = {
-        let mut acl_map: AclMap = cfg.acl.clone().unwrap_or_default();
-        acl_map
-            .entry(OWNERS_PRINCIPAL.to_string())
-            .or_insert_with(|| CapabilityEntry::from_caps(["*"]));
-        let cid = kubo::dag_put(kubo_url, &acl_map)
+        let root_acl: AclMap = cfg.acl.clone().unwrap_or_default();
+        let cid = kubo::dag_put(kubo_url, &root_acl)
             .await
             .context("dag_put root acl")?;
         tracing::info!(cid = %cid, "Published root transport-gate ACL");
