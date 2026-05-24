@@ -61,6 +61,7 @@ runtime-claimed = Runtime a keda reklamá.
 # Protected root elements
 refuse-delete-root = Rekasando eliminá elemento raís rekerí
 no-root-acl = Ningun ACL raís konfigurá — runtime ta operando sin kontrol di akseso
+acl-owners-access = E yamanti a e keda akseso komo miembro di +owners
 namespace-not-found = Namespace no a keda haña
 no-ns-gate-acl = Ningun ACL di puerta konfigurá pa e namespace aki
 runtime-claim-persisted = Dueño a keda skirbí na konfigurashon.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime a keda reklamá ya.
 
 
 # Namespace creation (:create)
-acl-missing-owners = ACL raís mester tin un entrada +owners
 namespace-created = Namespace a keda kreá
 namespace-already-exists = Namespace ya ta eksistí
 namespace-name-reserved = Non di namespace ta reservá

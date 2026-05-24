@@ -61,7 +61,7 @@ runtime-claimed = Runtime ተመዝግቧል።
 # የተጠበቁ ሥር ንጥረ-ነገሮች
 refuse-delete-root = አስፈላጊ ሥር ንጥረ-ነገርን ለመሰረዝ በጥብቅ ፈቃደኛ አይደለሁም
 no-root-acl = ሥር ACL አልተዋቀረም — runtime ያለ ተደራሽነት ቁጥጥር እየሰራ ነው
-acl-missing-owners = ዋናው ACL +owners ግቤት መያዝ አለበት
+acl-owners-access = ደዋዩ እንደ +owners አባል መዳረሻ ተሰጥቷል
 namespace-not-found = namespace አልተገኘም
 no-ns-gate-acl = ለዚህ namespace የጌት ACL አልተዋቀረም
 runtime-claim-persisted = ባለቤቱ ወደ ቅንብር ተፅፏል።
@@ -73,7 +73,6 @@ namespace-create-denied = ናምስፔስ መፍጠር፦ ፍቃድ ተከልክ
 namespace-create-usage = አጠቃቀም: :create <ስም>
 
 # Namespace creation (:create)
-acl-missing-owners = ዋናው ACL +owners ግቤት መያዝ አለበት
 namespace-created = ናምስፔስ ተፈጥሯል
 namespace-already-exists = ናምስፔሱ አስቀድሞ አለ
 namespace-name-reserved = የናምስፔስ ስም የተያዘ ነው

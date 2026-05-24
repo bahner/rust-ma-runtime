@@ -61,6 +61,7 @@ runtime-claimed = Runtime užregistruotas.
 # Apsaugoti šakniniai elementai
 refuse-delete-root = Ryžtingai atsisakau ištrinti reikiamą šakninį elementą
 no-root-acl = Šakninis ACL nesukonfigūruotas — runtime veikia be prieigos kontrolės
+acl-owners-access = Skambinančiajam suteikta prieiga kaip +owners nario
 namespace-not-found = Vardų erdvė nerasta
 no-ns-gate-acl = Šiai vardų erdvei nesukonfigūruotas gate-ACL
 runtime-claim-persisted = Savininkas įrašytas į konfigūraciją.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime jau užregistruotas.
 
 
 # Namespace creation (:create)
-acl-missing-owners = Šakninis ACL turi turėti +owners įrašą
 namespace-created = Vardų erdvė sukurta
 namespace-already-exists = Vardų erdvė jau egzistuoja
 namespace-name-reserved = Vardų erdvės pavadinimas yra rezervuotas

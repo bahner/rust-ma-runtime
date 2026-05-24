@@ -61,6 +61,7 @@ runtime-claimed = Runtime নিবন্ধিত হয়েছে।
 # সুরক্ষিত রুট উপাদান
 refuse-delete-root = প্রয়োজনীয় রুট উপাদান মুছতে দৃঢ়ভাবে অস্বীকার করুন
 no-root-acl = রুট ACL কনফিগার করা নেই — runtime অ্যাক্সেস নিয়ন্ত্রণ ছাড়া চলছে
+acl-owners-access = কলার +owners-এর সদস্য হিসেবে অ্যাক্সেস পেয়েছে
 namespace-not-found = নেমস্পেস পাওয়া যায়নি
 no-ns-gate-acl = এই নেমস্পেসের জন্য গেট ACL কনফিগার করা নেই
 runtime-claim-persisted = মালিক কনফিগারেশনে লেখা হয়েছে।
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime ইতিমধ্যে নিবন্ধি
 
 
 # Namespace creation (:create)
-acl-missing-owners = রুট ACL-এ +owners এন্ট্রি থাকতে হবে
 namespace-created = নেমস্পেস তৈরি হয়েছে
 namespace-already-exists = নেমস্পেস ইতিমধ্যে বিদ্যমান
 namespace-name-reserved = নেমস্পেসের নাম সংরক্ষিত

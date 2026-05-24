@@ -61,6 +61,7 @@ runtime-claimed = Runtime 已註冊。
 # 受保護的根元素
 refuse-delete-root = 堅決拒絕刪除所需根元素
 no-root-acl = 未設定根 ACL — runtime 在無存取控制的情況下執行
+acl-owners-access = 呼叫方以 +owners 成員身份獲得存取權限
 namespace-not-found = 未找到命名空間
 no-ns-gate-acl = 此命名空間未設定閘道 ACL
 runtime-claim-persisted = 擁有者已寫入設定。
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime 已註冊。
 
 
 # Namespace creation (:create)
-acl-missing-owners = 根 ACL 必須包含 +owners 項目
 namespace-created = 命名空間已建立
 namespace-already-exists = 命名空間已存在
 namespace-name-reserved = 命名空間名稱已被保留

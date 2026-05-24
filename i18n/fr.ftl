@@ -61,6 +61,7 @@ runtime-claimed = Runtime enregistré.
 # Éléments racine protégés
 refuse-delete-root = Refuse catégoriquement de supprimer un élément racine requis
 no-root-acl = Aucune ACL racine configurée — le runtime fonctionne sans contrôle d'accès
+acl-owners-access = Accès accordé à l'appelant en tant que membre de +owners
 namespace-not-found = Espace de noms introuvable
 no-ns-gate-acl = Aucune ACL de passerelle configurée pour cet espace de noms
 runtime-claim-persisted = Propriétaire écrit dans la configuration.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime déjà enregistré.
 
 
 # Namespace creation (:create)
-acl-missing-owners = L'ACL racine doit contenir une entrée +owners
 namespace-created = Espace de noms créé
 namespace-already-exists = L'espace de noms existe déjà
 namespace-name-reserved = Nom d'espace de noms réservé

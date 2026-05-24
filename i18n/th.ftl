@@ -61,6 +61,7 @@ runtime-claimed = ลงทะเบียน runtime แล้ว
 # องค์ประกอบ root ที่ได้รับการปกป้อง
 refuse-delete-root = ปฏิเสธอย่างเด็ดขาดที่จะลบองค์ประกอบ root ที่จำเป็น
 no-root-acl = ไม่ได้กำหนดค่า ACL ของ root — runtime ทำงานโดยไม่มีการควบคุมการเข้าถึง
+acl-owners-access = ผู้เรียกได้รับสิทธิ์เข้าถึงในฐานะสมาชิกของ +owners
 namespace-not-found = ไม่พบ namespace
 no-ns-gate-acl = ไม่ได้กำหนดค่า ACL ของเกตสำหรับ namespace นี้
 runtime-claim-persisted = เขียนเจ้าของลงในการกำหนดค่าแล้ว
@@ -68,7 +69,6 @@ runtime-already-claimed = runtime ลงทะเบียนแล้ว
 
 
 # Namespace creation (:create)
-acl-missing-owners = ACL รากต้องมีรายการ +owners
 namespace-created = สร้าง namespace แล้ว
 namespace-already-exists = namespace มีอยู่แล้ว
 namespace-name-reserved = ชื่อ namespace ถูกสงวนไว้

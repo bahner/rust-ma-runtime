@@ -1,4 +1,6 @@
-# ma-runtime – Iyaric
+# art-x-lyaric — Dread Talk / Iyaric (Rasta)
+# Rastafarian Iyaric dialect, also known as Dread Talk or Lyaric.
+# BCP-47 private-use tag: art-x-lyaric
 lang-name = Iyaric
 
 own-did-published = I an I DID document publish forward to IPNS
@@ -61,6 +63,7 @@ runtime-claimed = Runtime claim in Iration.
 # Protected root elements
 refuse-delete-root = Steadfastly refuse fi remove required root element
 no-root-acl = No root ACL — runtime a work without Babylon control
+acl-owners-access = Calla grantid access as memba of +owners
 namespace-not-found = Namespace nuh find
 no-ns-gate-acl = No gate ACL fi dis namespace
 runtime-claim-persisted = Owner write to config in Zion.
@@ -68,7 +71,6 @@ runtime-already-claimed = Runtime already claim.
 
 
 # Namespace creation (:create)
-acl-missing-owners = Root ACL haffi have +owners entry
 namespace-created = Namespace born inna dis livity
 namespace-already-exists = Namespace already deh inna dis realm
 namespace-name-reserved = Dat namespace name is irie an reserved

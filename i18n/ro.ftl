@@ -61,6 +61,7 @@ runtime-claimed = Runtime înregistrat.
 # Elemente rădăcină protejate
 refuse-delete-root = Refuz categoric să șterg un element rădăcină obligatoriu
 no-root-acl = Nu există ACL rădăcină configurat — runtime funcționează fără control acces
+acl-owners-access = Apelantului i s-a acordat acces ca membru al grupului +owners
 namespace-not-found = Spațiu de nume negăsit
 no-ns-gate-acl = Nu există ACL de poartă configurat pentru acest spațiu de nume
 runtime-claim-persisted = Proprietar scris în configurație.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime deja înregistrat.
 
 
 # Namespace creation (:create)
-acl-missing-owners = ACL-ul rădăcină trebuie să conțină o intrare +owners
 namespace-created = Spațiu de nume creat
 namespace-already-exists = Spațiul de nume există deja
 namespace-name-reserved = Numele spațiului de nume este rezervat

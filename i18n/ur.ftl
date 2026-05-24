@@ -61,6 +61,7 @@ runtime-claimed = Runtime رجسٹر ہوا۔
 # محفوظ روٹ عناصر
 refuse-delete-root = ضروری روٹ عنصر حذف کرنے سے قطعی انکار
 no-root-acl = روٹ ACL ترتیب نہیں دیا گیا — runtime رسائی کنٹرول کے بغیر چل رہا ہے
+acl-owners-access = کالر کو +owners کے رکن کی حیثیت سے رسائی دی گئی
 namespace-not-found = نیم اسپیس نہیں ملا
 no-ns-gate-acl = اس نیم اسپیس کے لیے گیٹ ACL ترتیب نہیں دیا گیا
 runtime-claim-persisted = مالک ترتیبات میں لکھا گیا۔
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime پہلے سے رجسٹر ہے۔
 
 
 # Namespace creation (:create)
-acl-missing-owners = روٹ ACL میں +owners اندراج ہونا ضروری ہے
 namespace-created = نیم اسپیس بنایا گیا
 namespace-already-exists = نیم اسپیس پہلے سے موجود ہے
 namespace-name-reserved = نیم اسپیس کا نام محفوظ ہے

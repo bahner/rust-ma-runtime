@@ -61,6 +61,7 @@ runtime-claimed = Runtime が登録されました。
 # 保護されたルート要素
 refuse-delete-root = 必要なルート要素の削除を断固として拒否します
 no-root-acl = ルート ACL が設定されていません — runtime はアクセス制御なしで動作しています
+acl-owners-access = 呼び出し元は +owners のメンバーとしてアクセスが許可されました
 namespace-not-found = 名前空間が見つかりません
 no-ns-gate-acl = この名前空間のゲート ACL が設定されていません
 runtime-claim-persisted = 所有者が設定に書き込まれました。
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime はすでに登録されています。
 
 
 # Namespace creation (:create)
-acl-missing-owners = ルートACLには+ownersエントリが必要です
 namespace-created = ネームスペースが作成されました
 namespace-already-exists = ネームスペースはすでに存在します
 namespace-name-reserved = ネームスペース名は予約済みです

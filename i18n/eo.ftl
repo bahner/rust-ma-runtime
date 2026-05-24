@@ -61,6 +61,7 @@ runtime-claimed = Rultempo reklamita.
 # Protected root elements
 refuse-delete-root = Decideme rifuzas forigi bezonatan radikeron
 no-root-acl = Neniu radika ACL agordita — rultempo funkcias sen alir-kontrolo
+acl-owners-access = Alvokanto ricevis aliron kiel membro de +owners
 namespace-not-found = Nomspaco ne trovita
 no-ns-gate-acl = Neniu pordeja ACL agordita por ĉi tiu nomspaco
 runtime-claim-persisted = Posedanto registrita en agordo.
@@ -68,7 +69,6 @@ runtime-already-claimed = Rultempo jam reklamita.
 
 
 # Namespace creation (:create)
-acl-missing-owners = La radika ACL devas enhavi +owners-eron
 namespace-created = Nomspaco kreita
 namespace-already-exists = Nomspaco jam ekzistas
 namespace-name-reserved = Nomspaca nomo estas rezervita

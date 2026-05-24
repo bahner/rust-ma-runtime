@@ -61,6 +61,7 @@ runtime-claimed = Runtime faaɓinaa.
 # Huunde jalte geɗe eɓɓooje
 refuse-delete-root = Rewindoo tiiɗnde momtugol geɗe jalte bardinooje
 no-root-acl = ACL jalte nalitaake — runtime heɓatako darannaaji hiiwtori
+acl-owners-access = Jooɗtotooɗo heɓii yamiroore ko gollotooɗo e +owners
 namespace-not-found = Innde-boowal heɓaaki
 no-ns-gate-acl = ACL damal nalitaake innde-boowal nde
 runtime-claim-persisted = Jom winndirii maantol.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime faaɓinaa ɗoon hannde.
 
 
 # Namespace creation (:create)
-acl-missing-owners = ACL heeritagal ngal foti yoɓde ɗemngal +owners
 namespace-created = Namespace jibinaa
 namespace-already-exists = Namespace on jowitaama
 namespace-name-reserved = Innde namespace ndee yowitaama

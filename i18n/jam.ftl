@@ -61,6 +61,7 @@ runtime-claimed = Runtime claim.
 # Protected root elements
 refuse-delete-root = Steadfastly refuse fi delete required root element
 no-root-acl = No root ACL configure — runtime a work without access control
+acl-owners-access = Di calla get access as memba a +owners
 namespace-not-found = Namespace nuh find
 no-ns-gate-acl = No gate ACL configure fi dis namespace
 runtime-claim-persisted = Owner write to config.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime already claim.
 
 
 # Namespace creation (:create)
-acl-missing-owners = Di root ACL haffi have wan +owners entry
 namespace-created = Namespace mek
 namespace-already-exists = Namespace deh deh already
 namespace-name-reserved = Namespace name taken already

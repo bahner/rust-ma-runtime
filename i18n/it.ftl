@@ -61,6 +61,7 @@ runtime-claimed = Runtime registrato.
 # Elementi radice protetti
 refuse-delete-root = Mi rifiuto categoricamente di eliminare un elemento radice richiesto
 no-root-acl = Nessuna ACL radice configurata — il runtime opera senza controllo degli accessi
+acl-owners-access = Accesso concesso al chiamante come membro di +owners
 namespace-not-found = Namespace non trovato
 no-ns-gate-acl = Nessuna ACL di gate configurata per questo namespace
 runtime-claim-persisted = Proprietario scritto nella configurazione.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime già registrato.
 
 
 # Namespace creation (:create)
-acl-missing-owners = L'ACL radice deve contenere una voce +owners
 namespace-created = Spazio dei nomi creato
 namespace-already-exists = Lo spazio dei nomi esiste già
 namespace-name-reserved = Nome dello spazio dei nomi riservato

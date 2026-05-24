@@ -61,6 +61,7 @@ runtime-claimed = Runtime reklame.
 # Protected root elements
 refuse-delete-root = Refize efase eleman rasin obligatwa
 no-root-acl = Pa gen ACL rasin konfigiwe — runtime ap travay san kontwòl aksè
+acl-owners-access = Moun ki rele a jwenn aksè kòm manm +owners
 namespace-not-found = Espas non pa jwenn
 no-ns-gate-acl = Pa gen ACL pòtay konfigiwe pou espas non sa
 runtime-claim-persisted = Pwopriyetè ekri nan konfigirasyon.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime deja reklame.
 
 
 # Namespace creation (:create)
-acl-missing-owners = ACL rasin an dwe gen yon antre +owners
 namespace-created = Espas non kreye
 namespace-already-exists = Espas non deja egziste
 namespace-name-reserved = Non espas non rezève

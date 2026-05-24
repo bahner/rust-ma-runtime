@@ -61,6 +61,7 @@ runtime-claimed = Runtime rekisteröity.
 # Suojatut juurielementit
 refuse-delete-root = Kieltäydyn ehdottomasti poistamasta vaadittua juurielementtiä
 no-root-acl = Juuri-ACL ei ole määritetty — runtime toimii ilman pääsynhallintaa
+acl-owners-access = Kutsujalle myönnettiin pääsy +owners-ryhmän jäsenenä
 namespace-not-found = Nimiavaruutta ei löydy
 no-ns-gate-acl = Tälle nimiavaruudelle ei ole määritetty gate-ACL:ää
 runtime-claim-persisted = Omistaja kirjoitettu konfiguraatioon.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime on jo rekisteröity.
 
 
 # Namespace creation (:create)
-acl-missing-owners = Juuri-ACL:ssa täytyy olla +owners-merkintä
 namespace-created = Nimiavaruus luotu
 namespace-already-exists = Nimiavaruus on jo olemassa
 namespace-name-reserved = Nimiavaruuden nimi on varattu

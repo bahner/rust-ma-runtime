@@ -61,6 +61,7 @@ runtime-claimed = Runtime ayaa diiwaangeliyay.
 # Curiyeyaasha xidiga ee la ilaaliyay
 refuse-delete-root = Waxaan si xooggan u diiday in la tirtiro curiyaha xidiga ee loo baahan yahay
 no-root-acl = ACL-ka xidiga lama habayn — runtime wuxuu ku shaqeynayaa la'aanta xukumida gelitaanka
+acl-owners-access = Wicitaanaha waxa la siiyey gelitaan ahaan xubin +owners
 namespace-not-found = Magaca-goobta lama helin
 no-ns-gate-acl = ACL-ka iridda lama habayn magaca-goobtan
 runtime-claim-persisted = Milkiilaha ayaa habaynta lagu qoray.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime horaan ayaa la diiwaangeliyay.
 
 
 # Namespace creation (:create)
-acl-missing-owners = ACL-ka xidiga waa inuu leeyahay galitaan +owners
 namespace-created = Magaca-goobta la abuuray
 namespace-already-exists = Magaca-goobta horeba jira
 namespace-name-reserved = Magaca magaca-goobta waa la kaydiyay

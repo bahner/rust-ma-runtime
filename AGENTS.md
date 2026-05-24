@@ -371,3 +371,10 @@ language's own name for itself (autonym), e.g. `lang-name = Norsk bokmål`.
 
 `BUNDLED_LANGS` is written to `$OUT_DIR/bundled_langs.rs` and `include!`-ed
 into `src/i18n.rs`. All FTL files in `lang/` are compiled into the binary.
+
+### Notable constructed / special languages
+
+| Code | Language | Notes |
+|------|----------|---------|
+| `art-x-lyaric` | Dread Talk (Rasta) | BCP-47 private-use tag for Lyaric / Rastafarian Iyaric dialect |
+| `qbc` | Belter Creole | The conlang from *The Expanse* (Belter lang); ISO 639-3 code `qbc` |

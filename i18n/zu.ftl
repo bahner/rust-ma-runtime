@@ -61,6 +61,7 @@ runtime-claimed = I-runtime ibhalisiwe.
 # Izinto zengcambu ezivikelekile
 refuse-delete-root = Ngenqaba ngokuqinile ukususa into yengcambu efunekayo
 no-root-acl = I-ACL yengcambu ayilungistiwe — i-runtime iyasebenza ngaphandle kokulawula ukungena
+acl-owners-access = Umshayeli unikezwe ukufinyelela njengelungu le-+owners
 namespace-not-found = I-namespace ayitholakali
 no-ns-gate-acl = I-ACL yesango ayilungistiwe kulo i-namespace
 runtime-claim-persisted = Umnikazi ubhaliwe ezisethingeni.
@@ -68,7 +69,6 @@ runtime-already-claimed = I-runtime isibhalisiwe.
 
 
 # Namespace creation (:create)
-acl-missing-owners = I-ACL yengcambu kufanele iqukethe ukufakwa kwe-+owners
 namespace-created = I-namespace yenziwe
 namespace-already-exists = I-namespace ikhona kakade
 namespace-name-reserved = Igama le-namespace ligciniwe

@@ -61,6 +61,7 @@ runtime-claimed = Runtime registriert.
 # Geschützte Wurzelelemente
 refuse-delete-root = Weigere mich strikt, ein erforderliches Wurzelelement zu löschen
 no-root-acl = Keine Root-ACL konfiguriert — Runtime läuft ohne Zugangskontrolle
+acl-owners-access = Aufrufer erhielt Zugriff als Mitglied von +owners
 namespace-not-found = Namensraum nicht gefunden
 no-ns-gate-acl = Keine Gate-ACL für diesen Namensraum konfiguriert
 runtime-claim-persisted = Eigentümer in Konfiguration geschrieben.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime wurde bereits registriert.
 
 
 # Namespace creation (:create)
-acl-missing-owners = Das Stamm-ACL muss einen +owners-Eintrag enthalten
 namespace-created = Namensraum erstellt
 namespace-already-exists = Namensraum existiert bereits
 namespace-name-reserved = Namensraumname ist reserviert

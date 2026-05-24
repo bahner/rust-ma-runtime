@@ -61,6 +61,7 @@ runtime-claimed = Το runtime καταχωρήθηκε.
 # Προστατευμένα στοιχεία ρίζας
 refuse-delete-root = Αρνούμαι κατηγορηματικά να διαγράψω το απαιτούμενο στοιχείο ρίζας
 no-root-acl = Δεν έχει ρυθμιστεί ACL ρίζας — το runtime λειτουργεί χωρίς έλεγχο πρόσβασης
+acl-owners-access = Παραχωρήθηκε πρόσβαση στον καλούντα ως μέλος του +owners
 namespace-not-found = Δεν βρέθηκε ο χώρος ονομάτων
 no-ns-gate-acl = Δεν έχει ρυθμιστεί ACL πύλης για αυτόν τον χώρο ονομάτων
 runtime-claim-persisted = Ο ιδιοκτήτης γράφτηκε στη διαμόρφωση.
@@ -68,7 +69,6 @@ runtime-already-claimed = Το runtime έχει ήδη καταχωρηθεί.
 
 
 # Namespace creation (:create)
-acl-missing-owners = Το ACL ρίζας πρέπει να περιέχει καταχώρηση +owners
 namespace-created = Ο χώρος ονομάτων δημιουργήθηκε
 namespace-already-exists = Ο χώρος ονομάτων υπάρχει ήδη
 namespace-name-reserved = Το όνομα χώρου ονομάτων είναι δεσμευμένο

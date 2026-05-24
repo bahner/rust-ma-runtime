@@ -61,6 +61,7 @@ runtime-claimed = Runtime i klemim.
 # Protected root elements
 refuse-delete-root = Tok no long rausim elementis bilong rut
 no-root-acl = I no gat rut ACL i putim — runtime i wok nating long kontrolim aksess
+acl-owners-access = Dispela man i kisim olgeta as memba bilong +owners
 namespace-not-found = Espas nem i no painim
 no-ns-gate-acl = I no gat get ACL i putim bilong dispela espas nem
 runtime-claim-persisted = Ona i raitim long konfigurasion.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime i klemim pinis.
 
 
 # Namespace creation (:create)
-acl-missing-owners = Rut ACL i mas gat +owners bilong em
 namespace-created = Espas nem i klia pinis
 namespace-already-exists = Espas nem i stap pinis
 namespace-name-reserved = Nem bilong espas nem i bokisim pinis

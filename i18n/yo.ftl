@@ -61,6 +61,7 @@ runtime-claimed = Runtime ti forúkọsilẹ̀.
 # Àwọn ẹ̀dá ìpìlẹ̀ tí a dáàbò bò
 refuse-delete-root = Mo kọ̀ pátápátá láti pa ẹ̀dá ìpìlẹ̀ tí a nílò rẹ́
 no-root-acl = ACL ìpìlẹ̀ kò ṣe ìtọ́nisọ̀ — runtime ń ṣiṣẹ́ láìsí ìdarí ìwọlé
+acl-owners-access = A fun ẹni tó pè ní ìgbàláàyè bí ọmọ egbé +owners
 namespace-not-found = Orúkọ-àyè kò rí
 no-ns-gate-acl = ACL ẹnu-bàbà kò ṣe ìtọ́nisọ̀ fún orúkọ-àyè yìí
 runtime-claim-persisted = Onígbọwọ ti kọ sí ìtọ́nisọ̀.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime ti forúkọsilẹ̀ tẹ́lẹ̀.
 
 
 # Namespace creation (:create)
-acl-missing-owners = Root ACL gbọdọ ni ìwọlé +owners
 namespace-created = Namespace ti ṣẹda
 namespace-already-exists = Namespace ti wa tẹlẹ
 namespace-name-reserved = Orukọ namespace ti wa ni ipamọ

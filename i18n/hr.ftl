@@ -61,6 +61,7 @@ runtime-claimed = Runtime registriran.
 # Zaštićeni korijenski elementi
 refuse-delete-root = Odlučno odbijam brisanje obveznog korijenskog elementa
 no-root-acl = Nije konfiguriran root ACL — runtime radi bez kontrole pristupa
+acl-owners-access = Pozivaču je odobren pristup kao članu grupe +owners
 namespace-not-found = Imenski prostor nije pronađen
 no-ns-gate-acl = Za ovaj imenski prostor nije konfiguriran gate ACL
 runtime-claim-persisted = Vlasnik zapisan u konfiguraciju.
@@ -68,7 +69,6 @@ runtime-already-claimed = Runtime je već registriran.
 
 
 # Namespace creation (:create)
-acl-missing-owners = Korijenski ACL mora sadržavati unos +owners
 namespace-created = Prostor imena kreiran
 namespace-already-exists = Prostor imena već postoji
 namespace-name-reserved = Naziv prostora imena je rezerviran

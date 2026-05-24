@@ -63,6 +63,7 @@ runtime-claimed = runtime faaɓinaa.
 # Eegame jalte ɗe a ɗon
 refuse-delete-root = na-du na-du na-du: tek-out jalte ɗe a ɗon na gonya
 no-root-acl = nating root ACL — runtime gútegow beshkaise owkwa-hamma
+acl-owners-access = Lo clamant a eu accès cume membre de +owners
 namespace-not-found = namespace na finyish wit
 no-ns-gate-acl = nating gate ACL fo dis namespace
 runtime-claim-persisted = jom winndirii saiti.
@@ -70,7 +71,6 @@ runtime-already-claimed = runtime finyish faaɓinaa wanya.
 
 
 # Namespace creation (:create)
-acl-missing-owners = root ACL fod get +owners lede
 namespace-created = namespace bon-kreye
 namespace-already-exists = namespace jadu-la
 namespace-name-reserved = dat namespace nem a gonya
