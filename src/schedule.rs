@@ -17,8 +17,9 @@
 //!
 //! ## Outbound messages
 //!
-//! Outbound envelopes produced by a scheduled call (via `ma_send`) are
-//! silently dropped — there is no external sender to route replies back to.
+//! Outbound envelopes from scheduled calls are sent fire-and-forget by the
+//! `ma_send` host function directly via a channel to the main event loop.
+//! The scheduler has no envelope-handling responsibility.
 //! State changes via `ma_set_state` are persisted to IPFS normally.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -327,9 +328,6 @@ pub async fn dispatch_scheduled(ctx: &SchedulerCtx, fragment: &str, content: &[u
             return;
         }
     };
-
-    // Outbound envelopes are silently dropped — no external sender to route to.
-    let _ = result.envelopes;
 
     // Persist state if changed.
     if let Some(state_bytes) = result.pending_state {

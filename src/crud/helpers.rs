@@ -144,7 +144,14 @@ pub(super) async fn register_entity_plugin(
     name: &str,
     entity_node: &EntityNode,
 ) {
-    match crate::plugin::EntityPlugin::load(name.to_string(), entity_node, ctx.kubo_rpc_url).await {
+    match crate::plugin::EntityPlugin::load(
+        name.to_string(),
+        entity_node,
+        ctx.kubo_rpc_url,
+        ctx.envelope_tx.clone(),
+    )
+    .await
+    {
         Ok(ep) => {
             ctx.entity_registry
                 .write()

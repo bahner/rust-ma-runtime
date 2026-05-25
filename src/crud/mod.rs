@@ -24,6 +24,7 @@ use ma_core::{IpfsGatewayResolver, SigningKey, MESSAGE_TYPE_CRUD, MESSAGE_TYPE_C
 use tokio::sync::RwLock;
 
 use crate::acl::{check_full, AclCache, AclMap, SharedAcl, CAP_CRUD};
+use crate::entity::SendEnvelope;
 use crate::plugin::EntityRegistry;
 use crate::status::SharedStats;
 
@@ -45,6 +46,8 @@ pub struct CrudHandlerCtx<'a> {
     pub acl_cache: AclCache,
     /// Shared root transport ACL — owner may update at runtime via `:acl: <cid>`.
     pub root_acl: SharedAcl,
+    /// Forwarding channel for envelopes produced by entity plugins via `ma_send`.
+    pub envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, SendEnvelope)>,
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────

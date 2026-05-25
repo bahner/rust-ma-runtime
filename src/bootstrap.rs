@@ -334,6 +334,7 @@ pub async fn load_entities(
     root_cid: &str,
     kubo_url: &str,
     registry: &plugin::EntityRegistry,
+    envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, crate::entity::SendEnvelope)>,
 ) -> usize {
     let manifest = match kubo::dag_get::<RuntimeManifest>(kubo_url, root_cid).await {
         Ok(m) => m,
@@ -352,7 +353,7 @@ pub async fn load_entities(
                 continue;
             }
         };
-        match plugin::EntityPlugin::load(name.clone(), &node, kubo_url).await {
+        match plugin::EntityPlugin::load(name.clone(), &node, kubo_url, envelope_tx.clone()).await {
             Ok(ep) => {
                 tracing::info!(name = %name, "{}", crate::i18n::t("entity-loaded"));
                 registry.write().await.insert(name.clone(), Arc::new(ep));

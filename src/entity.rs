@@ -166,6 +166,7 @@ pub struct LocalMessage {
     pub reply_to: Option<String>,
     pub content_type: String,
     /// CBOR-encoded payload (verb atom or `[":verb", args…]` array).
+    #[serde(with = "serde_bytes")]
     pub content: Vec<u8>,
 }
 
@@ -235,6 +236,7 @@ pub struct ReplyRequest {
     /// MIME type of the reply body.
     pub content_type: String,
     /// Serialised reply body bytes.
+    #[serde(with = "serde_bytes")]
     pub content: Vec<u8>,
 }
 
@@ -377,6 +379,7 @@ pub struct RuntimeManifest {
 pub struct SendEnvelope {
     pub to: String,
     pub content_type: String,
+    #[serde(with = "serde_bytes")]
     pub content: Vec<u8>,
     pub reply_to: Option<String>,
 }

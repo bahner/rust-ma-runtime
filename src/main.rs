@@ -15,7 +15,10 @@ use cid::Cid;
 use clap::Parser;
 use ma_core::config::{Config, MaArgs, SecretBundle};
 use ma_core::ipfs::IpfsDidPublisher;
-use ma_core::{ipns_from_secret, Ipld, ReplayGuard, IPFS_PROTOCOL_ID};
+use ma_core::{
+    ipns_from_secret, Did, Ipld, ReplayGuard, IPFS_PROTOCOL_ID, MESSAGE_TYPE_RPC,
+    MESSAGE_TYPE_RPC_REPLY,
+};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -319,9 +322,19 @@ async fn main() -> Result<()> {
     };
 
     // ── Load entity plugins from IPFS ──────────────────────────────────────────
+    // Channel for envelopes produced by entity plugins via ma_send/ma_reply.
+    // Plugins send fire-and-forget; the main event loop drains and delivers.
+    let (envelope_tx, mut envelope_rx) =
+        tokio::sync::mpsc::unbounded_channel::<(String, entity::SendEnvelope)>();
     let entity_registry = plugin::new_entity_registry();
     if let Some(ref rc) = root_cid {
-        let count = bootstrap::load_entities(rc, &config.kubo_rpc_url, &entity_registry).await;
+        let count = bootstrap::load_entities(
+            rc,
+            &config.kubo_rpc_url,
+            &entity_registry,
+            envelope_tx.clone(),
+        )
+        .await;
         info!(count = %count, "Entity plugins loaded");
     }
 
@@ -737,6 +750,7 @@ async fn main() -> Result<()> {
                                 shared_config: Arc::clone(&shared_config),
                                 acl_cache: acl_cache.clone(),
                                 root_acl: acl.clone(),
+                                envelope_tx: envelope_tx.clone(),
                             },
                         )
                         .await
@@ -745,6 +759,49 @@ async fn main() -> Result<()> {
                         }
                         message.content.zeroize();
                         message.signature.zeroize();
+                    }
+                }
+
+                // Drain plugin outbox — envelopes sent fire-and-forget by ma_send/ma_reply.
+                while let Ok((fragment, env)) = envelope_rx.try_recv() {
+                    let msg_type = if env.reply_to.is_some() {
+                        MESSAGE_TYPE_RPC_REPLY
+                    } else {
+                        MESSAGE_TYPE_RPC
+                    };
+                    let sender_did_url = format!("{}#{}", our_did, fragment);
+                    let recipient = match Did::try_from(env.to.as_str()) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            warn!(fragment = %fragment, to = %env.to, error = %e, "plugin envelope: invalid recipient DID; skipped");
+                            continue;
+                        }
+                    };
+                    let mut msg = match ma_core::Message::new(
+                        &sender_did_url,
+                        &env.to,
+                        msg_type,
+                        &env.content_type,
+                        &env.content,
+                        &signing_key,
+                    ) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            warn!(fragment = %fragment, error = %e, "plugin envelope: failed to build message; skipped");
+                            continue;
+                        }
+                    };
+                    msg.reply_to = env.reply_to;
+                    match endpoint
+                        .outbox(shared_resolver.as_ref(), &recipient.base_id(), rpc::RPC_PROTOCOL_ID)
+                        .await
+                    {
+                        Ok(mut outbox) => {
+                            if let Err(e) = outbox.send(&msg).await {
+                                warn!(fragment = %fragment, to = %env.to, error = %e, "plugin envelope delivery failed");
+                            }
+                        }
+                        Err(e) => warn!(fragment = %fragment, to = %env.to, error = %e, "plugin envelope: outbox open failed"),
                     }
                 }
             }

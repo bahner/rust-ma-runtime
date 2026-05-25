@@ -94,8 +94,8 @@ async fn handle_single_entity(
             send_crud_ok(message, reply_type, ctx).await
         }
         (Some(""), [CborValue::Text(path)]) => {
-            // Upsert entity — requires `create` + `entities` in root ACL.
-            check_entity_management_cap(message, ctx, &["create", "entities"]).await?;
+            // Upsert entity — caller needs the entity's `kind` as a capability in root ACL.
+            // The kind is read from the EntityNode itself; no separate state required.
             let name = name.as_str();
             if name.chars().any(char::is_control) {
                 return send_crud_i18n_error(message, reply_type, ctx, "entity-name-invalid").await;
@@ -117,14 +117,16 @@ async fn handle_single_entity(
             let entity_node: EntityNode = crate::kubo::dag_get(ctx.kubo_rpc_url, cid)
                 .await
                 .with_context(|| format!("fetching entity node from {cid}"))?;
-            let new_root = with_manifest_crud(ctx, |m| {
+            // ACL gate: caller must hold the entity's kind protocol ID as a capability.
+            check_entity_management_cap(message, ctx, &[entity_node.kind.as_str()]).await?;
+            with_manifest_crud(ctx, |m| {
                 m.entities.insert(name.to_string(), IpldLink::new(cid));
                 Ok(())
             })
             .await?;
             register_entity_plugin(ctx, name, &entity_node).await;
             info!(name = %name, cid = %cid, "{}", crate::i18n::t("entity-created"));
-            send_crud_ok_cid(message, reply_type, ctx, &new_root).await
+            send_crud_ok_cid(message, reply_type, ctx, cid).await
         }
         _ => Err(anyhow!("unknown entities.{name} operation")),
     }

@@ -11,7 +11,7 @@ use ma_core::{
 use tracing::{debug, info, warn};
 
 use crate::acl::{check_full, AclCache, AclMap, CAP_RPC};
-use crate::entity::{CastInput, LocalMessage, PluginCtx, PluginKind, SendEnvelope};
+use crate::entity::{CastInput, LocalMessage, PluginCtx, PluginKind};
 use crate::plugin::EntityRegistry;
 use crate::schedule::{register_schedule, SchedulerCtx};
 use crate::status::SharedStats;
@@ -204,12 +204,6 @@ async fn handle_entity_plugin_message(
         PluginKind::Stateful => entity.handle_call(&cast_input)?,
     };
 
-    for env in result.envelopes {
-        if let Err(e) = send_envelope(env, ctx, &entity.fragment).await {
-            warn!(fragment = %entity.fragment, error = %e, "plugin envelope delivery failed");
-        }
-    }
-
     // Register any schedules the plugin enqueued via `ma_schedule_*`.
     for req in result.schedule_requests {
         let sched_ctx = SchedulerCtx {
@@ -237,56 +231,6 @@ async fn handle_entity_plugin_message(
                 warn!(fragment = %entity.fragment, error = %e, "failed to persist plugin state");
             }
         }
-    }
-    Ok(())
-}
-
-/// Send an outbound message produced by a plugin via the `ma_send` host function.
-async fn send_envelope(env: SendEnvelope, ctx: &RpcHandlerCtx<'_>, fragment: &str) -> Result<()> {
-    let recipient = Did::try_from(env.to.as_str())
-        .with_context(|| format!("invalid `to` DID in plugin envelope: {}", env.to))?;
-
-    let msg_type = if env.reply_to.is_some() {
-        MESSAGE_TYPE_RPC_REPLY
-    } else {
-        MESSAGE_TYPE_RPC
-    };
-
-    // Include entity fragment in sender DID-URL (e.g., did:ma:ipns#fortune)
-    let sender_did_url = format!("{}#{}", ctx.our_did, fragment);
-
-    let mut msg = ma_core::Message::new(
-        &sender_did_url,
-        &env.to,
-        msg_type,
-        &env.content_type,
-        &env.content,
-        ctx.signing_key,
-    )
-    .context("failed to build plugin outbound message")?;
-    msg.reply_to = env.reply_to;
-
-    match ctx
-        .endpoint
-        .outbox(ctx.resolver.as_ref(), &recipient.base_id(), RPC_PROTOCOL_ID)
-        .await
-    {
-        Ok(mut outbox) => {
-            outbox
-                .send(&msg)
-                .await
-                .context("plugin message send failed")?;
-            if msg_type == MESSAGE_TYPE_RPC_REPLY {
-                info!(
-                    to = %env.to,
-                    reply_to = ?msg.reply_to,
-                    content_type = %env.content_type,
-                    "{}",
-                    crate::i18n::t("entity-replied")
-                );
-            }
-        }
-        Err(err) => warn!(error = %err, to = %env.to, "plugin message delivery failed"),
     }
     Ok(())
 }

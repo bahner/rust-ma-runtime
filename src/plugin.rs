@@ -8,22 +8,57 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use extism::{host_fn, Function, Manifest, Plugin, UserData, Wasm, PTR};
 use ma_core::{cat_bytes, ipfs_add};
-use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use tokio::sync::{mpsc::UnboundedSender, RwLock};
+use tracing::{debug, error, info, warn};
 
 use crate::entity::{CastInput, EntityNode, PluginKind, ReplyRequest, SendEnvelope};
 use crate::schedule::{encode_cbor_call_cbor, parse_duration, ScheduleRequest};
 
+// ── ma_log host function ──────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct LogInput {
+    level: String,
+    msg: String,
+}
+
+// `ma_log` host function: plugin logs a message at the given level.
+//
+// Input is CBOR-encoded `{ "level": "debug"|"info"|"warn"|"error", "msg": "…" }`.
+// The fragment name is passed via UserData for tracing context.
+host_fn!(ma_log_fn(user_data: String; input: Vec<u8>) -> Vec<u8> {
+    let req: LogInput = from_cbor_bytes(&input)?;
+    let fragment = user_data.get()?.lock().unwrap().clone();
+    match req.level.as_str() {
+        "debug" => debug!("[{}] {}", fragment, req.msg),
+        "warn"  => warn!( "[{}] {}", fragment, req.msg),
+        "error" => error!("[{}] {}", fragment, req.msg),
+        _       => info!( "[{}] {}", fragment, req.msg),
+    }
+    Ok(Vec::new())
+});
+
 // ── Host functions ────────────────────────────────────────────────────────────
+
+// Context captured by `ma_send` and `ma_reply` host functions.
+//
+// Sending is fire-and-forget: the envelope is forwarded to the main event
+// loop via an unbounded channel.  The scheduler (and any other dispatch
+// path) has zero envelope-handling responsibility.
+struct OutboxCtx {
+    tx: UnboundedSender<(String, SendEnvelope)>,
+    fragment: String,
+}
 
 // `ma_send` host function exposed to plugins (namespace `extism:host/user`).
 //
-// The plugin passes a CBOR-encoded `SendEnvelope`.  The host deserialises it
-// and pushes it onto the per-call queue; the runtime drains the queue after
-// each dispatch.
-host_fn!(ma_send_fn(user_data: Vec<SendEnvelope>; input: Vec<u8>) -> Vec<u8> {
+// The plugin passes a CBOR-encoded `SendEnvelope`.  The host forwards it
+// directly to the main event loop via the outbox channel.
+host_fn!(ma_send_fn(user_data: OutboxCtx; input: Vec<u8>) -> Vec<u8> {
     let envelope: SendEnvelope = from_cbor_bytes(&input)?;
-    user_data.get()?.lock().unwrap().push(envelope);
+    let arc = user_data.get()?;
+    let ctx = arc.lock().unwrap();
+    let _ = ctx.tx.send((ctx.fragment.clone(), envelope));
     Ok(Vec::new())
 });
 
@@ -32,7 +67,7 @@ host_fn!(ma_send_fn(user_data: Vec<SendEnvelope>; input: Vec<u8>) -> Vec<u8> {
 // Plugin passes a CBOR-encoded `ReplyRequest { msg, content }`.  The runtime
 // fills in `to` (= msg.from), `reply_to` (= msg.id), and `content_type`
 // automatically — plugin only provides the reply body.
-host_fn!(ma_reply_fn(user_data: Vec<SendEnvelope>; input: Vec<u8>) -> Vec<u8> {
+host_fn!(ma_reply_fn(user_data: OutboxCtx; input: Vec<u8>) -> Vec<u8> {
     let req: ReplyRequest = from_cbor_bytes(&input)?;
     let envelope = SendEnvelope {
         to: req.msg.from,
@@ -41,7 +76,8 @@ host_fn!(ma_reply_fn(user_data: Vec<SendEnvelope>; input: Vec<u8>) -> Vec<u8> {
         reply_to: Some(req.msg.id),
     };
     let arc = user_data.get()?;
-    arc.lock().unwrap().push(envelope);
+    let ctx = arc.lock().unwrap();
+    let _ = ctx.tx.send((ctx.fragment.clone(), envelope));
     Ok(Vec::new())
 });
 
@@ -163,8 +199,6 @@ host_fn!(ma_set_state_fn(user_data: StateCtx; input: Vec<u8>) -> Vec<u8> {
 
 /// Return value from `handle_cast` and `handle_call`.
 pub struct DispatchResult {
-    /// Outbound messages enqueued via the `ma_send` host function.
-    pub envelopes: Vec<SendEnvelope>,
     /// State bytes queued by the plugin via `ma_set_state` host function.
     /// `None` if the plugin did not call `ma_set_state` during this invocation.
     pub pending_state: Option<Vec<u8>>,
@@ -196,8 +230,6 @@ pub struct EntityPlugin {
     /// Stored here so bootstrap can register them without re-fetching IPFS data.
     pub schedules: HashMap<String, crate::schedule::StaticSchedule>,
     plugin: Mutex<Plugin>,
-    /// Queue populated by the `ma_send` host function during a plugin call.
-    send_queue: UserData<Vec<SendEnvelope>>,
     /// Queue populated by `ma_schedule_*` host functions during a plugin call.
     schedule_queue: UserData<Vec<ScheduleRequest>>,
     /// Shared state context: pending bytes, last-persisted snapshot, dirty flag.
@@ -217,6 +249,7 @@ impl EntityPlugin {
         fragment: impl Into<String>,
         node: &EntityNode,
         kubo_url: &str,
+        envelope_tx: UnboundedSender<(String, SendEnvelope)>,
     ) -> Result<Self> {
         let fragment = fragment.into();
         let behavior_cid = &node.behavior.cid;
@@ -244,11 +277,22 @@ impl EntityPlugin {
         // 3. Build extism manifest; register host functions.
         //    All plugins get ma_send, ma_reply, and ma_schedule_* (outbound messaging
         //    and scheduling).  Stateful plugins additionally get ma_set_state.
-        let send_queue: UserData<Vec<SendEnvelope>> = UserData::new(Vec::new());
+        //    ma_send / ma_reply send directly to the main event loop via a channel —
+        //    the dispatcher has no envelope-handling responsibility.
+        let outbox_ctx_send = UserData::new(OutboxCtx {
+            tx: envelope_tx.clone(),
+            fragment: fragment.clone(),
+        });
+        let outbox_ctx_reply = UserData::new(OutboxCtx {
+            tx: envelope_tx,
+            fragment: fragment.clone(),
+        });
         let schedule_queue: UserData<Vec<ScheduleRequest>> = UserData::new(Vec::new());
         let state: UserData<StateCtx> = UserData::new(StateCtx::new(init_state.clone()));
-        let ma_send = Function::new("ma_send", [PTR], [PTR], send_queue.clone(), ma_send_fn);
-        let ma_reply = Function::new("ma_reply", [PTR], [PTR], send_queue.clone(), ma_reply_fn);
+        let log_ctx: UserData<String> = UserData::new(fragment.clone());
+        let ma_send = Function::new("ma_send", [PTR], [PTR], outbox_ctx_send, ma_send_fn);
+        let ma_reply = Function::new("ma_reply", [PTR], [PTR], outbox_ctx_reply, ma_reply_fn);
+        let ma_log = Function::new("ma_log", [PTR], [PTR], log_ctx, ma_log_fn);
         let ma_sched_cron = Function::new(
             "ma_schedule_cron",
             [PTR],
@@ -280,6 +324,7 @@ impl EntityPlugin {
         let mut host_fns = vec![
             ma_send,
             ma_reply,
+            ma_log,
             ma_sched_cron,
             ma_sched_at,
             ma_sched_random,
@@ -314,7 +359,6 @@ impl EntityPlugin {
             acl: node.acl.clone(),
             schedules: node.schedules.clone(),
             plugin: Mutex::new(plugin),
-            send_queue,
             schedule_queue,
             state,
         })
@@ -350,15 +394,6 @@ impl EntityPlugin {
                 .map_err(|e| anyhow!("{export}() failed for {}: {e}", self.fragment))
         })?;
 
-        let envelopes = self
-            .send_queue
-            .get()
-            .map_err(|e| anyhow!("send_queue error: {e}"))?
-            .lock()
-            .map_err(|e| anyhow!("send_queue poisoned: {e}"))?
-            .drain(..)
-            .collect();
-
         let schedule_requests = self
             .schedule_queue
             .get()
@@ -378,7 +413,6 @@ impl EntityPlugin {
             .take();
 
         Ok(DispatchResult {
-            envelopes,
             pending_state,
             schedule_requests,
         })
