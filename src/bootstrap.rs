@@ -66,13 +66,14 @@ pub type BootstrapKindsDict = BTreeMap<String, BootstrapKind>;
 /// ```yaml
 /// entities:
 ///   # pre-published EntityNode — just the CID:
-///   rms: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
+///   rms: bafyreid...
 ///
 ///   # inline — bootstrap builds and publishes the EntityNode:
 ///   fortune:
 ///     kind: /ma/stateless/python/0.0.1
-///     behavior: QmaBC...   # Wasm bytes CID
-///     acl: open            # optional; empty = deny-all
+///     behavior:
+///       /: QmaBC...   # IPLD link to Wasm bytes
+///     acl: open       # optional; empty = deny-all
 /// ```
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -83,15 +84,15 @@ pub enum BootstrapEntity {
     Inline {
         /// Protocol ID of this entity's kind (e.g. `/ma/stateless/python/0.0.1`).
         kind: String,
-        /// CID of the Wasm plugin bytes already stored on IPFS.
-        behavior: String,
+        /// IPLD link to the Wasm plugin bytes already stored on IPFS.
+        behavior: IpldLink,
         /// Named ACL reference resolved via `acls.<name>` in the manifest.
         /// Empty string = deny-all (fail-closed).
         #[serde(default)]
         acl: String,
-        /// Optional CID of persisted initial state (stateful entities only).
+        /// IPLD link to persisted initial state (stateful entities only).
         #[serde(default)]
-        state: Option<String>,
+        state: Option<IpldLink>,
     },
 }
 
@@ -170,7 +171,7 @@ pub async fn build_manifest(
                     kind: kind.clone(),
                     behavior: behavior.clone(),
                     acl: acl.clone(),
-                    state: state.as_deref().map(IpldLink::new),
+                    state: state.clone(),
                 };
                 let cid = kubo::dag_put(kubo_url, &node)
                     .await
@@ -282,7 +283,7 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
                 kind: node.kind,
                 behavior: node.behavior,
                 acl: node.acl,
-                state: node.state.map(|s| s.cid),
+                state: node.state,
             },
         );
     }

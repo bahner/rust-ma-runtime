@@ -217,6 +217,15 @@ async fn handle_entity_acl_field(
             .await
         }
         (Some(""), [CborValue::Text(acl_name)]) => {
+            let manifest = load_manifest(ctx).await?;
+            if !manifest.acls.contains_key(acl_name) {
+                let available: Vec<&String> = manifest.acls.keys().collect();
+                return Err(anyhow!(
+                    "ACL name '{}' not found in manifest; available: {:?}",
+                    acl_name,
+                    available
+                ));
+            }
             let mut entity = fetch_entity_node(ctx, name).await?;
             entity.acl = acl_name.clone();
             let entity_cid = update_entity_node(ctx, name, &entity).await?;

@@ -338,6 +338,81 @@ async fn handle_ns_blob(
 
 // ── Root transport-gate ACL ────────────────────────────────────────────────────
 
+/// Handle `:acls` — the root-level named ACL library stored in `manifest.acls`.
+///
+/// - `:acls`              → list all named ACL names
+/// - `:acls.<name>`       → get CID for named ACL
+/// - `:acls.<name>: <cid>`→ set named ACL by CID
+/// - `:acls.<name>:`      → delete named ACL
+pub(super) async fn handle_root_acls(
+    message: &ma_core::Message,
+    rest: &[String],
+    tail: Option<&str>,
+    args: Vec<CborValue>,
+    reply_type: &str,
+    ctx: &CrudHandlerCtx<'_>,
+) -> Result<()> {
+    match (rest, tail, args.as_slice()) {
+        // List all named ACLs.
+        ([], None, []) => {
+            let manifest = load_manifest(ctx).await?;
+            let names: Vec<CborValue> = manifest
+                .acls
+                .keys()
+                .map(|k| CborValue::Text(k.clone()))
+                .collect();
+            send_crud_reply_cbor(
+                message,
+                reply_type,
+                ctx,
+                &CborValue::Array(vec![
+                    CborValue::Text(":ok".to_string()),
+                    CborValue::Array(names),
+                ]),
+            )
+            .await
+        }
+        // Get a named ACL's CID.
+        ([acl_name], None, []) => {
+            let manifest = load_manifest(ctx).await?;
+            let link = manifest
+                .acls
+                .get(acl_name.as_str())
+                .ok_or_else(|| anyhow!("ACL not found: acls.{acl_name}"))?;
+            send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(link.cid.clone())).await
+        }
+        // Set a named ACL by CID.
+        ([acl_name], Some(""), [CborValue::Text(cid)]) => {
+            if !is_cidv1(cid) {
+                return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await;
+            }
+            let acl_name = acl_name.clone();
+            let cid = cid.clone();
+            let new_root = with_manifest_crud(ctx, |m| {
+                m.acls.insert(acl_name.clone(), IpldLink::new(&cid));
+                Ok(())
+            })
+            .await?;
+            let cache_key = format!("acls.{acl_name}");
+            acl_cache_update(ctx, &cache_key, &cid).await;
+            send_crud_ok_cid(message, reply_type, ctx, &new_root).await
+        }
+        // Delete a named ACL.
+        ([acl_name], Some(""), []) => {
+            let acl_name = acl_name.clone();
+            let new_root = with_manifest_crud(ctx, |m| {
+                m.acls.remove(&acl_name);
+                Ok(())
+            })
+            .await?;
+            let cache_key = format!("acls.{acl_name}");
+            ctx.acl_cache.write().await.remove(&cache_key);
+            send_crud_ok_cid(message, reply_type, ctx, &new_root).await
+        }
+        _ => Err(anyhow!("unknown :acls operation")),
+    }
+}
+
 pub(super) async fn handle_root_acl(
     message: &ma_core::Message,
     tail: Option<&str>,

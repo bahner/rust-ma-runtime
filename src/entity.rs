@@ -305,8 +305,9 @@ pub struct NamespaceNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityNode {
     pub kind: String,
-    /// CID of the Wasm plugin bytes stored on IPFS as a raw blob.
-    pub behavior: String,
+    /// IPLD link to the Wasm plugin bytes stored on IPFS.
+    /// Stored as `{"/": "bafy…"}` so Kubo's recursive pin follows it.
+    pub behavior: IpldLink,
     /// Entity verb-ACL — name string resolved via `acls.<name>` in the root
     /// manifest (e.g. `"fortune"`). Cached under `"acls.<name>"` at startup.
     /// Empty string means deny-all (fail-closed).

@@ -59,17 +59,20 @@ runtime:
   # Entities — two forms are accepted:
   #
   #   inline:   bootstrap builds and publishes the EntityNode from the descriptor.
-  #             `behavior` is the CID of the Wasm bytes already on IPFS.
+  #             `behavior` is an IPLD link to the Wasm bytes already on IPFS.
   #             `acl` references a named ACL from `acls:` above (empty = deny-all).
-  #   bare CID: the EntityNode is already published; just register the link.
   entities:
     # Inline form — bootstrap builds and publishes the EntityNode.
     fortune:
       kind: /ma/stateless/python/0.0.1
-      behavior: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
+      behavior:
+        /: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
       acl: open
 
-    # Bare-CID form — EntityNode already published on IPFS.
-    rms: bafyreid74p2fohvo4yhlz3rpk6cpin7fdfowfq3vphxu2uxqs6r467t4em
+    rms:
+      kind: /ma/stateless/python/0.0.1
+      behavior:
+        /: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
+      acl: open
 
 

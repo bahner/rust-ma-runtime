@@ -134,7 +134,7 @@ impl EntityPlugin {
         kubo_url: &str,
     ) -> Result<Self> {
         let fragment = fragment.into();
-        let behavior_cid = &node.behavior;
+        let behavior_cid = &node.behavior.cid;
         let kind = PluginKind::from_kind_str(&node.kind);
 
         debug!(fragment = %fragment, cid = %behavior_cid, kind = ?kind, "loading entity plugin");
