@@ -79,9 +79,12 @@ pub(super) fn decode_crud_payload(content: &[u8]) -> Result<CrudOp> {
     }
 }
 
-/// Return `true` if `s` is a normative IPFS path (`/ipfs/`, `/ipns/`, `/ipld/`).
-pub(super) fn is_ipfs_path(s: &str) -> bool {
-    s.starts_with("/ipfs/") || s.starts_with("/ipns/") || s.starts_with("/ipld/")
+/// Return `true` if `s` is a bare CIDv1 (multibase base32-lowercase, prefix `b`).
+///
+/// CIDv1 strings start with `b` (base32 lowercase multibase prefix) and are
+/// self-describing via the embedded multicodec.  CIDv0 (`Qm…`) is rejected.
+pub(super) fn is_cidv1(s: &str) -> bool {
+    s.starts_with('b') && s.len() > 10
 }
 
 // ── Manifest helpers ───────────────────────────────────────────────────────────

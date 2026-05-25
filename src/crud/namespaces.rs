@@ -6,8 +6,8 @@ use crate::acl::AclCache;
 use crate::entity::{IpldLink, NamespaceNode};
 
 use super::helpers::{
-    acl_cache_update, current_root_cid, is_ipfs_path, load_manifest, send_crud_i18n_error,
-    send_crud_ok_cid, send_crud_reply_cbor, with_manifest_crud,
+    acl_cache_update, current_root_cid, is_cidv1, load_manifest, send_crud_i18n_error,
+    send_crud_ok, send_crud_ok_cid, send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -290,25 +290,22 @@ async fn handle_ns_blob(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("key not found: {ns}.{key}"))?;
             let resolved_cid = if sub_path.is_empty() {
-                format!("/ipfs/{link_cid}")
+                link_cid.to_string()
             } else {
                 let ipfs_path = format!("/ipfs/{}/{}", link_cid, sub_path.join("/"));
-                let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, &ipfs_path)
+                // dag_resolve returns a bare CID string — return as-is (no /ipfs/ prefix)
+                crate::kubo::dag_resolve(ctx.kubo_rpc_url, &ipfs_path)
                     .await
-                    .with_context(|| format!("traversing {ns}.{key}.{}", sub_path.join(".")))?;
-                format!("/ipfs/{cid}")
+                    .with_context(|| format!("traversing {ns}.{key}.{}", sub_path.join(".")))?
             };
             send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(resolved_cid)).await
         }
-        (Some(""), [CborValue::Text(path)]) if sub_path.is_empty() => {
-            if !is_ipfs_path(path) {
-                return send_crud_i18n_error(message, reply_type, ctx, "blob-value-ipfs-path")
-                    .await;
+        (Some(""), [CborValue::Text(cid_str)]) if sub_path.is_empty() => {
+            if !is_cidv1(cid_str) {
+                return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await;
             }
-            let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, path)
-                .await
-                .with_context(|| format!("resolving blob path {path}"))?;
-            let new_root = with_manifest_crud(ctx, |m| {
+            let cid = cid_str.clone();
+            let _new_root = with_manifest_crud(ctx, |m| {
                 let ns_node = m
                     .namespaces
                     .get_mut(ns)
@@ -320,10 +317,10 @@ async fn handle_ns_blob(
             })
             .await?;
             info!(ns = %ns, key = %key, cid = %cid, "blob registered");
-            send_crud_ok_cid(message, reply_type, ctx, &new_root).await
+            send_crud_ok(message, reply_type, ctx).await
         }
         (Some(""), []) if sub_path.is_empty() => {
-            let new_root = with_manifest_crud(ctx, |m| {
+            with_manifest_crud(ctx, |m| {
                 let ns_node = m
                     .namespaces
                     .get_mut(ns)
@@ -333,7 +330,7 @@ async fn handle_ns_blob(
             })
             .await?;
             info!(ns = %ns, key = %key, "blob deleted");
-            send_crud_ok_cid(message, reply_type, ctx, &new_root).await
+            send_crud_ok(message, reply_type, ctx).await
         }
         _ => Err(anyhow!("unknown {ns}.{key} operation")),
     }
@@ -354,17 +351,15 @@ pub(super) async fn handle_root_acl(
             let cid = manifest
                 .acl
                 .as_ref()
-                .map(|link| format!("/ipfs/{}", link.cid))
+                .map(|link| link.cid.clone())
                 .unwrap_or_default();
             send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(cid)).await
         }
-        (Some(""), [CborValue::Text(path)]) => {
-            if !is_ipfs_path(path) {
-                return send_crud_i18n_error(message, reply_type, ctx, "acl-value-ipfs-path").await;
+        (Some(""), [CborValue::Text(cid_str)]) => {
+            if !is_cidv1(cid_str) {
+                return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await;
             }
-            let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, path)
-                .await
-                .with_context(|| format!("resolving ACL path {path}"))?;
+            let cid = cid_str.clone();
             let acl_map = crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &cid)
                 .await
                 .with_context(|| format!("loading root ACL from {cid}"))?;
