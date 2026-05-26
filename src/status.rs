@@ -300,35 +300,27 @@ async fn handle_claim(
 /// The file is read as a raw YAML mapping, the key is inserted or updated,
 /// and the result is written back with mode 0600.
 fn persist_owners_to_config(path: &std::path::Path, owners: &[String]) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let existing = if path.exists() {
+    let yaml_text = if path.exists() {
         std::fs::read_to_string(path)?
     } else {
         String::new()
     };
 
-    let mut mapping: serde_yaml::Mapping = if existing.is_empty() {
-        serde_yaml::Mapping::new()
+    let yaml_to_parse = if yaml_text.trim().is_empty() {
+        "{}".to_string()
     } else {
-        let val: serde_yaml::Value = serde_yaml::from_str(&existing)?;
-        match val {
-            serde_yaml::Value::Mapping(m) => m,
-            _ => return Err(anyhow::anyhow!("config file is not a YAML mapping")),
-        }
+        yaml_text
     };
+    let mut config = ma_core::config::Config::from_yaml_str(&yaml_to_parse)?;
 
-    let seq = serde_yaml::Value::Sequence(
-        owners
-            .iter()
-            .map(|d| serde_yaml::Value::String(d.clone()))
-            .collect(),
-    );
-    mapping.insert(serde_yaml::Value::String("owners".to_string()), seq);
+    config.config_path = Some(path.to_path_buf());
 
-    let yaml_text = serde_yaml::to_string(&serde_yaml::Value::Mapping(mapping))?;
-    std::fs::write(path, &yaml_text)?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    let owners_val = serde_yaml::to_value(owners)?;
+    config
+        .extra
+        .insert(serde_yaml::Value::String("owners".to_string()), owners_val);
+
+    config.save()?;
     Ok(())
 }
 
