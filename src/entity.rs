@@ -2,8 +2,10 @@
 //! the entity dispatch system.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
 /// Nested IPLD kinds tree — enables IPLD path traversal like:
 ///   `ipfs dag get .../kinds/ma/stateless/python/0.0.1`
@@ -183,31 +185,24 @@ pub enum PluginKind {
     Stateful,
 }
 
-impl PluginKind {
-    /// Derive kind from the `EntityNode.kind` protocol string
-    /// (e.g. `/ma/stateful/python/0.0.1`).
-    pub fn from_kind_str(s: &str) -> Self {
-        if s.contains("stateful") {
-            Self::Stateful
-        } else {
-            Self::Stateless
-        }
-    }
 
-    /// Derive whether a plugin requires WASI system-call support from the kind
-    /// protocol string.  Python-compiled and explicit WASI plugins return `true`;
-    /// native Rust extism plugins return `false`.
-    pub fn wasi_from_kind_str(s: &str) -> bool {
-        s.contains("python") || s.contains("wasi")
-    }
-}
-
-/// Context injected into every plugin call.
+/// Context returned by the `ma_ctx` host function.
+///
+/// Plugin calls `ma_ctx()` once (typically at module load) and caches the
+/// result.  Runtime populates all fields from the entity registry — plugins
+/// cannot forge or modify them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginCtx {
+pub struct EntityCtx {
     /// Full DID-URL of this entity, e.g. `did:ma:<runtime>#fortune`.
     #[serde(rename = "self")]
     pub self_did: String,
+    /// Bare fragment without `#` prefix.
+    pub fragment: String,
+    /// Protocol ID of the kind, e.g. `/ma/root/0.0.1`.
+    pub kind: String,
+    /// Fragment of the parent entity.  `None` for `#root`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 /// Input passed (CBOR-encoded) to both `handle_cast` (stateless) and
@@ -219,7 +214,6 @@ pub struct PluginCtx {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CastInput {
     pub msg: LocalMessage,
-    pub ctx: PluginCtx,
 }
 
 /// Input for the `ma_reply` host function.
@@ -251,53 +245,66 @@ pub struct KindNode {
     /// Host functions the runtime makes available to plugins of this kind.
     /// Principle of least privilege: only register what the kind actually needs.
     pub host_functions: Vec<String>,
-    /// Whether plugins of this kind require WASI system-call support.
-    /// Set `true` for Python/WASI-compiled plugins; `false` for native Rust extism plugins.
+    /// Arbitrary kind attributes (e.g. `wasi: true`, `public: true`).
+    /// All plugin behaviour is derived from this map — the protocol string
+    /// is treated as an opaque identifier and never parsed for semantics.
     #[serde(default)]
-    pub wasi: bool,
+    pub attributes: BTreeMap<String, serde_json::Value>,
+    /// Which caller entity kinds are allowed to create instances of this kind.
+    /// `"create *"` means any kind may create instances.
+    /// Absence of `"public: true"` in attributes AND an empty allow list means
+    /// only the parent entity may create instances of this kind.
+    #[serde(default)]
+    pub allow: Vec<String>,
 }
 
-/// A namespace within the runtime manifest. Owned by a single DID.
-///
-/// ## Key conventions
-///
-/// | Key pattern | Meaning |
-/// |-------------|---------|
-/// | `acl` | Namespace gate — IPLD link to an `AclMap` document |
-/// | `acls` | Named ACL library — flat map of name → IPLD link |
-/// | anything else | Free IPLD sub-tree (blob, list, nested object) |
-///
-/// Entities are **not** stored inside namespace nodes. All entities live in
-/// the flat `entities` map at the manifest root, identified by a globally
-/// unique bare name. DID fragment = entity name: `did:ma:<ipns>#fortune`.
-///
-/// Blob values are stored as `{"/": "bafy…"}` in `extra`.  Nested structure
-/// is supported lazily: `alice.prosjekt.mappe.ting` resolves `extra["prosjekt"]`
-/// to a root CID and traverses the remaining path via `ipfs dag resolve`.
-/// Nested structures are managed externally; the namespace only stores the
-/// root link.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct NamespaceNode {
-    /// Optional human-readable name.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    /// Optional description.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Namespace gate — IPLD link to an `AclMap` document.
-    /// Required for any blob access; absent = deny all blob operations.
-    /// Cached at startup under key `"<ns>.acl"`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acl: Option<IpldLink>,
-    /// Named verb-ACL library — flat map of name → IPLD link to `AclMap`.
-    /// Each entry is cached under `"<ns>.acls.<name>"`.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub acls: HashMap<String, IpldLink>,
-    /// Free-form IPLD sub-trees for organisational use.
-    /// Values must be IPLD-compatible JSON; CID links are automatically
-    /// followed by `ipfs dag get`.
-    #[serde(flatten)]
-    pub extra: HashMap<String, serde_json::Value>,
+impl KindNode {
+    /// Whether plugins of this kind require WASI system-call support.
+    pub fn wasi(&self) -> bool {
+        self.attributes
+            .get("wasi")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// Whether any entity may create instances of this kind (`attributes.public == true`).
+    pub fn is_public(&self) -> bool {
+        self.attributes
+            .get("public")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// Derive the dispatch kind from the `api` list.
+    /// A kind is Stateful when it exports `handle_call`; Stateless otherwise.
+    pub fn plugin_kind(&self) -> PluginKind {
+        if self.api.iter().any(|s| s == "handle_call") {
+            PluginKind::Stateful
+        } else {
+            PluginKind::Stateless
+        }
+    }
+
+    /// Whether this kind's `allow` list permits a caller of `caller_kind` to
+    /// create instances.  `"create *"` is a wildcard.
+    pub fn allows_create(&self, caller_kind: &str) -> bool {
+        self.allow.iter().any(|entry| {
+            if let Some(kind) = entry.strip_prefix("create ") {
+                kind == "*" || kind == caller_kind
+            } else {
+                false
+            }
+        })
+    }
+}
+
+/// In-memory registry of loaded [`KindNode`]s.  Single source of truth for all
+/// kind attributes at runtime.  Populated at bootstrap and updated on kind upsert.
+pub type KindRegistry = Arc<RwLock<HashMap<String, Arc<KindNode>>>>;
+
+/// Create a new, empty [`KindRegistry`].
+pub fn new_kind_registry() -> KindRegistry {
+    Arc::new(RwLock::new(HashMap::new()))
 }
 
 /// Entity fragment names reserved by the runtime system.
@@ -327,6 +334,13 @@ pub struct EntityNode {
     /// `"chime_hourly"`).  Rebuilt from scratch on startup and entity reload.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub schedules: HashMap<String, crate::schedule::StaticSchedule>,
+    /// DID-URL of this entity's parent in the entity tree.
+    /// Absent for `#root` (tree root). Used to derive ACL and cascade delete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// Human-readable label for display purposes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 /// Root IPLD node for this runtime.
@@ -360,11 +374,6 @@ pub struct RuntimeManifest {
     pub i18n: HashMap<String, IpldLink>,
     #[serde(default)]
     pub config: BTreeMap<String, serde_yaml::Value>,
-    /// Namespace nodes keyed by handle (e.g. `"owner"`, `"alice"`).
-    ///
-    /// Reserved handles: `acl`, `acls`, `protocol`, `kinds`, `entities`, `i18n`, `config`.
-    #[serde(flatten)]
-    pub namespaces: HashMap<String, NamespaceNode>,
 }
 
 // ── Plugin host-function I/O ──────────────────────────────────────────────────
@@ -384,9 +393,23 @@ pub struct SendEnvelope {
     pub reply_to: Option<String>,
 }
 
+/// A request to create a new entity, queued by the `ma_create_entity` host function.
+/// Processed by the runtime after the plugin dispatch returns.
+#[derive(Debug, Clone)]
+pub struct CreateEntityRequest {
+    /// Pre-generated nanoid-style fragment for the new entity (8 chars, URL-safe).
+    pub fragment: String,
+    /// Protocol ID of the kind to instantiate (e.g. `/ma/stateless/ping/0.0.1`).
+    pub kind_protocol: String,
+    /// IPFS CID of the Wasm plugin bytes — becomes `EntityNode.behavior`.
+    pub behavior_cid: String,
+    /// Fragment of the creating (parent) entity.
+    pub parent: String,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{EntityNode, IpldLink, KindTree, PluginKind};
+    use super::{EntityNode, IpldLink, KindTree};
     use std::collections::HashMap;
 
     #[test]
@@ -442,6 +465,8 @@ mod tests {
             acl: String::new(),
             state: None,
             schedules: HashMap::new(),
+            parent: None,
+            label: None,
         };
 
         let value = serde_json::to_value(&node).expect("serialize entity node");
@@ -461,6 +486,8 @@ mod tests {
             acl: String::new(),
             state: None,
             schedules: HashMap::new(),
+            parent: None,
+            label: None,
         };
         let value = serde_json::to_value(&node).expect("serialize entity node");
         assert!(
@@ -500,11 +527,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn wasi_derived_from_python_kind_string() {
-        assert!(PluginKind::wasi_from_kind_str("/ma/stateless/python/0.0.1"));
-        assert!(PluginKind::wasi_from_kind_str("/ma/stateful/wasi/0.0.1"));
-        assert!(!PluginKind::wasi_from_kind_str("/ma/stateless/rust/0.0.1"));
-        assert!(!PluginKind::wasi_from_kind_str("/ma/stateful/rust/0.0.1"));
-    }
 }

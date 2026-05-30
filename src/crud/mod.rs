@@ -24,7 +24,7 @@ use ma_core::{IpfsGatewayResolver, SigningKey, MESSAGE_TYPE_CRUD, MESSAGE_TYPE_C
 use tokio::sync::RwLock;
 
 use crate::acl::{check_full, AclCache, AclMap, SharedAcl, CAP_CRUD};
-use crate::entity::SendEnvelope;
+use crate::entity::{KindRegistry, SendEnvelope};
 use crate::plugin::EntityRegistry;
 use crate::status::SharedStats;
 
@@ -40,6 +40,7 @@ pub struct CrudHandlerCtx<'a> {
     pub resolver: Arc<IpfsGatewayResolver>,
     pub stats: SharedStats,
     pub entity_registry: EntityRegistry,
+    pub kind_registry: KindRegistry,
     pub shared_config: Arc<RwLock<ma_core::Config>>,
     /// Namespace ACL cache — maps `"<ns>.acl"` and `"<ns>.acls.<name>"` to their
     /// `AclMap`s for zero-overhead lookup at call time.
@@ -112,12 +113,8 @@ async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx<'_
         }
         "kinds" => kinds::handle_kinds_ns(message, &rest, tail, args, reply_type, ctx).await,
         "config" => config::handle_config_ns(message, &rest, tail, args, reply_type, ctx).await,
-        "create" => create::handle_create_ns(message, tail, args, reply_type, ctx).await,
         "acl" => namespaces::handle_root_acl(message, tail, args, reply_type, ctx).await,
         "acls" => namespaces::handle_root_acls(message, &rest, tail, args, reply_type, ctx).await,
-        other => {
-            namespaces::handle_namespace_op(message, other, &rest, tail, args, reply_type, ctx)
-                .await
-        }
+        _ => helpers::send_crud_i18n_error(message, reply_type, ctx, "unknown-rpc-atom").await,
     }
 }

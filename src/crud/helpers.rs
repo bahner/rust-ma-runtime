@@ -5,7 +5,7 @@ use ciborium::Value as CborValue;
 use ma_core::{Did, DidDocumentResolver, IpfsGatewayResolver, Ipld, CONTENT_TYPE_TERM};
 use tracing::{info, warn};
 
-use crate::entity::{EntityNode, RuntimeManifest};
+use crate::entity::{EntityNode, KindNode, RuntimeManifest};
 
 use super::CrudHandlerCtx;
 
@@ -147,9 +147,43 @@ pub(super) async fn register_entity_plugin(
     name: &str,
     entity_node: &EntityNode,
 ) {
+    // Look up the KindNode from the registry first.
+    let kind_node: Arc<KindNode> = {
+        let registry = ctx.kind_registry.read().await;
+        match registry.get(&entity_node.kind).cloned() {
+            Some(k) => k,
+            None => {
+                // Fall back: fetch from IPFS via the manifest.
+                let manifest = match load_manifest(ctx).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        warn!(name = %name, kind = %entity_node.kind, error = %e, "failed to load manifest for kind lookup");
+                        return;
+                    }
+                };
+                let kind_link = match manifest.kinds.get_protocol(&entity_node.kind) {
+                    Some(l) => l.clone(),
+                    None => {
+                        warn!(name = %name, kind = %entity_node.kind, "kind not in manifest; cannot load entity");
+                        return;
+                    }
+                };
+                match crate::kubo::dag_get::<KindNode>(ctx.kubo_rpc_url, &kind_link.cid).await {
+                    Ok(k) => Arc::new(k),
+                    Err(e) => {
+                        warn!(name = %name, kind = %entity_node.kind, error = %e, "failed to fetch kind node; cannot load entity");
+                        return;
+                    }
+                }
+            }
+        }
+    };
+
     match crate::plugin::EntityPlugin::load(
         name.to_string(),
         entity_node,
+        &kind_node,
+        ctx.our_did,
         ctx.kubo_rpc_url,
         ctx.envelope_tx.clone(),
     )

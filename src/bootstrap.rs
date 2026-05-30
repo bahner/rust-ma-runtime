@@ -54,7 +54,9 @@ pub struct BootstrapKind {
     #[serde(default)]
     pub host_functions: Vec<String>,
     #[serde(default)]
-    pub wasi: bool,
+    pub attributes: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub allow: Vec<String>,
 }
 
 /// Flat map: protocol ID → kind descriptor.
@@ -147,7 +149,8 @@ pub async fn build_manifest(
             protocol: protocol.clone(),
             api: bk.api.clone(),
             host_functions: bk.host_functions.clone(),
-            wasi: bk.wasi,
+            attributes: bk.attributes.clone(),
+            allow: bk.allow.clone(),
         };
         let cid = kubo::dag_put(kubo_url, &node)
             .await
@@ -177,6 +180,8 @@ pub async fn build_manifest(
                     acl: acl.clone(),
                     state: state.clone(),
                     schedules: schedules.clone(),
+                    parent: None,
+                    label: None,
                 };
                 let cid = kubo::dag_put(kubo_url, &node)
                     .await
@@ -228,7 +233,6 @@ pub async fn build_manifest(
         entities: entities_map,
         i18n,
         config: runtime_config,
-        namespaces: std::collections::HashMap::new(),
     };
     let root_cid = kubo::dag_put(kubo_url, &root)
         .await
@@ -271,7 +275,8 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
             BootstrapKind {
                 api: node.api,
                 host_functions: node.host_functions,
-                wasi: node.wasi,
+                attributes: node.attributes,
+                allow: node.allow,
             },
         );
     }
@@ -333,6 +338,7 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
 pub async fn load_entities(
     root_cid: &str,
     kubo_url: &str,
+    our_did: &str,
     registry: &plugin::EntityRegistry,
     envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, crate::entity::SendEnvelope)>,
 ) -> usize {
@@ -353,7 +359,21 @@ pub async fn load_entities(
                 continue;
             }
         };
-        match plugin::EntityPlugin::load(name.clone(), &node, kubo_url, envelope_tx.clone()).await {
+        let kind_link = match manifest.kinds.get_protocol(&node.kind) {
+            Some(l) => l.clone(),
+            None => {
+                tracing::warn!(name = %name, kind = %node.kind, "Kind not found in manifest; skipping entity");
+                continue;
+            }
+        };
+        let kind_node: KindNode = match kubo::dag_get(kubo_url, &kind_link.cid).await {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::warn!(name = %name, kind = %node.kind, cid = %kind_link.cid, "Failed to fetch kind node: {e}");
+                continue;
+            }
+        };
+        match plugin::EntityPlugin::load(name.clone(), &node, &kind_node, our_did, kubo_url, envelope_tx.clone()).await {
             Ok(ep) => {
                 tracing::info!(name = %name, "{}", crate::i18n::t("entity-loaded"));
                 registry.write().await.insert(name.clone(), Arc::new(ep));

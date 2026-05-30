@@ -1,9 +1,8 @@
 protocol: /ma/stateful/python/0.0.1
-wasi: true
+attributes:
+  wasi: true
 api:
-  - init
   - handle_call
-  - save_state
 host_functions:
   - ma_reply
   - ma_send

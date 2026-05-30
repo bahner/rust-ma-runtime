@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::warn;
 
-use crate::entity::{CastInput, LocalMessage, PluginCtx, PluginKind};
+use crate::entity::{CastInput, LocalMessage, PluginKind};
 use crate::plugin::EntityRegistry;
 
 // ── Static schedule (YAML entity definition) ──────────────────────────────────
@@ -356,9 +356,6 @@ pub async fn dispatch_scheduled(
 
     let cast_input = CastInput {
         msg: local_msg,
-        ctx: PluginCtx {
-            self_did: format!("{}#{}", ctx.our_did, fragment),
-        },
     };
 
     let result = match plugin.kind {

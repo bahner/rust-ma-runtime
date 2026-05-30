@@ -11,7 +11,7 @@ use ma_core::{
 use tracing::{debug, info, warn};
 
 use crate::acl::{check_full, AclCache, AclMap, CAP_RPC};
-use crate::entity::{CastInput, LocalMessage, PluginCtx, PluginKind};
+use crate::entity::{CastInput, IpldLink, LocalMessage, PluginKind, RuntimeManifest, SendEnvelope};
 use crate::plugin::EntityRegistry;
 use crate::schedule::{register_schedule, SchedulerCtx};
 use crate::status::SharedStats;
@@ -27,9 +27,31 @@ pub struct RpcHandlerCtx<'a> {
     pub kubo_rpc_url: &'a str,
     pub resolver: Arc<IpfsGatewayResolver>,
     pub entity_registry: EntityRegistry,
+    pub kind_registry: crate::entity::KindRegistry,
+    pub envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, SendEnvelope)>,
     pub stats: SharedStats,
     pub acl_cache: AclCache,
     pub scheduler: Arc<tokio_cron_scheduler::JobScheduler>,
+}
+
+// ── Entity creation helper ─────────────────────────────────────────────────────
+
+async fn persist_new_entity(
+    kubo_url: &str,
+    old_root_cid: &str,
+    fragment: &str,
+    entity_node: &crate::entity::EntityNode,
+    stats: &SharedStats,
+) -> Result<()> {
+    let mut manifest: RuntimeManifest = crate::kubo::dag_get(kubo_url, old_root_cid).await?;
+    let entity_cid = crate::kubo::dag_put(kubo_url, entity_node).await?;
+    manifest.entities.insert(fragment.to_string(), IpldLink::new(&entity_cid));
+    let new_root_cid = crate::kubo::dag_put(kubo_url, &manifest).await?;
+    if let Err(e) = crate::kubo::pin_update(kubo_url, old_root_cid, &new_root_cid).await {
+        warn!(old = %old_root_cid, new = %new_root_cid, error = %e, "persist_new_entity: pin_update failed");
+    }
+    stats.write().await.root_cid = Some(new_root_cid);
+    Ok(())
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
@@ -191,13 +213,8 @@ async fn handle_entity_plugin_message(
         content: content_bytes,
     };
 
-    let plugin_ctx = PluginCtx {
-        self_did: message.to.clone(),
-    };
-
     let cast_input = CastInput {
         msg: local_msg,
-        ctx: plugin_ctx,
     };
     let result = match entity.kind {
         PluginKind::Stateless => entity.handle_cast(&cast_input)?,
@@ -232,6 +249,61 @@ async fn handle_entity_plugin_message(
             }
         }
     }
+
+    // Process entity creation requests queued by `ma_create_entity` host function.
+    for req in result.create_requests {
+        let maybe_kind = ctx.kind_registry.read().await.get(&req.kind_protocol).cloned();
+        let kind_node = match maybe_kind {
+            Some(k) => k,
+            None => {
+                warn!(caller = %entity.fragment, kind = %req.kind_protocol,
+                    "ma_create_entity: kind not in registry; skipped");
+                continue;
+            }
+        };
+
+        let entity_node = crate::entity::EntityNode {
+            kind: req.kind_protocol.clone(),
+            behavior: IpldLink::new(&req.behavior_cid),
+            acl: entity.acl.clone(),
+            state: None,
+            schedules: Default::default(),
+            parent: Some(entity.fragment.clone()),
+            label: None,
+        };
+
+        match crate::plugin::EntityPlugin::load(
+            req.fragment.clone(),
+            &entity_node,
+            &kind_node,
+            ctx.our_did,
+            ctx.kubo_rpc_url,
+            ctx.envelope_tx.clone(),
+        )
+        .await
+        {
+            Ok(ep) => {
+                ctx.entity_registry
+                    .write()
+                    .await
+                    .insert(req.fragment.clone(), Arc::new(ep));
+                if let Some(ref old_cid) = ctx.stats.read().await.root_cid.clone() {
+                    if let Err(e) = persist_new_entity(
+                        ctx.kubo_rpc_url, old_cid, &req.fragment, &entity_node, &ctx.stats,
+                    ).await {
+                        warn!(fragment = %req.fragment, error = %e, "failed to persist new entity to manifest");
+                    }
+                }
+                info!(fragment = %req.fragment, kind = %req.kind_protocol,
+                    parent = %req.parent, "entity created via ma_create_entity");
+            }
+            Err(e) => {
+                warn!(fragment = %req.fragment, kind = %req.kind_protocol,
+                    error = %e, "ma_create_entity: EntityPlugin::load failed");
+            }
+        }
+    }
+
     Ok(())
 }
 

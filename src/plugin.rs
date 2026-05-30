@@ -11,8 +11,20 @@ use ma_core::{cat_bytes, ipfs_add};
 use tokio::sync::{mpsc::UnboundedSender, RwLock};
 use tracing::{debug, error, info, warn};
 
-use crate::entity::{CastInput, EntityNode, PluginKind, ReplyRequest, SendEnvelope};
+use crate::entity::{CastInput, CreateEntityRequest, EntityCtx, EntityNode, KindNode, PluginKind, ReplyRequest, SendEnvelope};
 use crate::schedule::{encode_cbor_call_cbor, parse_duration, ScheduleRequest};
+
+// ── Fragment generation ───────────────────────────────────────────────────────
+
+/// Generate an 8-character URL-safe alphanumeric fragment (nanoid-style).
+fn generate_fragment() -> String {
+    use rand::Rng;
+    const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let mut rng = rand::thread_rng();
+    (0..8)
+        .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
+        .collect()
+}
 
 // ── ma_log host function ──────────────────────────────────────────────────────
 
@@ -195,6 +207,57 @@ host_fn!(ma_set_state_fn(user_data: StateCtx; input: Vec<u8>) -> Vec<u8> {
     Ok(Vec::new())
 });
 
+// ── ma_create_entity host function ────────────────────────────────────────────
+// ── ma_ctx host function ─────────────────────────────────────────────────────────────
+
+// `ma_ctx` host function: returns entity metadata to the plugin.
+//
+// Input is ignored.  Output is CBOR-encoded `EntityCtx`.
+host_fn!(ma_ctx_fn(user_data: EntityCtx; _input: Vec<u8>) -> Vec<u8> {
+    let arc = user_data.get()?;
+    let ctx = arc.lock().unwrap();
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(&*ctx, &mut out)
+        .map_err(|e| extism::Error::msg(format!("ma_ctx: CBOR encode: {e}")))?;
+    Ok(out)
+});
+// Context captured by `ma_create_entity` host function.
+struct CreateEntityCtx {
+    pending: Vec<CreateEntityRequest>,
+    /// Fragment of the calling (parent) entity.
+    caller_fragment: String,
+}
+
+// `ma_create_entity` host function: plugin requests creation of a new entity.
+//
+// Input is CBOR-encoded `{ "kind": "/ma/…/0.0.1", "behavior": "bafyCID" }`.
+// The runtime generates a nanoid fragment, queues the request, and returns the
+// fragment string (CBOR-encoded) to the plugin immediately.
+// Actual plugin loading and manifest persistence happen after dispatch returns.
+#[derive(serde::Deserialize)]
+struct CreateEntityInput {
+    kind: String,
+    behavior: String,
+}
+
+host_fn!(ma_create_entity_fn(user_data: CreateEntityCtx; input: Vec<u8>) -> Vec<u8> {
+    let req: CreateEntityInput = from_cbor_bytes(&input)?;
+    let fragment = generate_fragment();
+    let arc = user_data.get()?;
+    let mut ctx = arc.lock().unwrap();
+    let parent = ctx.caller_fragment.clone();
+    ctx.pending.push(CreateEntityRequest {
+        fragment: fragment.clone(),
+        kind_protocol: req.kind,
+        behavior_cid: req.behavior,
+        parent,
+    });
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(&fragment, &mut out)
+        .map_err(|e| extism::Error::msg(format!("ma_create_entity: CBOR encode: {e}")))?;
+    Ok(out)
+});
+
 // ── Dispatch result ─────────────────────────────────────────────────────────
 
 /// Return value from `handle_cast` and `handle_call`.
@@ -204,6 +267,8 @@ pub struct DispatchResult {
     pub pending_state: Option<Vec<u8>>,
     /// Schedule requests enqueued via `ma_schedule_*` host functions.
     pub schedule_requests: Vec<ScheduleRequest>,
+    /// Entity creation requests enqueued via `ma_create_entity` host function.
+    pub create_requests: Vec<CreateEntityRequest>,
 }
 
 // ── Registry type alias ───────────────────────────────────────────────────────
@@ -223,6 +288,8 @@ pub struct EntityPlugin {
     /// `did:ma:<ipns>#<fragment>` → lookup `entities[fragment]`.
     pub fragment: String,
     pub kind: PluginKind,
+    /// Protocol ID of the kind this entity was loaded with (e.g. `/ma/stateless/python/0.0.1`).
+    pub kind_protocol: String,
     /// ACL name string — resolved via `acls.<acl>` in the root manifest.
     /// Empty string means deny-all (fail-closed).
     pub acl: String,
@@ -234,6 +301,10 @@ pub struct EntityPlugin {
     schedule_queue: UserData<Vec<ScheduleRequest>>,
     /// Shared state context: pending bytes, last-persisted snapshot, dirty flag.
     state: UserData<StateCtx>,
+    /// Queue populated by `ma_create_entity` host function during a plugin call.
+    create_queue: UserData<CreateEntityCtx>,
+    /// Entity metadata returned by `ma_ctx` host function.
+    ctx_data: UserData<EntityCtx>,
 }
 
 // Safety: `extism::Plugin` calls into C (libextism) but the Mutex ensures
@@ -248,14 +319,17 @@ impl EntityPlugin {
     pub async fn load(
         fragment: impl Into<String>,
         node: &EntityNode,
+        kind_node: &KindNode,
+        our_did: &str,
         kubo_url: &str,
         envelope_tx: UnboundedSender<(String, SendEnvelope)>,
     ) -> Result<Self> {
         let fragment = fragment.into();
         let behavior_cid = &node.behavior.cid;
-        let kind = PluginKind::from_kind_str(&node.kind);
+        let kind = kind_node.plugin_kind();
+        let wasi = kind_node.wasi();
 
-        debug!(fragment = %fragment, cid = %behavior_cid, kind = ?kind, "loading entity plugin");
+        debug!(fragment = %fragment, cid = %behavior_cid, kind = ?kind, wasi = wasi, "loading entity plugin");
 
         // 1. Fetch Wasm bytes from IPFS.
         let wasm_bytes = cat_bytes(kubo_url, behavior_cid)
@@ -274,11 +348,8 @@ impl EntityPlugin {
             Vec::new()
         };
 
-        // 3. Build extism manifest; register host functions.
-        //    All plugins get ma_send, ma_reply, and ma_schedule_* (outbound messaging
-        //    and scheduling).  Stateful plugins additionally get ma_set_state.
-        //    ma_send / ma_reply send directly to the main event loop via a channel —
-        //    the dispatcher has no envelope-handling responsibility.
+        // 3. Build all possible host functions, then filter to the set declared
+        //    in kind_node.host_functions (principle of least privilege).
         let outbox_ctx_send = UserData::new(OutboxCtx {
             tx: envelope_tx.clone(),
             fragment: fragment.clone(),
@@ -290,57 +361,38 @@ impl EntityPlugin {
         let schedule_queue: UserData<Vec<ScheduleRequest>> = UserData::new(Vec::new());
         let state: UserData<StateCtx> = UserData::new(StateCtx::new(init_state.clone()));
         let log_ctx: UserData<String> = UserData::new(fragment.clone());
-        let ma_send = Function::new("ma_send", [PTR], [PTR], outbox_ctx_send, ma_send_fn);
-        let ma_reply = Function::new("ma_reply", [PTR], [PTR], outbox_ctx_reply, ma_reply_fn);
-        let ma_log = Function::new("ma_log", [PTR], [PTR], log_ctx, ma_log_fn);
-        let ma_sched_cron = Function::new(
-            "ma_schedule_cron",
-            [PTR],
-            [PTR],
-            schedule_queue.clone(),
-            ma_schedule_cron_fn,
-        );
-        let ma_sched_at = Function::new(
-            "ma_schedule_at",
-            [PTR],
-            [PTR],
-            schedule_queue.clone(),
-            ma_schedule_at_fn,
-        );
-        let ma_sched_random = Function::new(
-            "ma_schedule_random",
-            [PTR],
-            [PTR],
-            schedule_queue.clone(),
-            ma_schedule_random_fn,
-        );
-        let ma_sched_interval = Function::new(
-            "ma_schedule_interval",
-            [PTR],
-            [PTR],
-            schedule_queue.clone(),
-            ma_schedule_interval_fn,
-        );
-        let mut host_fns = vec![
-            ma_send,
-            ma_reply,
-            ma_log,
-            ma_sched_cron,
-            ma_sched_at,
-            ma_sched_random,
-            ma_sched_interval,
+        let create_queue: UserData<CreateEntityCtx> = UserData::new(CreateEntityCtx {
+            pending: Vec::new(),
+            caller_fragment: fragment.clone(),
+        });
+        let ctx_data: UserData<EntityCtx> = UserData::new(EntityCtx {
+            self_did: format!("{}#{}", our_did, &fragment),
+            fragment: fragment.clone(),
+            kind: node.kind.clone(),
+            parent: node.parent.clone(),
+        });
+
+        let all_fns: Vec<(&str, Function)> = vec![
+            ("ma_send",    Function::new("ma_send",    [PTR], [PTR], outbox_ctx_send,        ma_send_fn)),
+            ("ma_reply",   Function::new("ma_reply",   [PTR], [PTR], outbox_ctx_reply,       ma_reply_fn)),
+            ("ma_log",     Function::new("ma_log",     [PTR], [PTR], log_ctx,                ma_log_fn)),
+            ("ma_schedule_cron",     Function::new("ma_schedule_cron",     [PTR], [PTR], schedule_queue.clone(), ma_schedule_cron_fn)),
+            ("ma_schedule_at",       Function::new("ma_schedule_at",       [PTR], [PTR], schedule_queue.clone(), ma_schedule_at_fn)),
+            ("ma_schedule_random",   Function::new("ma_schedule_random",   [PTR], [PTR], schedule_queue.clone(), ma_schedule_random_fn)),
+            ("ma_schedule_interval", Function::new("ma_schedule_interval", [PTR], [PTR], schedule_queue.clone(), ma_schedule_interval_fn)),
+            ("ma_set_state", Function::new("ma_set_state", [PTR], [PTR], state.clone(), ma_set_state_fn)),
+            ("ma_create_entity", Function::new("ma_create_entity", [PTR], [PTR], create_queue.clone(), ma_create_entity_fn)),
+            ("ma_ctx", Function::new("ma_ctx", [PTR], [PTR], ctx_data.clone(), ma_ctx_fn)),
         ];
-        if kind == PluginKind::Stateful {
-            host_fns.push(Function::new(
-                "ma_set_state",
-                [PTR],
-                [PTR],
-                state.clone(),
-                ma_set_state_fn,
-            ));
-        }
+        let allowed: std::collections::HashSet<&str> =
+            kind_node.host_functions.iter().map(String::as_str).collect();
+        let host_fns: Vec<Function> = all_fns
+            .into_iter()
+            .filter(|(name, _)| allowed.contains(*name))
+            .map(|(_, f)| f)
+            .collect();
+
         let manifest = Manifest::new([Wasm::data(wasm_bytes)]);
-        let wasi = PluginKind::wasi_from_kind_str(&node.kind);
         let mut plugin = tokio::task::block_in_place(|| Plugin::new(&manifest, host_fns, wasi))
             .map_err(|e| anyhow!("failed to create extism plugin for {fragment}: {e}"))?;
 
@@ -356,11 +408,14 @@ impl EntityPlugin {
         Ok(Self {
             fragment,
             kind,
+            kind_protocol: node.kind.clone(),
             acl: node.acl.clone(),
             schedules: node.schedules.clone(),
             plugin: Mutex::new(plugin),
             schedule_queue,
             state,
+            create_queue,
+            ctx_data,
         })
     }
 
@@ -412,9 +467,20 @@ impl EntityPlugin {
             .pending
             .take();
 
+        let create_requests = self
+            .create_queue
+            .get()
+            .map_err(|e| anyhow!("create_queue error: {e}"))?
+            .lock()
+            .map_err(|e| anyhow!("create_queue poisoned: {e}"))?
+            .pending
+            .drain(..)
+            .collect();
+
         Ok(DispatchResult {
             pending_state,
             schedule_requests,
+            create_requests,
         })
     }
 

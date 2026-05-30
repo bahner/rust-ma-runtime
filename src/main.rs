@@ -327,10 +327,12 @@ async fn main() -> Result<()> {
     let (envelope_tx, mut envelope_rx) =
         tokio::sync::mpsc::unbounded_channel::<(String, entity::SendEnvelope)>();
     let entity_registry = plugin::new_entity_registry();
+    let kind_registry = entity::new_kind_registry();
     if let Some(ref rc) = root_cid {
         let count = bootstrap::load_entities(
             rc,
             &config.kubo_rpc_url,
+            &our_did,
             &entity_registry,
             envelope_tx.clone(),
         )
@@ -413,34 +415,6 @@ async fn main() -> Result<()> {
                         }
                         Err(e) => {
                             warn!(key = %cache_key, cid = %link.cid, error = %e, "failed to load root ACL at startup");
-                        }
-                    }
-                }
-                for (ns_name, ns_node) in &m.namespaces {
-                    // Namespace gate: "<ns>.acl"
-                    if let Some(link) = &ns_node.acl {
-                        let cache_key = format!("{ns_name}.acl");
-                        match acl::load_acl_from_cid(&config.kubo_rpc_url, &link.cid).await {
-                            Ok(acl_map) => {
-                                info!(key = %cache_key, cid = %link.cid, "Namespace gate ACL loaded into cache");
-                                entries.push((cache_key, acl_map));
-                            }
-                            Err(e) => {
-                                warn!(key = %cache_key, cid = %link.cid, error = %e, "failed to load namespace gate ACL at startup");
-                            }
-                        }
-                    }
-                    // Namespace verb-ACL library: "<ns>.acls.<name>"
-                    for (acl_name, link) in &ns_node.acls {
-                        let cache_key = format!("{ns_name}.acls.{acl_name}");
-                        match acl::load_acl_from_cid(&config.kubo_rpc_url, &link.cid).await {
-                            Ok(acl_map) => {
-                                info!(key = %cache_key, cid = %link.cid, "Named ACL loaded into cache");
-                                entries.push((cache_key, acl_map));
-                            }
-                            Err(e) => {
-                                warn!(key = %cache_key, cid = %link.cid, error = %e, "failed to load named ACL at startup");
-                            }
                         }
                     }
                 }
@@ -672,6 +646,8 @@ async fn main() -> Result<()> {
                             kubo_rpc_url: &kubo_url,
                             resolver: Arc::clone(&shared_resolver),
                             entity_registry: entity_registry.clone(),
+                            kind_registry: kind_registry.clone(),
+                            envelope_tx: envelope_tx.clone(),
                             stats: stats.clone(),
                             acl_cache: acl_cache.clone(),
                             scheduler: Arc::clone(&sched),
@@ -753,6 +729,7 @@ async fn main() -> Result<()> {
                                 resolver: Arc::clone(&shared_resolver),
                                 stats: stats.clone(),
                                 entity_registry: entity_registry.clone(),
+                                kind_registry: kind_registry.clone(),
                                 shared_config: Arc::clone(&shared_config),
                                 acl_cache: acl_cache.clone(),
                                 root_acl: acl.clone(),
