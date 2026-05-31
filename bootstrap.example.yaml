@@ -131,20 +131,36 @@ runtime:
   #             `acl` references a named ACL from `acls:` above (empty = deny-all).
   entities:
     # Root orchestrator — the single entry point for entity creation.
-    # Replace the behaviour CID with the result of:
-    #   make -C ../ma-python/root ipfs
+    # Built from plugins/root (Rust/wasm32-unknown-unknown).
+    # Rebuild: make -C plugins build && make -C plugins/root ipfs
     root:
       kind: /ma/root/0.0.1
       behaviour:
-        /: QmREPLACE_WITH_ROOT_WASM_CID
+        /: bafkreihy352kaialtlivfhqvxnrhbacwxhrjjo3auxcb2u3nalru6ze7dm
+      acl: open
+
+    # Counter — atomic integer with :get/:set/:inc/:dec/:reset verbs.
+    counter:
+      kind: /ma/counter/0.0.1
+      behaviour:
+        /: bafkreibqd55px3nwvpk7ltdz4yovp33exc4jis6cxilbf6cicyfz3ftniy
+      acl: open
+
+    # Register — bijective key↔value map.
+    register:
+      kind: /ma/register/0.0.1
+      behaviour:
+        /: bafkreihth6wygd65kfdzj4gn3wh2gxudmnhegzwvqkvudo2soif24dsbqy
+      acl: open
+
+    # Set — unordered unique-value collection.
+    set:
+      kind: /ma/set/0.0.1
+      behaviour:
+        /: bafkreifkccobn75jdy4gpp5pcga6pvwcqribxnlaryb6jqjo7mi3a75qsm
       acl: open
 
     # Inline form — bootstrap builds and publishes the EntityNode.
-    fortune:
-      kind: /ma/stateless/python/0.0.1
-      behaviour:
-        /: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
-      acl: open
 
     # Log store — actors send [:log, level, msg] here; query via :entries.
     # Replace the behaviour CID with: make -C ../ma-python/logger ipfs
@@ -157,5 +173,5 @@ runtime:
     rms:
       kind: /ma/stateless/python/0.0.1
       behaviour:
-        /: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
+        /: bafybeibjmr55vbj4wsaoyrsi3xq3fvywkiksj4pdfvfzhr5rnyxiluwp24
       acl: open

@@ -360,7 +360,9 @@ pub async fn load_entities(
                 continue;
             }
         };
-        let kind_link = if let Some(l) = manifest.kinds.get_protocol(&node.kind) { l.clone() } else {
+        let kind_link = if let Some(l) = manifest.kinds.get_protocol(&node.kind) {
+            l.clone()
+        } else {
             tracing::warn!(name = %name, kind = %node.kind, "Kind not found in manifest; skipping entity");
             continue;
         };
@@ -371,7 +373,16 @@ pub async fn load_entities(
                 continue;
             }
         };
-        match plugin::EntityPlugin::load(name.clone(), &node, &kind_node, our_did, kubo_url, envelope_tx.clone()).await {
+        match plugin::EntityPlugin::load(
+            name.clone(),
+            &node,
+            &kind_node,
+            our_did,
+            kubo_url,
+            envelope_tx.clone(),
+        )
+        .await
+        {
             Ok((ep, lifecycle)) => {
                 tracing::info!(name = %name, lifecycle = %lifecycle, "{}", crate::i18n::t("entity-loaded"));
                 registry.write().await.insert(name.clone(), Arc::new(ep));

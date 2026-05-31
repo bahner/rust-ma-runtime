@@ -27,7 +27,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
-use ciborium::Value as CborValue;
 use ma_core::{ipfs_add, CONTENT_TYPE_TERM};
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::warn;
@@ -290,9 +289,7 @@ pub async fn dispatch_scheduled(
         content: content.to_vec(),
     };
 
-    let cast_input = CastInput {
-        msg: local_msg,
-    };
+    let cast_input = CastInput { msg: local_msg };
 
     let result = match plugin.kind {
         PluginKind::Stateless => plugin.handle_cast(&cast_input),
@@ -316,47 +313,6 @@ pub async fn dispatch_scheduled(
                 error = %e,
                 "scheduled dispatch: state save failed"
             ),
-        }
-    }
-}
-
-// ── CBOR call encoding ────────────────────────────────────────────────────────
-
-/// Encode a verb + YAML args as pre-built CBOR call bytes.
-///
-/// No args → CBOR text atom `":verb"`.
-/// With args → CBOR array `[":verb", arg1, …]`.
-pub fn encode_cbor_call(verb: &str, args: &[serde_yaml::Value]) -> Vec<u8> {
-    let mut out = Vec::new();
-    if args.is_empty() {
-        ciborium::ser::into_writer(&CborValue::Text(verb.to_string()), &mut out).ok();
-    } else {
-        let items: Vec<CborValue> = std::iter::once(CborValue::Text(verb.to_string()))
-            .chain(args.iter().map(yaml_to_cbor))
-            .collect();
-        ciborium::ser::into_writer(&CborValue::Array(items), &mut out).ok();
-    }
-    out
-}
-
-fn yaml_to_cbor(v: &serde_yaml::Value) -> CborValue {
-    match v {
-        serde_yaml::Value::String(s) => CborValue::Text(s.clone()),
-        serde_yaml::Value::Number(n) => n.as_i64().map_or_else(
-            || n.as_f64().map_or(CborValue::Null, CborValue::Float),
-            |i| CborValue::Integer(i.into()),
-        ),
-        serde_yaml::Value::Bool(b) => CborValue::Bool(*b),
-        serde_yaml::Value::Null | serde_yaml::Value::Tagged(_) => CborValue::Null,
-        serde_yaml::Value::Sequence(seq) => {
-            CborValue::Array(seq.iter().map(yaml_to_cbor).collect())
-        }
-        serde_yaml::Value::Mapping(map) => {
-            let pairs = map
-                .iter()
-                .map(|(k, v)| (yaml_to_cbor(k), yaml_to_cbor(v)))
-                .collect();
-            CborValue::Map(pairs)
         }
     }
 }

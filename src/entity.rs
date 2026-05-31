@@ -185,7 +185,6 @@ pub enum PluginKind {
     Stateful,
 }
 
-
 /// Context returned by the `ma_ctx` host function.
 ///
 /// Plugin calls `ma_ctx()` once (typically at module load) and caches the
@@ -571,5 +570,4 @@ mod tests {
             "missing behaviour should deserialize as None (native entity)"
         );
     }
-
 }

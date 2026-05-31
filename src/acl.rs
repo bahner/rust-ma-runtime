@@ -215,7 +215,8 @@ pub async fn query_actor_group(
     let result = ep.handle_call(&input)?;
 
     // Parse reply: :ok true → caller is member; anything else → not member.
-    let contained = match ciborium::de::from_reader::<ciborium::Value, _>(result.output.as_slice()) {
+    let contained = match ciborium::de::from_reader::<ciborium::Value, _>(result.output.as_slice())
+    {
         Ok(ciborium::Value::Array(ref v)) => {
             v.first() == Some(&ciborium::Value::Text(":ok".into()))
                 && v.get(1) == Some(&ciborium::Value::Bool(true))

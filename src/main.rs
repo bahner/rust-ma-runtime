@@ -8,6 +8,7 @@ mod kubo;
 mod plugin;
 mod rpc;
 mod schedule;
+mod scheduler_actor;
 mod status;
 
 use anyhow::{anyhow, Context, Result};
@@ -347,6 +348,27 @@ async fn main() -> Result<()> {
     );
     sched.start().await.context("starting job scheduler")?;
 
+    // ── Register native #scheduler entity ─────────────────────────────────────
+    {
+        use crate::schedule::SchedulerCtx;
+        let sched_ctx = SchedulerCtx {
+            entity_registry: entity_registry.clone(),
+            kubo_rpc_url: config.kubo_rpc_url.clone(),
+            our_did: our_did.clone(),
+        };
+        let handler = scheduler_actor::make_native_dispatch(Arc::clone(&sched), sched_ctx);
+        let (ep, _) = plugin::EntityPlugin::new_native(
+            scheduler_actor::SCHEDULER_FRAGMENT,
+            &scheduler_actor::entity_node(),
+            handler,
+        );
+        entity_registry.write().await.insert(
+            scheduler_actor::SCHEDULER_FRAGMENT.to_string(),
+            Arc::new(ep),
+        );
+        debug!("native #scheduler entity registered");
+    }
+
     // ── Load named ACLs into cache ─────────────────────────────────────────────
     let acl_cache = acl::new_acl_cache();
     if let Some(ref rc) = root_cid {
@@ -612,7 +634,6 @@ async fn main() -> Result<()> {
                             envelope_tx: envelope_tx.clone(),
                             stats: stats.clone(),
                             acl_cache: acl_cache.clone(),
-                            scheduler: Arc::clone(&sched),
                         },
                     )
                     .await
@@ -696,7 +717,6 @@ async fn main() -> Result<()> {
                                 acl_cache: acl_cache.clone(),
                                 root_acl: acl.clone(),
                                 envelope_tx: envelope_tx.clone(),
-                                scheduler: Arc::clone(&sched),
                             },
                         )
                         .await

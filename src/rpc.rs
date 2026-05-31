@@ -11,9 +11,10 @@ use ma_core::{
 use tracing::{debug, info, warn};
 
 use crate::acl::{check_full, AclCache, AclMap, CAP_RPC};
-use crate::entity::{CastInput, IpldLink, Lifecycle, LocalMessage, PluginKind, RuntimeManifest, SendEnvelope};
+use crate::entity::{
+    CastInput, IpldLink, Lifecycle, LocalMessage, PluginKind, RuntimeManifest, SendEnvelope,
+};
 use crate::plugin::EntityRegistry;
-use crate::schedule::{parse_duration, register_schedule, ScheduleRequest, SchedulerCtx};
 use crate::status::SharedStats;
 
 pub const RPC_PROTOCOL_ID: &str = "/ma/rpc/0.0.1";
@@ -31,7 +32,6 @@ pub struct RpcHandlerCtx<'a> {
     pub envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, SendEnvelope)>,
     pub stats: SharedStats,
     pub acl_cache: AclCache,
-    pub scheduler: Arc<tokio_cron_scheduler::JobScheduler>,
 }
 
 // ── Entity creation helper ─────────────────────────────────────────────────────
@@ -45,7 +45,9 @@ async fn persist_new_entity(
 ) -> Result<()> {
     let mut manifest: RuntimeManifest = crate::kubo::dag_get(kubo_url, old_root_cid).await?;
     let entity_cid = crate::kubo::dag_put(kubo_url, entity_node).await?;
-    manifest.entities.insert(fragment.to_string(), IpldLink::new(&entity_cid));
+    manifest
+        .entities
+        .insert(fragment.to_string(), IpldLink::new(&entity_cid));
     let new_root_cid = crate::kubo::dag_put(kubo_url, &manifest).await?;
     if let Err(e) = crate::kubo::pin_update(kubo_url, old_root_cid, &new_root_cid).await {
         warn!(old = %old_root_cid, new = %new_root_cid, error = %e, "persist_new_entity: pin_update failed");
@@ -85,17 +87,6 @@ pub async fn handle_rpc_message(
 
     // Fragment routing: entity plugin dispatch.
     if let Some(fragment) = extract_fragment(&message.to, ctx.our_did) {
-        // System actor: #scheduler handles schedule-registration requests.
-        if fragment == "scheduler" {
-            return match handle_scheduler_message(term, message, ctx) {
-                Ok(()) => Ok(()),
-                Err(err) => {
-                    let reason = err.to_string();
-                    warn!(from = %message.from, error = %reason, "#scheduler: bad request");
-                    send_rpc_error_reply(message, ctx, &reason).await
-                }
-            };
-        }
         let ep = ctx.entity_registry.read().await.get(fragment).cloned();
         return if let Some(entity) = ep {
             match handle_entity_plugin_message(message, term, &entity, ctx).await {
@@ -143,131 +134,7 @@ fn extract_fragment<'a>(to: &'a str, our_did: &str) -> Option<&'a str> {
     to.strip_prefix(prefix.as_str())
 }
 
-// ── #scheduler system actor ───────────────────────────────────────────────────
-
-/// Handle a message addressed to `#scheduler`.
-///
-/// Plugins send to `did:ma:<ipns>#scheduler` via `ma_send` to register
-/// scheduled dispatches without needing schedule host functions.
-///
-/// Message content is a CBOR array:
-/// ```text
-/// [":cron",     spec_str,       target_frag, verb_or_array]
-/// [":interval", duration_str,   target_frag, verb_or_array]
-/// [":at",       timestamp_ms,   target_frag, verb_or_array]
-/// [":random",   max_secs_int,   target_frag, verb_or_array]
-/// ```
-/// `verb_or_array` is either a text atom `":verb"` or an array `[":verb", arg1, …]`.
-/// `target_frag` is the bare fragment name (e.g. `"fortune"`) or a full DID-URL.
-fn handle_scheduler_message(
-    term: CborValue,
-    message: &ma_core::Message,
-    ctx: &RpcHandlerCtx<'_>,
-) -> Result<()> {
-    let items = match term {
-        CborValue::Array(a) => a,
-        other => return Err(anyhow!("scheduler: expected CBOR array, got {other:?}")),
-    };
-    if items.len() < 4 {
-        return Err(anyhow!(
-            "scheduler: expected [type, spec, target, verb], got {} elements",
-            items.len()
-        ));
-    }
-    let type_verb = match &items[0] {
-        CborValue::Text(s) => s.clone(),
-        _ => return Err(anyhow!("scheduler: first element must be text atom")),
-    };
-    let target = match &items[2] {
-        CborValue::Text(s) => s.clone(),
-        _ => return Err(anyhow!("scheduler: third element must be target fragment")),
-    };
-    // Accept bare fragment or full DID-URL `did:ma:<ipns>#fragment`.
-    let fragment = if let Some(frag) = target.strip_prefix(&format!("{}#", ctx.our_did)) {
-        frag.to_string()
-    } else if let Some(pos) = target.find('#') {
-        target[pos + 1..].to_string()
-    } else {
-        target.clone()
-    };
-
-    // Encode verb (4th element) + optional inline args (5th+) as CBOR call bytes.
-    let content = {
-        let args = items.get(4..).unwrap_or(&[]);
-        match &items[3] {
-            CborValue::Text(v) if args.is_empty() => {
-                let mut out = Vec::new();
-                ciborium::ser::into_writer(&CborValue::Text(v.clone()), &mut out).ok();
-                out
-            }
-            CborValue::Text(v) => {
-                let mut arr = vec![CborValue::Text(v.clone())];
-                arr.extend_from_slice(args);
-                let mut out = Vec::new();
-                ciborium::ser::into_writer(&CborValue::Array(arr), &mut out).ok();
-                out
-            }
-            arr @ CborValue::Array(_) => {
-                let mut out = Vec::new();
-                ciborium::ser::into_writer(arr, &mut out).ok();
-                out
-            }
-            _ => return Err(anyhow!("scheduler: verb (4th element) must be text atom or array")),
-        }
-    };
-
-    let req = match type_verb.as_str() {
-        ":cron" => {
-            let spec = match &items[1] {
-                CborValue::Text(s) => s.clone(),
-                _ => return Err(anyhow!("scheduler :cron: spec must be text")),
-            };
-            ScheduleRequest::Cron { spec, content }
-        }
-        ":interval" => {
-            let dur_str = match &items[1] {
-                CborValue::Text(s) => s.clone(),
-                _ => return Err(anyhow!("scheduler :interval: duration must be text")),
-            };
-            let secs = parse_duration(&dur_str)
-                .map_err(|e| anyhow!("scheduler :interval: {e}"))?
-                .as_secs();
-            ScheduleRequest::Interval { secs, content }
-        }
-        ":at" => {
-            let ts = match &items[1] {
-                CborValue::Integer(n) => i64::try_from(i128::from(*n))
-                    .map_err(|_| anyhow!("scheduler :at: timestamp out of i64 range"))?,
-                _ => return Err(anyhow!("scheduler :at: timestamp must be integer")),
-            };
-            ScheduleRequest::At { timestamp_ms: ts, content }
-        }
-        ":random" => {
-            let max_secs = match &items[1] {
-                CborValue::Integer(n) => u64::try_from(i128::from(*n)).unwrap_or(60),
-                _ => return Err(anyhow!("scheduler :random: max_secs must be integer")),
-            };
-            ScheduleRequest::Random { max_secs, content }
-        }
-        other => return Err(anyhow!("scheduler: unknown schedule type '{other}'")),
-    };
-
-    let sched_ctx = SchedulerCtx {
-        entity_registry: ctx.entity_registry.clone(),
-        kubo_rpc_url: ctx.kubo_rpc_url.to_string(),
-        our_did: ctx.our_did.to_string(),
-    };
-    let sched = Arc::clone(&ctx.scheduler);
-    let from_str = message.from.clone();
-    tokio::spawn(async move {
-        if let Err(e) = register_schedule(&sched, sched_ctx, fragment.clone(), None, req).await {
-            warn!(target = %fragment, from = %from_str, error = %e, "scheduler: failed to register schedule");
-        }
-    });
-    Ok(())
-}
-
-// ── Wasm entity dispatch ───────────────────────────────────────────────────────
+// ── Entity plugin dispatch ────────────────────────────────────────────────────
 
 #[allow(
     clippy::cast_possible_truncation,
@@ -309,8 +176,18 @@ async fn handle_entity_plugin_message(
     if let Some(ref acl_map) = maybe_acl {
         let verb_ref = verb_str.as_deref().unwrap_or("*");
         let registry = ctx.entity_registry.clone();
-        let caller_str = message.from.clone();
-        crate::acl::check_full(acl_map, &message.from, &[verb_ref, "*"], |g| {
+        // Pre-normalize caller: `did:ma:<our_did>#fragment` → `#fragment` so
+        // that the `"#"` local-entity wildcard in ACL maps matches intra-runtime
+        // callers.  This is safe because message signatures are cryptographically
+        // verified — a remote peer cannot forge our DID as the sender.
+        let caller_did = if let Some(frag) = message.from.strip_prefix(&format!("{}#", ctx.our_did))
+        {
+            format!("#{frag}")
+        } else {
+            message.from.clone()
+        };
+        let caller_str = caller_did.clone();
+        crate::acl::check_full(acl_map, &caller_did, &[verb_ref, "*"], |g| {
             let registry = registry.clone();
             let g = g.to_string();
             let caller = caller_str.clone();
@@ -347,9 +224,7 @@ async fn handle_entity_plugin_message(
         content: content_bytes,
     };
 
-    let cast_input = CastInput {
-        msg: local_msg,
-    };
+    let cast_input = CastInput { msg: local_msg };
     let result = match entity.kind {
         PluginKind::Stateless => entity.handle_cast(&cast_input)?,
         PluginKind::Stateful => entity.handle_call(&cast_input)?,
@@ -370,7 +245,12 @@ async fn handle_entity_plugin_message(
 
     // Process entity creation requests queued by `ma_create_entity` host function.
     for req in result.create_requests {
-        let maybe_kind = ctx.kind_registry.read().await.get(&req.kind_protocol).cloned();
+        let maybe_kind = ctx
+            .kind_registry
+            .read()
+            .await
+            .get(&req.kind_protocol)
+            .cloned();
         let Some(kind_node) = maybe_kind else {
             warn!(caller = %entity.fragment, kind = %req.kind_protocol,
                 "ma_create_entity: kind not in registry; skipped");
@@ -406,8 +286,14 @@ async fn handle_entity_plugin_message(
                     let mut running_node = entity_node.clone();
                     running_node.lifecycle = Lifecycle::Running;
                     if let Err(e) = persist_new_entity(
-                        ctx.kubo_rpc_url, old_cid, &req.fragment, &running_node, &ctx.stats,
-                    ).await {
+                        ctx.kubo_rpc_url,
+                        old_cid,
+                        &req.fragment,
+                        &running_node,
+                        &ctx.stats,
+                    )
+                    .await
+                    {
                         warn!(fragment = %req.fragment, error = %e, "failed to persist new entity to manifest");
                     }
                 }
@@ -456,7 +342,9 @@ async fn handle_entity_plugin_message(
     // Process entity deletion requests queued by `ma_delete_entity` host function.
     for target_fragment in result.delete_requests {
         let reg_read = ctx.entity_registry.read().await;
-        let target = if let Some(e) = reg_read.get(&target_fragment) { e.clone() } else {
+        let target = if let Some(e) = reg_read.get(&target_fragment) {
+            e.clone()
+        } else {
             warn!(caller = %entity.fragment, target = %target_fragment,
                 "ma_delete_entity: target not found; skipped");
             continue;

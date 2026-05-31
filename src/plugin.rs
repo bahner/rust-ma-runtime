@@ -1,4 +1,16 @@
-//! Extism-based Wasm plugin wrapper for entity dispatch.
+//! Extism-based Wasm plugin wrapper and native entity dispatch.
+//!
+//! [`EntityPlugin`] supports two backends:
+//!
+//! - **Extism** — Wasm loaded from IPFS, used for all user-defined entities.
+//! - **Native** — a compiled-in Rust closure, used for built-in system entities
+//!   such as `#scheduler`.  Native entities are registered via
+//!   [`EntityPlugin::new_native`]; [`EntityPlugin::load`] **must not** be
+//!   called for [`Evaluator::Native`] kinds.
+//!
+//! Both backends implement the same dispatch surface: [`EntityPlugin::handle_cast`]
+//! / [`EntityPlugin::handle_call`].  The [`PluginKind`] field determines which
+//! export is called (for Extism) or which path the closure takes (for Native).
 
 use std::{
     collections::HashMap,
@@ -11,7 +23,43 @@ use ma_core::{cat_bytes, ipfs_add};
 use tokio::sync::{mpsc::UnboundedSender, RwLock};
 use tracing::{debug, warn};
 
-use crate::entity::{CastInput, CreateEntityRequest, EntityCtx, EntityNode, Evaluator, KindNode, Lifecycle, PluginKind, ReplyRequest, SendEnvelope};
+use crate::entity::{
+    CastInput, CreateEntityRequest, EntityCtx, EntityNode, Evaluator, KindNode, Lifecycle,
+    PluginKind, ReplyRequest, SendEnvelope,
+};
+
+// ── Native dispatch type ─────────────────────────────────────────────────────
+
+/// Type of the compiled-in Rust closure used by native entity plugins.
+///
+/// The closure receives a [`CastInput`] and returns a [`DispatchResult`],
+/// exactly like a Wasm `handle_cast` / `handle_call` export.
+/// Both [`EntityPlugin::handle_cast`] and [`EntityPlugin::handle_call`] route
+/// through the same closure for native entities — native entities do not
+/// distinguish stateful vs stateless internally (the closure owns its own
+/// state via `Arc<Mutex<…>>` or similar).
+pub type NativeDispatch =
+    std::sync::Arc<dyn Fn(&CastInput) -> anyhow::Result<DispatchResult> + Send + Sync>;
+
+// ── Private entity backend ────────────────────────────────────────────────────
+
+/// Backing implementation for an [`EntityPlugin`].
+enum EntityBackend {
+    /// Wasm module loaded from IPFS via Extism.
+    Extism {
+        plugin: Mutex<Plugin>,
+        state: UserData<StateCtx>,
+        create_queue: UserData<CreateEntityCtx>,
+        delete_queue: UserData<DeleteEntityCtx>,
+    },
+    /// Compiled-in Rust closure — no Wasm involved.
+    Native(NativeDispatch),
+}
+
+// Safety: Plugin does not implement Send upstream, but our usage is exclusively
+// through &mut-guarded Mutex calls.  NativeDispatch is Send+Sync by its bound.
+unsafe impl Send for EntityBackend {}
+unsafe impl Sync for EntityBackend {}
 
 // ── Fragment generation ───────────────────────────────────────────────────────
 
@@ -210,33 +258,60 @@ pub struct EntityPlugin {
     pub kind: PluginKind,
     /// ACL name string — resolved via `acls.<acl>` in the root manifest.
     /// Empty string means deny-all (fail-closed).
+    /// For native entities the ACL is applied normally; the runtime does not
+    /// bypass entity-level ACLs for compiled-in entities.
     pub acl: String,
     /// Parent fragment — the entity that owns/created this one, if any.
     /// Immutable after creation. Only the parent may delete this entity.
     pub parent: Option<String>,
-    plugin: Mutex<Plugin>,
-    /// Shared state context: pending bytes, last-persisted snapshot, dirty flag.
-    state: UserData<StateCtx>,
-    /// Queue populated by `ma_create_entity` host function during a plugin call.
-    create_queue: UserData<CreateEntityCtx>,
-    /// Queue populated by `ma_delete_entity` host function during a plugin call.
-    delete_queue: UserData<DeleteEntityCtx>,
+    backend: EntityBackend,
 }
 
-// Safety: `extism::Plugin` calls into C (libextism) but the Mutex ensures
-// exclusive access and no shared mutable state leaks across thread boundaries.
-// extism::Plugin does not implement Send upstream, but our usage is exclusively
-// through &mut-guarded Mutex calls, making this sound.
+// Safety: EntityBackend carries its own Send+Sync bounds.
 unsafe impl Send for EntityPlugin {}
 unsafe impl Sync for EntityPlugin {}
 
 impl EntityPlugin {
-    /// Load a plugin from IPFS, initialise it with persisted state (or empty).
+    /// Create a native entity plugin backed by a compiled-in Rust closure.
+    ///
+    /// Use this for built-in system entities (e.g. `#scheduler`) whose
+    /// implementation is compiled into the runtime binary.  The closure
+    /// receives a [`CastInput`] and returns a [`DispatchResult`].
+    ///
+    /// Returns `(plugin, Lifecycle::Running)` — native entities are always
+    /// immediately running; they never go through `init()`.
+    ///
+    /// **Do not** call [`EntityPlugin::load`] for [`Evaluator::Native`] kinds;
+    /// that function returns `Err` when the evaluator is `Native`.
+    pub fn new_native(
+        fragment: impl Into<String>,
+        node: &EntityNode,
+        handler: NativeDispatch,
+    ) -> (Self, Lifecycle) {
+        let ep = Self {
+            fragment: fragment.into(),
+            kind: PluginKind::Stateless, // native entities dispatch via a single closure
+            acl: node.acl.clone(),
+            parent: node.parent.clone(),
+            backend: EntityBackend::Native(handler),
+        };
+        (ep, Lifecycle::Running)
+    }
+
+    /// Returns `true` if this plugin is backed by a compiled-in Rust closure
+    /// rather than a Wasm module.
+    pub fn is_native(&self) -> bool {
+        matches!(self.backend, EntityBackend::Native(_))
+    }
+
+    /// Load a Wasm plugin from IPFS, initialise it with persisted state (or empty).
     ///
     /// Returns `(plugin, Lifecycle::Running)` on success.
     /// Returns `(plugin, Lifecycle::Error)` if `init()` fails (plugin still usable
     /// for `:debug`/`:dump` calls).
-    /// Returns `Err` only for fatal errors (Wasm fetch, plugin instantiation).
+    /// Returns `Err` only for fatal errors (Wasm fetch, plugin instantiation),
+    /// or when `kind_node.evaluator == Evaluator::Native` (callers must use
+    /// [`EntityPlugin::new_native`] instead).
     #[allow(clippy::too_many_lines)]
     pub async fn load(
         fragment: impl Into<String>,
@@ -251,39 +326,22 @@ impl EntityPlugin {
         let kind = kind_node.plugin_kind();
         let wasi = kind_node.wasi();
 
-        // Native entities have no Wasm — they are compiled into the binary.
+        // Native entities must be registered via new_native(), not load().
         if kind_node.evaluator == Evaluator::Native {
-            if behaviour_cid.is_some() {
-                tracing::warn!(fragment = %fragment, "native entity has unexpected behaviour CID; ignoring");
-            }
-            let ep = Self {
-                fragment,
-                kind,
-                acl: node.acl.clone(),
-                parent: node.parent.clone(),
-                plugin: Mutex::new({
-                    // Placeholder — never called for native entities.
-                    // We still need a Plugin in the struct; use an empty no-op manifest.
-                    let manifest = Manifest::new([Wasm::data(vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00])]);
-                    tokio::task::block_in_place(|| Plugin::new(&manifest, [], false))
-                        .map_err(|e| anyhow!("failed to create placeholder plugin: {e}"))?
-                }),
-                state: UserData::new(StateCtx::new(vec![])),
-                create_queue: UserData::new(CreateEntityCtx { pending: vec![], caller_fragment: String::new() }),
-                delete_queue: UserData::new(DeleteEntityCtx { pending: vec![] }),
-            };
-            return Ok((ep, Lifecycle::Running));
+            return Err(anyhow!(
+                "entity '{fragment}' has evaluator 'native': use EntityPlugin::new_native() instead of load()"
+            ));
         }
 
-        // Extism path — require a behaviour CID.
+        // Only Extism is supported beyond this point.
         if kind_node.evaluator != Evaluator::Extism {
             return Err(anyhow!(
-                "unsupported evaluator {:?} for {fragment}",
+                "unsupported evaluator {:?} for '{fragment}'",
                 kind_node.evaluator
             ));
         }
         let behaviour_cid = behaviour_cid.ok_or_else(|| {
-            anyhow!("entity {fragment} has evaluator 'extism' but no behaviour CID")
+            anyhow!("entity '{fragment}' has evaluator 'extism' but no behaviour CID")
         })?;
 
         debug!(fragment = %fragment, cid = %behaviour_cid, kind = ?kind, wasi = wasi, "loading entity plugin");
@@ -291,7 +349,7 @@ impl EntityPlugin {
         // 1. Fetch Wasm bytes from IPFS.
         let wasm_bytes = cat_bytes(kubo_url, behaviour_cid)
             .await
-            .with_context(|| format!("fetching wasm for {fragment} from {behaviour_cid}"))?;
+            .with_context(|| format!("fetching wasm for '{fragment}' from {behaviour_cid}"))?;
 
         // 2. For stateful plugins: fetch persisted state so StateCtx has the
         //    correct baseline and init() can restore it.  Stateless plugins
@@ -332,14 +390,44 @@ impl EntityPlugin {
         };
 
         let all_fns: Vec<(&str, Function)> = vec![
-            ("ma_send",    Function::new("ma_send",    [PTR], [PTR], outbox_ctx_send,        ma_send_fn)),
-            ("ma_reply",   Function::new("ma_reply",   [PTR], [PTR], outbox_ctx_reply,       ma_reply_fn)),
-            ("ma_set_state", Function::new("ma_set_state", [PTR], [PTR], state.clone(), ma_set_state_fn)),
-            ("ma_create_entity", Function::new("ma_create_entity", [PTR], [PTR], create_queue.clone(), ma_create_entity_fn)),
-            ("ma_delete_entity", Function::new("ma_delete_entity", [PTR], [PTR], delete_queue.clone(), ma_delete_entity_fn)),
+            (
+                "ma_send",
+                Function::new("ma_send", [PTR], [PTR], outbox_ctx_send, ma_send_fn),
+            ),
+            (
+                "ma_reply",
+                Function::new("ma_reply", [PTR], [PTR], outbox_ctx_reply, ma_reply_fn),
+            ),
+            (
+                "ma_set_state",
+                Function::new("ma_set_state", [PTR], [PTR], state.clone(), ma_set_state_fn),
+            ),
+            (
+                "ma_create_entity",
+                Function::new(
+                    "ma_create_entity",
+                    [PTR],
+                    [PTR],
+                    create_queue.clone(),
+                    ma_create_entity_fn,
+                ),
+            ),
+            (
+                "ma_delete_entity",
+                Function::new(
+                    "ma_delete_entity",
+                    [PTR],
+                    [PTR],
+                    delete_queue.clone(),
+                    ma_delete_entity_fn,
+                ),
+            ),
         ];
-        let allowed: std::collections::HashSet<&str> =
-            kind_node.host_functions.iter().map(String::as_str).collect();
+        let allowed: std::collections::HashSet<&str> = kind_node
+            .host_functions
+            .iter()
+            .map(String::as_str)
+            .collect();
         let host_fns: Vec<Function> = all_fns
             .into_iter()
             .filter(|(name, _)| allowed.contains(*name))
@@ -348,28 +436,44 @@ impl EntityPlugin {
 
         let manifest = Manifest::new([Wasm::data(wasm_bytes)]);
         let mut plugin = tokio::task::block_in_place(|| Plugin::new(&manifest, host_fns, wasi))
-            .map_err(|e| anyhow!("failed to create extism plugin for {fragment}: {e}"))?;
+            .map_err(|e| anyhow!("failed to create extism plugin for '{fragment}': {e}"))?;
 
         // 4. Call init() only if the kind declares it in its API.
         //    Kinds without `init` (e.g. stateless plugins) skip this step
         //    and start in the Running state directly.
         //    Return value: :ok → Running, [:error, reason] → Error.
         let lifecycle = if kind_node.api.iter().any(|s| s == "init") {
-            let init_payload = InitPayload { ctx: &ctx_for_init, state: init_state };
+            let init_payload = InitPayload {
+                ctx: &ctx_for_init,
+                state: init_state,
+            };
             let mut init_bytes = Vec::new();
             ciborium::ser::into_writer(&init_payload, &mut init_bytes)
                 .context("encoding init payload")?;
             let init_result_bytes = tokio::task::block_in_place(|| {
                 plugin
                     .call::<&[u8], Vec<u8>>("init", init_bytes.as_slice())
-                    .map_err(|e| anyhow!("init() failed for {fragment}: {e}"))
+                    .map_err(|e| anyhow!("init() failed for '{fragment}': {e}"))
             })?;
             match ciborium::de::from_reader::<ciborium::Value, _>(init_result_bytes.as_slice()) {
                 Ok(ciborium::Value::Text(s)) if s == ":ok" => Lifecycle::Running,
-                Ok(ciborium::Value::Array(ref v)) if v.first() == Some(&ciborium::Value::Text(":ok".into())) => Lifecycle::Running,
-                Ok(ciborium::Value::Array(ref v)) if v.first() == Some(&ciborium::Value::Text(":error".into())) => {
-                    let reason = v.get(1)
-                        .and_then(|r| if let ciborium::Value::Text(s) = r { Some(s.as_str()) } else { None })
+                Ok(ciborium::Value::Array(ref v))
+                    if v.first() == Some(&ciborium::Value::Text(":ok".into())) =>
+                {
+                    Lifecycle::Running
+                }
+                Ok(ciborium::Value::Array(ref v))
+                    if v.first() == Some(&ciborium::Value::Text(":error".into())) =>
+                {
+                    let reason = v
+                        .get(1)
+                        .and_then(|r| {
+                            if let ciborium::Value::Text(s) = r {
+                                Some(s.as_str())
+                            } else {
+                                None
+                            }
+                        })
                         .unwrap_or("unknown");
                     warn!(fragment = %fragment, reason = %reason, "init() returned :error");
                     Lifecycle::Error
@@ -378,7 +482,6 @@ impl EntityPlugin {
                     warn!(fragment = %fragment, value = ?other, "init() returned unexpected value; treating as :ok");
                     Lifecycle::Running
                 }
-                // Empty output or parse failure → treat as :ok (legacy plugins).
                 Err(_) => Lifecycle::Running,
             }
         } else {
@@ -390,10 +493,12 @@ impl EntityPlugin {
             kind,
             acl: node.acl.clone(),
             parent: node.parent.clone(),
-            plugin: Mutex::new(plugin),
-            state,
-            create_queue,
-            delete_queue,
+            backend: EntityBackend::Extism {
+                plugin: Mutex::new(plugin),
+                state,
+                create_queue,
+                delete_queue,
+            },
         };
         Ok((ep, lifecycle))
     }
@@ -411,67 +516,74 @@ impl EntityPlugin {
         self.dispatch_to("handle_call", input)
     }
 
-    /// Encode `input`, invoke the named WASM export, drain both host-function
-    /// queues, and return a `DispatchResult`.
+    /// Dispatch to the named export (Extism) or the native closure.
     fn dispatch_to(&self, export: &str, input: &CastInput) -> Result<DispatchResult> {
-        let mut input_bytes = Vec::new();
-        ciborium::ser::into_writer(input, &mut input_bytes)
-            .map_err(|e| anyhow!("failed to CBOR-encode CastInput: {e}"))?;
+        match &self.backend {
+            EntityBackend::Native(f) => f(input),
+            EntityBackend::Extism {
+                plugin,
+                state,
+                create_queue,
+                delete_queue,
+            } => {
+                let mut input_bytes = Vec::new();
+                ciborium::ser::into_writer(input, &mut input_bytes)
+                    .map_err(|e| anyhow!("failed to CBOR-encode CastInput: {e}"))?;
 
-        let output = tokio::task::block_in_place(|| {
-            let mut plugin = self
-                .plugin
-                .lock()
-                .map_err(|e| anyhow!("plugin mutex poisoned: {e}"))?;
-            plugin
-                .call::<&[u8], Vec<u8>>(export, input_bytes.as_slice())
-                .map_err(|e| anyhow!("{export}() failed for {}: {e}", self.fragment))
-        })?;
+                let output = tokio::task::block_in_place(|| {
+                    let mut plugin = plugin
+                        .lock()
+                        .map_err(|e| anyhow!("plugin mutex poisoned: {e}"))?;
+                    plugin
+                        .call::<&[u8], Vec<u8>>(export, input_bytes.as_slice())
+                        .map_err(|e| anyhow!("{export}() failed for '{}': {e}", self.fragment))
+                })?;
 
-        let pending_state = self
-            .state
-            .get()
-            .map_err(|e| anyhow!("state error: {e}"))?
-            .lock()
-            .map_err(|e| anyhow!("state poisoned: {e}"))?
-            .pending
-            .take();
+                let pending_state = state
+                    .get()
+                    .map_err(|e| anyhow!("state error: {e}"))?
+                    .lock()
+                    .map_err(|e| anyhow!("state poisoned: {e}"))?
+                    .pending
+                    .take();
 
-        let create_requests = self
-            .create_queue
-            .get()
-            .map_err(|e| anyhow!("create_queue error: {e}"))?
-            .lock()
-            .map_err(|e| anyhow!("create_queue poisoned: {e}"))?
-            .pending
-            .drain(..)
-            .collect();
+                let create_requests = create_queue
+                    .get()
+                    .map_err(|e| anyhow!("create_queue error: {e}"))?
+                    .lock()
+                    .map_err(|e| anyhow!("create_queue poisoned: {e}"))?
+                    .pending
+                    .drain(..)
+                    .collect();
 
-        let delete_requests = self
-            .delete_queue
-            .get()
-            .map_err(|e| anyhow!("delete_queue error: {e}"))?
-            .lock()
-            .map_err(|e| anyhow!("delete_queue poisoned: {e}"))?
-            .pending
-            .drain(..)
-            .collect();
+                let delete_requests = delete_queue
+                    .get()
+                    .map_err(|e| anyhow!("delete_queue error: {e}"))?
+                    .lock()
+                    .map_err(|e| anyhow!("delete_queue poisoned: {e}"))?
+                    .pending
+                    .drain(..)
+                    .collect();
 
-        Ok(DispatchResult {
-            output,
-            pending_state,
-            create_requests,
-            delete_requests,
-        })
+                Ok(DispatchResult {
+                    output,
+                    pending_state,
+                    create_requests,
+                    delete_requests,
+                })
+            }
+        }
     }
 
     /// Record a successful IPFS persist: update the persisted snapshot and
-    /// clear the dirty flag.  Call this after a successful `ipfs_add`.
+    /// clear the dirty flag.  No-op for native entities.
     pub fn mark_saved(&self, saved_bytes: Vec<u8>) {
-        if let Ok(arc) = self.state.get() {
-            if let Ok(mut ctx) = arc.lock() {
-                ctx.persisted = Some(saved_bytes);
-                ctx.dirty = false;
+        if let EntityBackend::Extism { state, .. } = &self.backend {
+            if let Ok(arc) = state.get() {
+                if let Ok(mut ctx) = arc.lock() {
+                    ctx.persisted = Some(saved_bytes);
+                    ctx.dirty = false;
+                }
             }
         }
     }
@@ -481,19 +593,22 @@ impl EntityPlugin {
     /// A well-behaved plugin responds by calling `ma_set_state(bytes)`.  If it
     /// doesn't, `Ok(None)` is returned and `dirty` is unchanged (tough luck).
     /// On IPFS success the `dirty` flag is cleared and the CID is returned.
+    /// Always returns `Ok(None)` for native entities (they manage their own state).
     pub async fn trigger_save(&self, kubo_url: &str) -> Result<Option<String>> {
+        let EntityBackend::Extism { plugin, state, .. } = &self.backend else {
+            return Ok(None);
+        };
+
         tokio::task::block_in_place(|| {
-            let mut plugin = self
-                .plugin
+            let mut plugin = plugin
                 .lock()
                 .map_err(|e| anyhow!("plugin mutex poisoned: {e}"))?;
             plugin
                 .call::<&[u8], Vec<u8>>("save_state", b"")
-                .map_err(|e| anyhow!("save_state() failed for {}: {e}", self.fragment))
+                .map_err(|e| anyhow!("save_state() failed for '{}': {e}", self.fragment))
         })?;
 
-        let pending = self
-            .state
+        let pending = state
             .get()
             .map_err(|e| anyhow!("state error: {e}"))?
             .lock()
@@ -504,7 +619,7 @@ impl EntityPlugin {
         if let Some(bytes) = pending {
             let cid = ipfs_add(kubo_url, bytes.clone())
                 .await
-                .map_err(|e| anyhow!("ipfs_add for {} state: {e}", self.fragment))?;
+                .map_err(|e| anyhow!("ipfs_add for '{}' state: {e}", self.fragment))?;
             self.mark_saved(bytes);
             Ok(Some(cid))
         } else {

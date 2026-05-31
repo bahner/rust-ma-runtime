@@ -147,7 +147,9 @@ pub(super) async fn register_entity_plugin(
     // Look up the KindNode from the registry first.
     let kind_node: Arc<KindNode> = {
         let registry = ctx.kind_registry.read().await;
-        if let Some(k) = registry.get(&entity_node.kind).cloned() { k } else {
+        if let Some(k) = registry.get(&entity_node.kind).cloned() {
+            k
+        } else {
             // Fall back: fetch from IPFS via the manifest.
             let manifest = match load_manifest(ctx).await {
                 Ok(m) => m,
@@ -156,7 +158,9 @@ pub(super) async fn register_entity_plugin(
                     return;
                 }
             };
-            let kind_link = if let Some(l) = manifest.kinds.get_protocol(&entity_node.kind) { l.clone() } else {
+            let kind_link = if let Some(l) = manifest.kinds.get_protocol(&entity_node.kind) {
+                l.clone()
+            } else {
                 warn!(name = %name, kind = %entity_node.kind, "kind not in manifest; cannot load entity");
                 return;
             };
