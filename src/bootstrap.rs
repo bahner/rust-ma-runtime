@@ -54,6 +54,8 @@ pub struct BootstrapKind {
     #[serde(default)]
     pub host_functions: Vec<String>,
     #[serde(default)]
+    pub evaluator: crate::entity::Evaluator,
+    #[serde(default)]
     pub attributes: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub allow: Vec<String>,
@@ -149,6 +151,7 @@ pub async fn build_manifest(
             protocol: protocol.clone(),
             api: bk.api.clone(),
             host_functions: bk.host_functions.clone(),
+            evaluator: bk.evaluator.clone(),
             attributes: bk.attributes.clone(),
             allow: bk.allow.clone(),
         };
@@ -182,6 +185,7 @@ pub async fn build_manifest(
                     schedules: schedules.clone(),
                     parent: None,
                     label: None,
+                    lifecycle: crate::entity::Lifecycle::New,
                 };
                 let cid = kubo::dag_put(kubo_url, &node)
                     .await
@@ -275,6 +279,7 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
             BootstrapKind {
                 api: node.api,
                 host_functions: node.host_functions,
+                evaluator: node.evaluator,
                 attributes: node.attributes,
                 allow: node.allow,
             },
@@ -359,12 +364,9 @@ pub async fn load_entities(
                 continue;
             }
         };
-        let kind_link = match manifest.kinds.get_protocol(&node.kind) {
-            Some(l) => l.clone(),
-            None => {
-                tracing::warn!(name = %name, kind = %node.kind, "Kind not found in manifest; skipping entity");
-                continue;
-            }
+        let kind_link = if let Some(l) = manifest.kinds.get_protocol(&node.kind) { l.clone() } else {
+            tracing::warn!(name = %name, kind = %node.kind, "Kind not found in manifest; skipping entity");
+            continue;
         };
         let kind_node: KindNode = match kubo::dag_get(kubo_url, &kind_link.cid).await {
             Ok(k) => k,
@@ -374,8 +376,8 @@ pub async fn load_entities(
             }
         };
         match plugin::EntityPlugin::load(name.clone(), &node, &kind_node, our_did, kubo_url, envelope_tx.clone()).await {
-            Ok(ep) => {
-                tracing::info!(name = %name, "{}", crate::i18n::t("entity-loaded"));
+            Ok((ep, lifecycle)) => {
+                tracing::info!(name = %name, lifecycle = %lifecycle, "{}", crate::i18n::t("entity-loaded"));
                 registry.write().await.insert(name.clone(), Arc::new(ep));
                 loaded += 1;
             }
@@ -444,6 +446,10 @@ pub async fn save_all_entity_states(
             }
         };
         entity_node.state = Some(IpldLink::new(state_cid));
+        // Mark lifecycle = stopped on clean shutdown (only if it was running).
+        if entity_node.lifecycle == crate::entity::Lifecycle::Running {
+            entity_node.lifecycle = crate::entity::Lifecycle::Stopped;
+        }
 
         match kubo::dag_put(kubo_url, &entity_node).await {
             Ok(new_cid) => {

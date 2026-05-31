@@ -753,7 +753,7 @@ async fn main() -> Result<()> {
                     } else {
                         MESSAGE_TYPE_RPC
                     };
-                    let sender_did_url = format!("{}#{}", our_did, fragment);
+                    let sender_did_url = format!("{our_did}#{fragment}");
                     let recipient = match Did::try_from(env.to.as_str()) {
                         Ok(d) => d,
                         Err(e) => {

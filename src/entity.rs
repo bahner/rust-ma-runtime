@@ -203,6 +203,8 @@ pub struct EntityCtx {
     /// Fragment of the parent entity.  `None` for `#root`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    /// Lifecycle state managed by the runtime.
+    pub lifecycle: Lifecycle,
 }
 
 /// Input passed (CBOR-encoded) to both `handle_cast` (stateless) and
@@ -245,6 +247,10 @@ pub struct KindNode {
     /// Host functions the runtime makes available to plugins of this kind.
     /// Principle of least privilege: only register what the kind actually needs.
     pub host_functions: Vec<String>,
+    /// How the runtime executes plugin bytes for this kind.
+    /// Defaults to [`Evaluator::Extism`] when absent in serialised form.
+    #[serde(default)]
+    pub evaluator: Evaluator,
     /// Arbitrary kind attributes (e.g. `wasi: true`, `public: true`).
     /// All plugin behaviour is derived from this map — the protocol string
     /// is treated as an opaque identifier and never parsed for semantics.
@@ -263,15 +269,7 @@ impl KindNode {
     pub fn wasi(&self) -> bool {
         self.attributes
             .get("wasi")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-    }
-
-    /// Whether any entity may create instances of this kind (`attributes.public == true`).
-    pub fn is_public(&self) -> bool {
-        self.attributes
-            .get("public")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false)
     }
 
@@ -283,18 +281,6 @@ impl KindNode {
         } else {
             PluginKind::Stateless
         }
-    }
-
-    /// Whether this kind's `allow` list permits a caller of `caller_kind` to
-    /// create instances.  `"create *"` is a wildcard.
-    pub fn allows_create(&self, caller_kind: &str) -> bool {
-        self.allow.iter().any(|entry| {
-            if let Some(kind) = entry.strip_prefix("create ") {
-                kind == "*" || kind == caller_kind
-            } else {
-                false
-            }
-        })
     }
 }
 
@@ -309,7 +295,50 @@ pub fn new_kind_registry() -> KindRegistry {
 
 /// Entity fragment names reserved by the runtime system.
 /// These names cannot be used as entity names.
-pub const RESERVED_ENTITY_NAMES: &[&str] = &["root", "runtime"];
+pub const RESERVED_ENTITY_NAMES: &[&str] = &["root", "acl", "scheduler", "logger", "runtime"];
+
+/// Lifecycle state of an entity, persisted in [`EntityNode`] and passed to
+/// plugins via [`EntityCtx`].
+///
+/// | State | Meaning |
+/// |-------|---------|
+/// | `new` | Created but `init()` not yet completed |
+/// | `running` | `init()` completed OK — normal dispatch |
+/// | `error` | `init()` failed on restart — plugin still dispatchable for `:debug`/`:dump` |
+/// | `stopped` | Clean shutdown via runtime signal |
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Lifecycle {
+    New,
+    #[default]
+    Running,
+    Error,
+    Stopped,
+}
+
+impl std::fmt::Display for Lifecycle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Lifecycle::New => write!(f, "new"),
+            Lifecycle::Running => write!(f, "running"),
+            Lifecycle::Error => write!(f, "error"),
+            Lifecycle::Stopped => write!(f, "stopped"),
+        }
+    }
+}
+
+/// How the runtime executes the plugin bytes for a [`KindNode`].
+///
+/// Stored in `KindNode.evaluator`; defaults to [`Extism`](Evaluator::Extism).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Evaluator {
+    #[default]
+    Extism,
+    Native,
+    Bash,
+    Lua,
+}
 
 /// IPLD node representing a single entity.
 ///
@@ -341,6 +370,9 @@ pub struct EntityNode {
     /// Human-readable label for display purposes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Lifecycle state: `New` until first successful `init()`, then `Running`.
+    #[serde(default)]
+    pub lifecycle: Lifecycle,
 }
 
 /// Root IPLD node for this runtime.
@@ -409,6 +441,7 @@ pub struct CreateEntityRequest {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use super::{EntityNode, IpldLink, KindTree};
     use std::collections::HashMap;
 
@@ -467,6 +500,7 @@ mod tests {
             schedules: HashMap::new(),
             parent: None,
             label: None,
+            lifecycle: Lifecycle::default(),
         };
 
         let value = serde_json::to_value(&node).expect("serialize entity node");
@@ -488,6 +522,7 @@ mod tests {
             schedules: HashMap::new(),
             parent: None,
             label: None,
+            lifecycle: Lifecycle::default(),
         };
         let value = serde_json::to_value(&node).expect("serialize entity node");
         assert!(

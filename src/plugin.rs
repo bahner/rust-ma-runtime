@@ -9,10 +9,9 @@ use anyhow::{anyhow, Context, Result};
 use extism::{host_fn, Function, Manifest, Plugin, UserData, Wasm, PTR};
 use ma_core::{cat_bytes, ipfs_add};
 use tokio::sync::{mpsc::UnboundedSender, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, warn};
 
-use crate::entity::{CastInput, CreateEntityRequest, EntityCtx, EntityNode, KindNode, PluginKind, ReplyRequest, SendEnvelope};
-use crate::schedule::{encode_cbor_call_cbor, parse_duration, ScheduleRequest};
+use crate::entity::{CastInput, CreateEntityRequest, EntityCtx, EntityNode, Evaluator, KindNode, Lifecycle, PluginKind, ReplyRequest, SendEnvelope};
 
 // ── Fragment generation ───────────────────────────────────────────────────────
 
@@ -25,30 +24,6 @@ fn generate_fragment() -> String {
         .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
         .collect()
 }
-
-// ── ma_log host function ──────────────────────────────────────────────────────
-
-#[derive(serde::Deserialize)]
-struct LogInput {
-    level: String,
-    msg: String,
-}
-
-// `ma_log` host function: plugin logs a message at the given level.
-//
-// Input is CBOR-encoded `{ "level": "debug"|"info"|"warn"|"error", "msg": "…" }`.
-// The fragment name is passed via UserData for tracing context.
-host_fn!(ma_log_fn(user_data: String; input: Vec<u8>) -> Vec<u8> {
-    let req: LogInput = from_cbor_bytes(&input)?;
-    let fragment = user_data.get()?.lock().unwrap().clone();
-    match req.level.as_str() {
-        "debug" => debug!("[{}] {}", fragment, req.msg),
-        "warn"  => warn!( "[{}] {}", fragment, req.msg),
-        "error" => error!("[{}] {}", fragment, req.msg),
-        _       => info!( "[{}] {}", fragment, req.msg),
-    }
-    Ok(Vec::new())
-});
 
 // ── Host functions ────────────────────────────────────────────────────────────
 
@@ -116,83 +91,6 @@ impl StateCtx {
     }
 }
 
-// `ma_schedule_cron` host function: plugin queues a recurring cron schedule.
-// Input is CBOR-encoded `{ "spec": "…", "verb": "…", "args": […] }`.
-#[derive(serde::Deserialize)]
-struct CronScheduleInput {
-    spec: String,
-    verb: String,
-    #[serde(default)]
-    args: Vec<ciborium::Value>,
-}
-host_fn!(ma_schedule_cron_fn(user_data: Vec<ScheduleRequest>; input: Vec<u8>) -> Vec<u8> {
-    let req: CronScheduleInput = from_cbor_bytes(&input)?;
-    let content = encode_cbor_call_cbor(&req.verb, &req.args);
-    user_data.get()?.lock().unwrap().push(ScheduleRequest::Cron {
-        spec: req.spec,
-        content,
-    });
-    Ok(Vec::new())
-});
-
-// `ma_schedule_at` host function: plugin queues a one-shot schedule.
-// Input is CBOR-encoded `{ "timestamp_ms": N, "verb": "…", "args": […] }`.
-#[derive(serde::Deserialize)]
-struct AtScheduleInput {
-    timestamp_ms: i64,
-    verb: String,
-    #[serde(default)]
-    args: Vec<ciborium::Value>,
-}
-host_fn!(ma_schedule_at_fn(user_data: Vec<ScheduleRequest>; input: Vec<u8>) -> Vec<u8> {
-    let req: AtScheduleInput = from_cbor_bytes(&input)?;
-    let content = encode_cbor_call_cbor(&req.verb, &req.args);
-    user_data.get()?.lock().unwrap().push(ScheduleRequest::At {
-        timestamp_ms: req.timestamp_ms,
-        content,
-    });
-    Ok(Vec::new())
-});
-
-// `ma_schedule_random` host function: plugin queues a self-rescheduling random job.
-// Input is CBOR-encoded `{ "max_secs": N, "verb": "…", "args": […] }`.
-#[derive(serde::Deserialize)]
-struct RandomScheduleInput {
-    max_secs: u64,
-    verb: String,
-    #[serde(default)]
-    args: Vec<ciborium::Value>,
-}
-host_fn!(ma_schedule_random_fn(user_data: Vec<ScheduleRequest>; input: Vec<u8>) -> Vec<u8> {
-    let req: RandomScheduleInput = from_cbor_bytes(&input)?;
-    let content = encode_cbor_call_cbor(&req.verb, &req.args);
-    user_data.get()?.lock().unwrap().push(ScheduleRequest::Random {
-        max_secs: req.max_secs,
-        content,
-    });
-    Ok(Vec::new())
-});
-
-// `ma_schedule_interval` host function: plugin queues a fixed-interval recurring job.
-// Input is CBOR-encoded `{ "interval": "1h", "verb": "…", "args": […] }`.
-// Duration string supports `s`, `m`, `h`, `d` units, combinable: `"1h30m"`.
-#[derive(serde::Deserialize)]
-struct IntervalScheduleInput {
-    interval: String,
-    verb: String,
-    #[serde(default)]
-    args: Vec<ciborium::Value>,
-}
-host_fn!(ma_schedule_interval_fn(user_data: Vec<ScheduleRequest>; input: Vec<u8>) -> Vec<u8> {
-    let req: IntervalScheduleInput = from_cbor_bytes(&input)?;
-    let secs = parse_duration(&req.interval)
-        .map_err(|e| extism::Error::msg(format!("ma_schedule_interval: {e}")))?
-        .as_secs();
-    let content = encode_cbor_call_cbor(&req.verb, &req.args);
-    user_data.get()?.lock().unwrap().push(ScheduleRequest::Interval { secs, content });
-    Ok(Vec::new())
-});
-
 // `ma_set_state` host function: plugin calls this to queue a new state.
 // Sets `dirty` **only** when the bytes actually differ from the last
 // persisted snapshot — no-op saves do not pollute the dirty flag.
@@ -208,19 +106,7 @@ host_fn!(ma_set_state_fn(user_data: StateCtx; input: Vec<u8>) -> Vec<u8> {
 });
 
 // ── ma_create_entity host function ────────────────────────────────────────────
-// ── ma_ctx host function ─────────────────────────────────────────────────────────────
 
-// `ma_ctx` host function: returns entity metadata to the plugin.
-//
-// Input is ignored.  Output is CBOR-encoded `EntityCtx`.
-host_fn!(ma_ctx_fn(user_data: EntityCtx; _input: Vec<u8>) -> Vec<u8> {
-    let arc = user_data.get()?;
-    let ctx = arc.lock().unwrap();
-    let mut out = Vec::new();
-    ciborium::ser::into_writer(&*ctx, &mut out)
-        .map_err(|e| extism::Error::msg(format!("ma_ctx: CBOR encode: {e}")))?;
-    Ok(out)
-});
 // Context captured by `ma_create_entity` host function.
 struct CreateEntityCtx {
     pending: Vec<CreateEntityRequest>,
@@ -258,17 +144,42 @@ host_fn!(ma_create_entity_fn(user_data: CreateEntityCtx; input: Vec<u8>) -> Vec<
     Ok(out)
 });
 
+// ── ma_delete_entity host function ───────────────────────────────────────────
+
+/// Context captured by `ma_delete_entity` host function.
+struct DeleteEntityCtx {
+    pending: Vec<String>,
+}
+
+// `ma_delete_entity` host function: plugin requests removal of an entity.
+//
+// Input is a CBOR-encoded fragment string.
+// The request is queued; the runtime validates and removes after dispatch.
+host_fn!(ma_delete_entity_fn(user_data: DeleteEntityCtx; input: Vec<u8>) -> Vec<u8> {
+    let target: String = from_cbor_bytes(&input)?;
+    let arc = user_data.get()?;
+    let mut ctx = arc.lock().unwrap();
+    ctx.pending.push(target);
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(&":queued", &mut out)
+        .map_err(|e| extism::Error::msg(format!("ma_delete_entity: CBOR encode: {e}")))?;
+    Ok(out)
+});
+
 // ── Dispatch result ─────────────────────────────────────────────────────────
 
 /// Return value from `handle_cast` and `handle_call`.
 pub struct DispatchResult {
+    /// Raw CBOR bytes returned by the plugin export.
+    pub output: Vec<u8>,
     /// State bytes queued by the plugin via `ma_set_state` host function.
     /// `None` if the plugin did not call `ma_set_state` during this invocation.
     pub pending_state: Option<Vec<u8>>,
-    /// Schedule requests enqueued via `ma_schedule_*` host functions.
-    pub schedule_requests: Vec<ScheduleRequest>,
     /// Entity creation requests enqueued via `ma_create_entity` host function.
     pub create_requests: Vec<CreateEntityRequest>,
+    /// Entity deletion requests enqueued via `ma_delete_entity` host function.
+    /// Each entry is the fragment of the entity to delete.
+    pub delete_requests: Vec<String>,
 }
 
 // ── Registry type alias ───────────────────────────────────────────────────────
@@ -280,6 +191,15 @@ pub fn new_entity_registry() -> EntityRegistry {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
+// ── init() payload ────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct InitPayload<'a> {
+    ctx: &'a EntityCtx,
+    #[serde(with = "serde_bytes", skip_serializing_if = "Vec::is_empty")]
+    state: Vec<u8>,
+}
+
 // ── EntityPlugin ──────────────────────────────────────────────────────────────
 
 pub struct EntityPlugin {
@@ -288,23 +208,22 @@ pub struct EntityPlugin {
     /// `did:ma:<ipns>#<fragment>` → lookup `entities[fragment]`.
     pub fragment: String,
     pub kind: PluginKind,
-    /// Protocol ID of the kind this entity was loaded with (e.g. `/ma/stateless/python/0.0.1`).
-    pub kind_protocol: String,
     /// ACL name string — resolved via `acls.<acl>` in the root manifest.
     /// Empty string means deny-all (fail-closed).
     pub acl: String,
+    /// Parent fragment — the entity that owns/created this one, if any.
+    /// Immutable after creation. Only the parent may delete this entity.
+    pub parent: Option<String>,
     /// Static schedules declared in the entity definition.
     /// Stored here so bootstrap can register them without re-fetching IPFS data.
     pub schedules: HashMap<String, crate::schedule::StaticSchedule>,
     plugin: Mutex<Plugin>,
-    /// Queue populated by `ma_schedule_*` host functions during a plugin call.
-    schedule_queue: UserData<Vec<ScheduleRequest>>,
     /// Shared state context: pending bytes, last-persisted snapshot, dirty flag.
     state: UserData<StateCtx>,
     /// Queue populated by `ma_create_entity` host function during a plugin call.
     create_queue: UserData<CreateEntityCtx>,
-    /// Entity metadata returned by `ma_ctx` host function.
-    ctx_data: UserData<EntityCtx>,
+    /// Queue populated by `ma_delete_entity` host function during a plugin call.
+    delete_queue: UserData<DeleteEntityCtx>,
 }
 
 // Safety: `extism::Plugin` calls into C (libextism) but the Mutex ensures
@@ -316,6 +235,12 @@ unsafe impl Sync for EntityPlugin {}
 
 impl EntityPlugin {
     /// Load a plugin from IPFS, initialise it with persisted state (or empty).
+    ///
+    /// Returns `(plugin, Lifecycle::Running)` on success.
+    /// Returns `(plugin, Lifecycle::Error)` if `init()` fails (plugin still usable
+    /// for `:debug`/`:dump` calls).
+    /// Returns `Err` only for fatal errors (Wasm fetch, plugin instantiation).
+    #[allow(clippy::too_many_lines)]
     pub async fn load(
         fragment: impl Into<String>,
         node: &EntityNode,
@@ -323,11 +248,19 @@ impl EntityPlugin {
         our_did: &str,
         kubo_url: &str,
         envelope_tx: UnboundedSender<(String, SendEnvelope)>,
-    ) -> Result<Self> {
+    ) -> Result<(Self, Lifecycle)> {
         let fragment = fragment.into();
         let behavior_cid = &node.behavior.cid;
         let kind = kind_node.plugin_kind();
         let wasi = kind_node.wasi();
+
+        // Only Extism evaluator is currently supported.
+        if kind_node.evaluator != Evaluator::Extism {
+            return Err(anyhow!(
+                "unsupported evaluator {:?} for {fragment}; only 'extism' is implemented",
+                kind_node.evaluator
+            ));
+        }
 
         debug!(fragment = %fragment, cid = %behavior_cid, kind = ?kind, wasi = wasi, "loading entity plugin");
 
@@ -358,31 +291,28 @@ impl EntityPlugin {
             tx: envelope_tx,
             fragment: fragment.clone(),
         });
-        let schedule_queue: UserData<Vec<ScheduleRequest>> = UserData::new(Vec::new());
         let state: UserData<StateCtx> = UserData::new(StateCtx::new(init_state.clone()));
-        let log_ctx: UserData<String> = UserData::new(fragment.clone());
         let create_queue: UserData<CreateEntityCtx> = UserData::new(CreateEntityCtx {
             pending: Vec::new(),
             caller_fragment: fragment.clone(),
         });
-        let ctx_data: UserData<EntityCtx> = UserData::new(EntityCtx {
+        let delete_queue: UserData<DeleteEntityCtx> = UserData::new(DeleteEntityCtx {
+            pending: Vec::new(),
+        });
+        let ctx_for_init = EntityCtx {
             self_did: format!("{}#{}", our_did, &fragment),
             fragment: fragment.clone(),
             kind: node.kind.clone(),
             parent: node.parent.clone(),
-        });
+            lifecycle: node.lifecycle.clone(),
+        };
 
         let all_fns: Vec<(&str, Function)> = vec![
             ("ma_send",    Function::new("ma_send",    [PTR], [PTR], outbox_ctx_send,        ma_send_fn)),
             ("ma_reply",   Function::new("ma_reply",   [PTR], [PTR], outbox_ctx_reply,       ma_reply_fn)),
-            ("ma_log",     Function::new("ma_log",     [PTR], [PTR], log_ctx,                ma_log_fn)),
-            ("ma_schedule_cron",     Function::new("ma_schedule_cron",     [PTR], [PTR], schedule_queue.clone(), ma_schedule_cron_fn)),
-            ("ma_schedule_at",       Function::new("ma_schedule_at",       [PTR], [PTR], schedule_queue.clone(), ma_schedule_at_fn)),
-            ("ma_schedule_random",   Function::new("ma_schedule_random",   [PTR], [PTR], schedule_queue.clone(), ma_schedule_random_fn)),
-            ("ma_schedule_interval", Function::new("ma_schedule_interval", [PTR], [PTR], schedule_queue.clone(), ma_schedule_interval_fn)),
             ("ma_set_state", Function::new("ma_set_state", [PTR], [PTR], state.clone(), ma_set_state_fn)),
             ("ma_create_entity", Function::new("ma_create_entity", [PTR], [PTR], create_queue.clone(), ma_create_entity_fn)),
-            ("ma_ctx", Function::new("ma_ctx", [PTR], [PTR], ctx_data.clone(), ma_ctx_fn)),
+            ("ma_delete_entity", Function::new("ma_delete_entity", [PTR], [PTR], delete_queue.clone(), ma_delete_entity_fn)),
         ];
         let allowed: std::collections::HashSet<&str> =
             kind_node.host_functions.iter().map(String::as_str).collect();
@@ -396,27 +326,53 @@ impl EntityPlugin {
         let mut plugin = tokio::task::block_in_place(|| Plugin::new(&manifest, host_fns, wasi))
             .map_err(|e| anyhow!("failed to create extism plugin for {fragment}: {e}"))?;
 
-        // 4. Stateful only: call init() with the persisted state snapshot.
-        if kind == PluginKind::Stateful {
-            tokio::task::block_in_place(|| {
+        // 4. Call init() only if the kind declares it in its API.
+        //    Kinds without `init` (e.g. stateless plugins) skip this step
+        //    and start in the Running state directly.
+        //    Return value: :ok → Running, [:error, reason] → Error.
+        let lifecycle = if kind_node.api.iter().any(|s| s == "init") {
+            let init_payload = InitPayload { ctx: &ctx_for_init, state: init_state };
+            let mut init_bytes = Vec::new();
+            ciborium::ser::into_writer(&init_payload, &mut init_bytes)
+                .context("encoding init payload")?;
+            let init_result_bytes = tokio::task::block_in_place(|| {
                 plugin
-                    .call::<&[u8], Vec<u8>>("init", init_state.as_slice())
+                    .call::<&[u8], Vec<u8>>("init", init_bytes.as_slice())
                     .map_err(|e| anyhow!("init() failed for {fragment}: {e}"))
             })?;
-        }
+            match ciborium::de::from_reader::<ciborium::Value, _>(init_result_bytes.as_slice()) {
+                Ok(ciborium::Value::Text(s)) if s == ":ok" => Lifecycle::Running,
+                Ok(ciborium::Value::Array(ref v)) if v.first() == Some(&ciborium::Value::Text(":ok".into())) => Lifecycle::Running,
+                Ok(ciborium::Value::Array(ref v)) if v.first() == Some(&ciborium::Value::Text(":error".into())) => {
+                    let reason = v.get(1)
+                        .and_then(|r| if let ciborium::Value::Text(s) = r { Some(s.as_str()) } else { None })
+                        .unwrap_or("unknown");
+                    warn!(fragment = %fragment, reason = %reason, "init() returned :error");
+                    Lifecycle::Error
+                }
+                Ok(other) => {
+                    warn!(fragment = %fragment, value = ?other, "init() returned unexpected value; treating as :ok");
+                    Lifecycle::Running
+                }
+                // Empty output or parse failure → treat as :ok (legacy plugins).
+                Err(_) => Lifecycle::Running,
+            }
+        } else {
+            Lifecycle::Running
+        };
 
-        Ok(Self {
+        let ep = Self {
             fragment,
             kind,
-            kind_protocol: node.kind.clone(),
             acl: node.acl.clone(),
+            parent: node.parent.clone(),
             schedules: node.schedules.clone(),
             plugin: Mutex::new(plugin),
-            schedule_queue,
             state,
             create_queue,
-            ctx_data,
-        })
+            delete_queue,
+        };
+        Ok((ep, lifecycle))
     }
 
     /// Dispatch to the `handle_cast` export (stateless — no state threading).
@@ -439,7 +395,7 @@ impl EntityPlugin {
         ciborium::ser::into_writer(input, &mut input_bytes)
             .map_err(|e| anyhow!("failed to CBOR-encode CastInput: {e}"))?;
 
-        tokio::task::block_in_place(|| {
+        let output = tokio::task::block_in_place(|| {
             let mut plugin = self
                 .plugin
                 .lock()
@@ -448,15 +404,6 @@ impl EntityPlugin {
                 .call::<&[u8], Vec<u8>>(export, input_bytes.as_slice())
                 .map_err(|e| anyhow!("{export}() failed for {}: {e}", self.fragment))
         })?;
-
-        let schedule_requests = self
-            .schedule_queue
-            .get()
-            .map_err(|e| anyhow!("schedule_queue error: {e}"))?
-            .lock()
-            .map_err(|e| anyhow!("schedule_queue poisoned: {e}"))?
-            .drain(..)
-            .collect();
 
         let pending_state = self
             .state
@@ -477,10 +424,21 @@ impl EntityPlugin {
             .drain(..)
             .collect();
 
+        let delete_requests = self
+            .delete_queue
+            .get()
+            .map_err(|e| anyhow!("delete_queue error: {e}"))?
+            .lock()
+            .map_err(|e| anyhow!("delete_queue poisoned: {e}"))?
+            .pending
+            .drain(..)
+            .collect();
+
         Ok(DispatchResult {
+            output,
             pending_state,
-            schedule_requests,
             create_requests,
+            delete_requests,
         })
     }
 

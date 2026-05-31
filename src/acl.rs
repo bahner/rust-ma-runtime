@@ -159,34 +159,76 @@ where
     ))
 }
 
-/// Resolve a `+<handle>.<path>` group reference to a list of member DIDs.
+/// Resolve a `+#<fragment>` group reference by dispatching `:contains` to the
+/// local `ma-set` actor with the given `caller` DID.
 ///
-/// The dot-separated `<path>` after the handle may be of arbitrary depth
-/// (e.g. `+alice.project4.admins`). Each dot is converted to a `/` to form
-/// the IPFS DAG sub-path: `/ipfs/<root_cid>/<handle>/<path…>`.
+/// Returns `vec![caller.to_string()]` if the set contains the caller,
+/// or an empty vec if not (or if the actor is unavailable).
 ///
-/// Fetches via `ipfs dag resolve` + `ipfs dag get` and deserialises as
-/// `Vec<String>`.
-pub async fn fetch_group_members(
-    kubo_rpc_url: &str,
+/// Group references of the form `+<handle>.<path>` (legacy IPFS-path style)
+/// are not supported — use `+#<fragment>` to reference a local `ma-set` actor.
+pub async fn query_actor_group(
     group_ref: &str,
-    root_cid: &str,
+    caller: &str,
+    entity_registry: &crate::plugin::EntityRegistry,
 ) -> Result<Vec<String>> {
-    let without_prefix = group_ref
-        .strip_prefix(GROUP_PREFIX)
-        .ok_or_else(|| anyhow::anyhow!("invalid group ref: {group_ref}"))?;
+    let fragment = group_ref
+        .strip_prefix("+#")
+        .ok_or_else(|| anyhow::anyhow!("group ref must use +#<fragment> syntax: {group_ref}"))?;
 
-    // "handle.name" → "/ipfs/<root_cid>/handle/name"
-    let subpath: String = without_prefix.replace('.', "/");
-    let ipfs_path = format!("/ipfs/{root_cid}/{subpath}");
-
-    let resolved = crate::kubo::dag_resolve(kubo_rpc_url, &ipfs_path)
+    let ep = entity_registry
+        .read()
         .await
-        .with_context(|| format!("resolving group path {ipfs_path}"))?;
+        .get(fragment)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("group actor +#{fragment} not found in registry"))?;
 
-    crate::kubo::dag_get::<Vec<String>>(kubo_rpc_url, &resolved)
-        .await
-        .with_context(|| format!("fetching group members at {resolved}"))
+    // Build CastInput for [:contains, caller] verb.
+    let content = {
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(
+            &ciborium::Value::Array(vec![
+                ciborium::Value::Text(":contains".into()),
+                ciborium::Value::Text(caller.to_string()),
+            ]),
+            &mut buf,
+        )
+        .context("encoding :contains content")?;
+        buf
+    };
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let now = now_secs.saturating_mul(1_000_000_000);
+    let msg = crate::entity::LocalMessage {
+        id: format!("acl-contains-{fragment}"),
+        from: String::new(),
+        to: format!("#{fragment}"),
+        created_at: now,
+        expires: now + 5_000_000_000, // 5 seconds
+        reply_to: None,
+        content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
+        content,
+    };
+    let input = crate::entity::CastInput { msg };
+    let result = ep.handle_call(&input)?;
+
+    // Parse reply: :ok true → caller is member; anything else → not member.
+    let contained = match ciborium::de::from_reader::<ciborium::Value, _>(result.output.as_slice()) {
+        Ok(ciborium::Value::Array(ref v)) => {
+            v.first() == Some(&ciborium::Value::Text(":ok".into()))
+                && v.get(1) == Some(&ciborium::Value::Bool(true))
+        }
+        Ok(ciborium::Value::Bool(b)) => b,
+        _ => false,
+    };
+
+    if contained {
+        Ok(vec![caller.to_string()])
+    } else {
+        Ok(vec![])
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,12 @@
+protocol: /ma/set/0.0.1
+attributes:
+  wasi: false
+  stateful: true
+api:
+  - init
+  - handle_call
+host_functions:
+  - ma_set_state
+  - ma_reply
+allow:
+  - "*"

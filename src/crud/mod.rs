@@ -10,7 +10,6 @@
 //! All replies use `application/x-ma-crud-reply`.
 
 mod config;
-mod create;
 mod entities;
 mod helpers;
 mod kinds;

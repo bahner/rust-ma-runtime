@@ -236,7 +236,7 @@ pub fn make_random_job(
                     .read()
                     .await
                     .get(&fragment)
-                    .map_or(false, |p| p.schedules.contains_key(id)),
+                    .is_some_and(|p| p.schedules.contains_key(id)),
                 None => true,
             };
             if still_active {
@@ -398,22 +398,6 @@ pub fn encode_cbor_call(verb: &str, args: &[serde_yaml::Value]) -> Vec<u8> {
         let items: Vec<CborValue> = std::iter::once(CborValue::Text(verb.to_string()))
             .chain(args.iter().map(yaml_to_cbor))
             .collect();
-        ciborium::ser::into_writer(&CborValue::Array(items), &mut out).ok();
-    }
-    out
-}
-
-/// Encode a verb + CBOR args as pre-built CBOR call bytes (host-function path).
-///
-/// No args → CBOR text atom `":verb"`.
-/// With args → CBOR array `[":verb", arg1, …]`.
-pub fn encode_cbor_call_cbor(verb: &str, args: &[CborValue]) -> Vec<u8> {
-    let mut out = Vec::new();
-    if args.is_empty() {
-        ciborium::ser::into_writer(&CborValue::Text(verb.to_string()), &mut out).ok();
-    } else {
-        let mut items = vec![CborValue::Text(verb.to_string())];
-        items.extend_from_slice(args);
         ciborium::ser::into_writer(&CborValue::Array(items), &mut out).ok();
     }
     out

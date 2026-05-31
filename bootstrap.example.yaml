@@ -56,17 +56,102 @@ runtime:
         - ma_send
         - ma_set_state
 
+    # ── Standard library kinds ────────────────────────────────────────────────
+    # Root orchestrator — the only kind allowed to call ma_create_entity.
+    /ma/root/0.0.1:
+      api:
+        - init
+        - handle_cast
+      host_functions:
+        - ma_send
+        - ma_reply
+        - ma_create_entity
+        - ma_delete_entity
+      allow:
+        - create *
+
+    # Bijective (two-way) key↔value map.
+    # Reads are open to all; writes restricted to parent.
+    /ma/register/0.0.1:
+      attributes:
+        stateful: true
+      api:
+        - init
+        - handle_call
+      host_functions:
+        - ma_set_state
+        - ma_reply
+      allow:
+        - "*"
+
+    # Unordered unique-value collection.
+    # Reads are open to all; writes restricted to parent.
+    /ma/set/0.0.1:
+      attributes:
+        stateful: true
+      api:
+        - init
+        - handle_call
+      host_functions:
+        - ma_set_state
+        - ma_reply
+      allow:
+        - "*"
+
+    # Atomic integer counter.
+    /ma/counter/0.0.1:
+      attributes:
+        stateful: true
+      api:
+        - init
+        - handle_call
+      host_functions:
+        - ma_set_state
+        - ma_reply
+      allow:
+        - "*"
+
+    # Structured log store — receives [:log, level, msg] via handle_call.
+    /ma/logger/0.0.1:
+      attributes:
+        stateful: true
+      api:
+        - init
+        - handle_call
+      host_functions:
+        - ma_set_state
+        - ma_reply
+      allow:
+        - "*"
+
   # Entities — two forms are accepted:
   #
   #   inline:   bootstrap builds and publishes the EntityNode from the descriptor.
   #             `behavior` is an IPLD link to the Wasm bytes already on IPFS.
   #             `acl` references a named ACL from `acls:` above (empty = deny-all).
   entities:
+    # Root orchestrator — the single entry point for entity creation.
+    # Replace the behavior CID with the result of:
+    #   make -C ../ma-python/root ipfs
+    root:
+      kind: /ma/root/0.0.1
+      behavior:
+        /: QmREPLACE_WITH_ROOT_WASM_CID
+      acl: open
+
     # Inline form — bootstrap builds and publishes the EntityNode.
     fortune:
       kind: /ma/stateless/python/0.0.1
       behavior:
         /: QmeB6MAFZ5NTYQgKcPMQ8EimN5rZ6LhbVcirRxTN8t1zoG
+      acl: open
+
+    # Log store — actors send [:log, level, msg] here; query via :entries.
+    # Replace the behavior CID with: make -C ../ma-python/logger ipfs
+    logger:
+      kind: /ma/logger/0.0.1
+      behavior:
+        /: QmREPLACE_WITH_LOGGER_WASM_CID
       acl: open
 
     rms:

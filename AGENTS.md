@@ -24,6 +24,21 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
 - **No local protocol code.** All publish logic, validation, secret-bundle
   handling, config, ACL, and transport are provided by the `ma-core` crate.
   Local code is nothing but glue.
+- **Entity lifecycle.** Every entity tracks a `Lifecycle` state (`new` →
+  `running` | `error`; `stopped` on shutdown). `Lifecycle::New` is set on
+  creation. After `init()` returns `:ok` the state becomes `Running`; a CBOR
+  `[:error, reason]` reply sets it to `Error` (plugin still dispatchable for
+  debug). `Stopped` is written to the manifest on clean shutdown only.
+  Kinds without `init` in their API skip the call and start `Running` directly.
+- **Plugin evaluator.** Each `KindNode` carries an `Evaluator` field (default:
+  `Extism`). Only `Extism` is implemented; `Native`, `Bash`, and `Lua` are
+  reserved for future use. `load()` returns `Err` if asked to load a kind with
+  an unsupported evaluator.
+- **ACL group resolution via local actors.** Groups in ACL maps use the
+  `+#<fragment>` syntax to reference a local `ma-set` actor. Resolution is done
+  by calling `[:contains, caller]` on the actor via `handle_call`. This is a
+  single-member probe, not a bulk fetch — there is no `fetch_group_members`.
+  Use `query_actor_group(group_ref, caller, registry)` in `acl.rs`.
 - **Keys in memory only.** IPNS private key material arriving in a request is
   used once and immediately zeroized (`zeroize`). The daemon's own keys live in
   an encrypted `SecretBundle` on disk, decrypted into memory at startup and
