@@ -47,7 +47,7 @@ pub type NativeDispatch =
 enum EntityBackend {
     /// Wasm module loaded from IPFS via Extism.
     Extism {
-        plugin: Mutex<Plugin>,
+        plugin: Box<Mutex<Plugin>>,
         state: UserData<StateCtx>,
         create_queue: UserData<CreateEntityCtx>,
         delete_queue: UserData<DeleteEntityCtx>,
@@ -94,6 +94,7 @@ host_fn!(ma_send_fn(user_data: OutboxCtx; input: Vec<u8>) -> Vec<u8> {
     let arc = user_data.get()?;
     let ctx = arc.lock().unwrap();
     let _ = ctx.tx.send((ctx.fragment.clone(), envelope));
+    drop(ctx);
     Ok(Vec::new())
 });
 
@@ -113,6 +114,7 @@ host_fn!(ma_reply_fn(user_data: OutboxCtx; input: Vec<u8>) -> Vec<u8> {
     let arc = user_data.get()?;
     let ctx = arc.lock().unwrap();
     let _ = ctx.tx.send((ctx.fragment.clone(), envelope));
+    drop(ctx);
     Ok(Vec::new())
 });
 
@@ -186,6 +188,7 @@ host_fn!(ma_create_entity_fn(user_data: CreateEntityCtx; input: Vec<u8>) -> Vec<
         behaviour_cid: req.behaviour,
         parent,
     });
+    drop(ctx);
     let mut out = Vec::new();
     ciborium::ser::into_writer(&fragment, &mut out)
         .map_err(|e| extism::Error::msg(format!("ma_create_entity: CBOR encode: {e}")))?;
@@ -206,8 +209,7 @@ struct DeleteEntityCtx {
 host_fn!(ma_delete_entity_fn(user_data: DeleteEntityCtx; input: Vec<u8>) -> Vec<u8> {
     let target: String = from_cbor_bytes(&input)?;
     let arc = user_data.get()?;
-    let mut ctx = arc.lock().unwrap();
-    ctx.pending.push(target);
+    arc.lock().unwrap().pending.push(target);
     let mut out = Vec::new();
     ciborium::ser::into_writer(&":queued", &mut out)
         .map_err(|e| extism::Error::msg(format!("ma_delete_entity: CBOR encode: {e}")))?;
@@ -296,12 +298,6 @@ impl EntityPlugin {
             backend: EntityBackend::Native(handler),
         };
         (ep, Lifecycle::Running)
-    }
-
-    /// Returns `true` if this plugin is backed by a compiled-in Rust closure
-    /// rather than a Wasm module.
-    pub fn is_native(&self) -> bool {
-        matches!(self.backend, EntityBackend::Native(_))
     }
 
     /// Load a Wasm plugin from IPFS, initialise it with persisted state (or empty).
@@ -494,7 +490,7 @@ impl EntityPlugin {
             acl: node.acl.clone(),
             parent: node.parent.clone(),
             backend: EntityBackend::Extism {
-                plugin: Mutex::new(plugin),
+                plugin: Box::new(Mutex::new(plugin)),
                 state,
                 create_queue,
                 delete_queue,

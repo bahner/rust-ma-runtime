@@ -250,9 +250,10 @@ pub struct KindNode {
     /// Defaults to [`Evaluator::Extism`] when absent in serialised form.
     #[serde(default)]
     pub evaluator: Evaluator,
-    /// Arbitrary kind attributes (e.g. `wasi: true`, `public: true`).
-    /// All plugin behaviour is derived from this map — the protocol string
-    /// is treated as an opaque identifier and never parsed for semantics.
+    /// Kind attributes. Required keys: `stateful` (bool), `wasi` (bool).
+    /// `stateful: true` means the runtime must call `init()`, pass persisted
+    /// state in and persist new state out after each call.  Never inferred
+    /// from the `api` list — the explicit attribute is the source of truth.
     #[serde(default)]
     pub attributes: BTreeMap<String, serde_json::Value>,
     /// Which caller entity kinds are allowed to create instances of this kind.
@@ -272,10 +273,17 @@ impl KindNode {
             .unwrap_or(false)
     }
 
-    /// Derive the dispatch kind from the `api` list.
-    /// A kind is Stateful when it exports `handle_call`; Stateless otherwise.
+    /// Whether plugins of this kind are stateful.
+    /// Read from the explicit `stateful` attribute — never derived from the `api` list.
+    /// Stateful plugins have state loaded before `init()` / `handle_call` and
+    /// persisted afterwards; stateless plugins have no such lifecycle.
     pub fn plugin_kind(&self) -> PluginKind {
-        if self.api.iter().any(|s| s == "handle_call") {
+        if self
+            .attributes
+            .get("stateful")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
             PluginKind::Stateful
         } else {
             PluginKind::Stateless
@@ -318,10 +326,10 @@ pub enum Lifecycle {
 impl std::fmt::Display for Lifecycle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Lifecycle::New => write!(f, "new"),
-            Lifecycle::Running => write!(f, "running"),
-            Lifecycle::Error => write!(f, "error"),
-            Lifecycle::Stopped => write!(f, "stopped"),
+            Self::New => write!(f, "new"),
+            Self::Running => write!(f, "running"),
+            Self::Error => write!(f, "error"),
+            Self::Stopped => write!(f, "stopped"),
         }
     }
 }
@@ -440,7 +448,6 @@ pub struct CreateEntityRequest {
 mod tests {
     use super::*;
     use super::{EntityNode, IpldLink, KindTree};
-    use std::collections::HashMap;
 
     #[test]
     fn kind_tree_nested_serialization() {

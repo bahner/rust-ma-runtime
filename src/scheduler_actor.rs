@@ -30,7 +30,7 @@
 //!
 //! Kind protocol: [`SCHEDULER_KIND`] (`/ma/scheduler/0.0.1`)
 //! Evaluator: `native`
-//! API: `["handle_cast"]` (stateless — schedule state lives in the JobScheduler)
+//! API: `["handle_cast"]` (stateless — schedule state lives in the `JobScheduler`)
 
 use std::sync::Arc;
 

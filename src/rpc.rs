@@ -180,12 +180,8 @@ async fn handle_entity_plugin_message(
         // that the `"#"` local-entity wildcard in ACL maps matches intra-runtime
         // callers.  This is safe because message signatures are cryptographically
         // verified — a remote peer cannot forge our DID as the sender.
-        let caller_did = if let Some(frag) = message.from.strip_prefix(&format!("{}#", ctx.our_did))
-        {
-            format!("#{frag}")
-        } else {
-            message.from.clone()
-        };
+        let caller_did = message.from.strip_prefix(&format!("{}#", ctx.our_did))
+            .map_or_else(|| message.from.clone(), |frag| format!("#{frag}"));
         let caller_str = caller_did.clone();
         crate::acl::check_full(acl_map, &caller_did, &[verb_ref, "*"], |g| {
             let registry = registry.clone();
@@ -282,7 +278,8 @@ async fn handle_entity_plugin_message(
                     .write()
                     .await
                     .insert(req.fragment.clone(), Arc::new(ep));
-                if let Some(ref old_cid) = ctx.stats.read().await.root_cid.clone() {
+                let root_cid = ctx.stats.read().await.root_cid.clone();
+                if let Some(ref old_cid) = root_cid {
                     let mut running_node = entity_node.clone();
                     running_node.lifecycle = Lifecycle::Running;
                     if let Err(e) = persist_new_entity(
