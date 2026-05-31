@@ -348,8 +348,10 @@ pub enum Evaluator {
 pub struct EntityNode {
     pub kind: String,
     /// IPLD link to the Wasm plugin bytes stored on IPFS.
+    /// Absent for native entities (e.g. `#scheduler`) that have no Wasm.
     /// Stored as `{"/": "bafy…"}` so Kubo's recursive pin follows it.
-    pub behavior: IpldLink,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub behaviour: Option<IpldLink>,
     /// Entity verb-ACL — name string resolved via `acls.<name>` in the root
     /// manifest (e.g. `"fortune"`). Cached under `"acls.<name>"` at startup.
     /// Empty string means deny-all (fail-closed).
@@ -359,10 +361,6 @@ pub struct EntityNode {
     /// Omitted when absent, which is the expected shape for stateless entities.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<IpldLink>,
-    /// Static schedules for this entity.  Keys are schedule IDs (e.g.
-    /// `"chime_hourly"`).  Rebuilt from scratch on startup and entity reload.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub schedules: HashMap<String, crate::schedule::StaticSchedule>,
     /// DID-URL of this entity's parent in the entity tree.
     /// Absent for `#root` (tree root). Used to derive ACL and cascade delete.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -433,8 +431,8 @@ pub struct CreateEntityRequest {
     pub fragment: String,
     /// Protocol ID of the kind to instantiate (e.g. `/ma/stateless/ping/0.0.1`).
     pub kind_protocol: String,
-    /// IPFS CID of the Wasm plugin bytes — becomes `EntityNode.behavior`.
-    pub behavior_cid: String,
+    /// IPFS CID of the Wasm plugin bytes — becomes `EntityNode.behaviour`.
+    pub behaviour_cid: String,
     /// Fragment of the creating (parent) entity.
     pub parent: String,
 }
@@ -492,12 +490,11 @@ mod tests {
     fn serializing_entity_without_state_omits_state_field() {
         let node = EntityNode {
             kind: "/ma/stateless/python/0.0.1".to_string(),
-            behavior: IpldLink {
-                cid: "bafybehavior".to_string(),
-            },
+            behaviour: Some(IpldLink {
+                cid: "bafybehaviour".to_string(),
+            }),
             acl: String::new(),
             state: None,
-            schedules: HashMap::new(),
             parent: None,
             label: None,
             lifecycle: Lifecycle::default(),
@@ -514,12 +511,11 @@ mod tests {
     fn serializing_entity_always_includes_acl_field() {
         let node = EntityNode {
             kind: "/ma/stateless/python/0.0.1".to_string(),
-            behavior: IpldLink {
-                cid: "bafybehavior".to_string(),
-            },
+            behaviour: Some(IpldLink {
+                cid: "bafybehaviour".to_string(),
+            }),
             acl: String::new(),
             state: None,
-            schedules: HashMap::new(),
             parent: None,
             label: None,
             lifecycle: Lifecycle::default(),
@@ -535,7 +531,7 @@ mod tests {
     fn deserializing_entity_accepts_missing_state_field() {
         let raw = r#"{
             "kind": "/ma/stateless/python/0.0.1",
-            "behavior": {"/": "bafybehavior"},
+            "behaviour": {"/": "bafybehaviour"},
             "acl": ""
         }"#;
 
@@ -550,7 +546,7 @@ mod tests {
     fn deserializing_entity_accepts_null_state_field() {
         let raw = r#"{
             "kind": "/ma/stateless/python/0.0.1",
-            "behavior": {"/": "bafybehavior"},
+            "behaviour": {"/": "bafybehaviour"},
             "acl": "",
             "state": null
         }"#;
@@ -559,6 +555,20 @@ mod tests {
         assert!(
             node.state.is_none(),
             "null state should deserialize as None"
+        );
+    }
+
+    #[test]
+    fn deserializing_entity_accepts_missing_behaviour_field() {
+        let raw = r#"{
+            "kind": "/ma/scheduler/0.0.1",
+            "acl": "open"
+        }"#;
+
+        let node: EntityNode = serde_json::from_str(raw).expect("deserialize entity node");
+        assert!(
+            node.behaviour.is_none(),
+            "missing behaviour should deserialize as None (native entity)"
         );
     }
 

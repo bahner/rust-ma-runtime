@@ -75,7 +75,7 @@ pub type BootstrapKindsDict = BTreeMap<String, BootstrapKind>;
 ///   # inline — bootstrap builds and publishes the EntityNode:
 ///   fortune:
 ///     kind: /ma/stateless/python/0.0.1
-///     behavior:
+///     behaviour:
 ///       /: QmaBC...   # IPLD link to Wasm bytes
 ///     acl: open       # optional; empty = deny-all
 /// ```
@@ -89,7 +89,9 @@ pub enum BootstrapEntity {
         /// Protocol ID of this entity's kind (e.g. `/ma/stateless/python/0.0.1`).
         kind: String,
         /// IPLD link to the Wasm plugin bytes already stored on IPFS.
-        behavior: IpldLink,
+        /// Absent for native entities (e.g. `evaluator: native`) that have no Wasm.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        behaviour: Option<IpldLink>,
         /// Named ACL reference resolved via `acls.<name>` in the manifest.
         /// Empty string = deny-all (fail-closed).
         #[serde(default)]
@@ -97,9 +99,6 @@ pub enum BootstrapEntity {
         /// IPLD link to persisted initial state (stateful entities only).
         #[serde(default)]
         state: Option<IpldLink>,
-        /// Static schedule entries for this entity.  Keys are schedule IDs.
-        #[serde(default)]
-        schedules: HashMap<String, crate::schedule::StaticSchedule>,
     },
 }
 
@@ -172,17 +171,15 @@ pub async fn build_manifest(
             }
             BootstrapEntity::Inline {
                 kind,
-                behavior,
+                behaviour,
                 acl,
                 state,
-                schedules,
             } => {
                 let node = EntityNode {
                     kind: kind.clone(),
-                    behavior: behavior.clone(),
+                    behaviour: behaviour.clone(),
                     acl: acl.clone(),
                     state: state.clone(),
-                    schedules: schedules.clone(),
                     parent: None,
                     label: None,
                     lifecycle: crate::entity::Lifecycle::New,
@@ -296,10 +293,9 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
             name.clone(),
             BootstrapEntity::Inline {
                 kind: node.kind,
-                behavior: node.behavior,
+                behaviour: node.behaviour,
                 acl: node.acl,
                 state: node.state,
-                schedules: node.schedules,
             },
         );
     }

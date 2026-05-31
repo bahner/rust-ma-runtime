@@ -7,13 +7,15 @@
 //! | `Cron` | 6-field cron `"sec min hour day month weekday"` or English spec | Fires on schedule indefinitely. |
 //! | `Interval` | Human-readable duration (`"1h"`, `"30m"`, `"5s"`, `"2h30m"`) | Fires every N seconds indefinitely. |
 //! | `At` | Unix timestamp in milliseconds | Fires once after the computed delay. |
-//! | `Random` | `random_max_secs: <u64>` | Fires after a random 1–N second delay, then self-reschedules. |
+//! | `Random` | `max_secs: u64` | Fires after a random 1–N second delay, then self-reschedules. |
+//!
+//! Schedules are registered dynamically by plugins via `ma_send` to `#scheduler`
+//! in their `init()` call.  There are no static schedules in `EntityNode`.
 //!
 //! ## ACL
 //!
 //! Scheduled dispatch bypasses all ACL checks.  The runtime is the trusted
-//! caller; schedules are authorised by the entity definition or bootstrap
-//! configuration that declares them.
+//! caller.
 //!
 //! ## Outbound messages
 //!
@@ -27,41 +29,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use ciborium::Value as CborValue;
 use ma_core::{ipfs_add, CONTENT_TYPE_TERM};
-use serde::{Deserialize, Serialize};
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::warn;
 
 use crate::entity::{CastInput, LocalMessage, PluginKind};
 use crate::plugin::EntityRegistry;
 
-// ── Static schedule (YAML entity definition) ──────────────────────────────────
-
-/// One schedule entry declared statically in an [`crate::entity::EntityNode`].
-///
-/// Exactly one of `cron`, `interval`, or `random_max_secs` must be set.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StaticSchedule {
-    /// 6-field cron spec or English spec (e.g. `"0 0 * * * *"`, `"every hour"`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cron: Option<String>,
-    /// Fixed repeat interval as a human-readable duration (e.g. `"1h"`, `"30m"`, `"5s"`).
-    /// Supports `s`, `m`, `h`, `d` units, combinable: `"1h30m"`, `"2d12h"`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub interval: Option<String>,
-    /// Random re-scheduling: fire after 1–N seconds, then add a new random job.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub random_max_secs: Option<u64>,
-    /// CBOR verb atom to invoke, e.g. `":chime"`.
-    pub verb: String,
-    /// Optional positional arguments.  Converted to CBOR when the job fires.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub args: Vec<serde_yaml::Value>,
-}
-
 // ── Schedule request ──────────────────────────────────────────────────────────
 
-/// A schedule request, either produced from a static entity definition or
-/// enqueued dynamically by a plugin via host functions.
+/// A schedule request enqueued by a plugin via `ma_send` to `#scheduler`.
 #[derive(Debug, Clone)]
 pub enum ScheduleRequest {
     /// Recurring cron / English schedule.
@@ -78,33 +54,6 @@ pub enum ScheduleRequest {
     Random { max_secs: u64, content: Vec<u8> },
 }
 
-impl ScheduleRequest {
-    /// Build a [`ScheduleRequest`] from a [`StaticSchedule`] entry.
-    ///
-    /// Returns an error when no schedule type field is set or `interval` is
-    /// unparsable.
-    pub fn from_static(s: &StaticSchedule) -> Result<Self> {
-        let content = encode_cbor_call(&s.verb, &s.args);
-        if let Some(max_secs) = s.random_max_secs {
-            return Ok(Self::Random { max_secs, content });
-        }
-        if let Some(ref dur_str) = s.interval {
-            let dur = parse_duration(dur_str)?;
-            return Ok(Self::Interval {
-                secs: dur.as_secs(),
-                content,
-            });
-        }
-        if let Some(ref spec) = s.cron {
-            return Ok(Self::Cron {
-                spec: spec.clone(),
-                content,
-            });
-        }
-        bail!("schedule entry has no `cron`, `interval`, or `random_max_secs` field")
-    }
-}
-
 // ── Scheduler context ─────────────────────────────────────────────────────────
 
 /// Minimal context cloned into every scheduled job closure.
@@ -119,11 +68,9 @@ pub struct SchedulerCtx {
 
 /// Register a [`ScheduleRequest`] on the scheduler for the named entity.
 ///
-/// `schedule_id`: the key from [`EntityNode::schedules`] that this job
-/// corresponds to, or `None` for dynamically-created schedules.  When
-/// `Some(id)` is supplied the job closure checks at fire time whether the
-/// id still exists in the entity's schedule map; if it was removed the
-/// dispatch is a no-op.  `None` always dispatches.
+/// `schedule_id`: an optional opaque identifier for this job, used for
+/// logging only.  All registered schedules always dispatch — there is no
+/// static schedule map to check against.
 ///
 /// Returns the scheduler-assigned [`uuid::Uuid`] for the created job.
 pub async fn register_schedule(
@@ -229,16 +176,8 @@ pub fn make_random_job(
         let content = content.clone();
         Box::pin(async move {
             dispatch_scheduled(&ctx, &fragment, schedule_id.as_deref(), &content).await;
-            // Re-schedule only if this schedule still exists in the entity definition.
-            let still_active = match schedule_id.as_deref() {
-                Some(id) => ctx
-                    .entity_registry
-                    .read()
-                    .await
-                    .get(&fragment)
-                    .is_some_and(|p| p.schedules.contains_key(id)),
-                None => true,
-            };
+            // Always re-schedule for random jobs.
+            let still_active = true;
             if still_active {
                 match make_random_job(
                     sched.clone(),
@@ -320,12 +259,9 @@ pub async fn dispatch_scheduled(
         return;
     };
 
-    // Guard: if this job was registered for a named static schedule that has
-    // since been removed from the entity definition, skip the dispatch.
+    // Guard: if this job was registered with a named id, log it for tracing.
     if let Some(id) = schedule_id {
-        if !plugin.schedules.contains_key(id) {
-            return;
-        }
+        tracing::trace!(fragment = %fragment, id = %id, "scheduled dispatch firing");
     }
 
     let now_nanos = u64::try_from(

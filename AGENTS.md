@@ -314,6 +314,60 @@ editor session; it only stores and retrieves by CID.
 Replies with `:pong` to `did:ma:<sender_ipns>#ping`. The reply sets `reply_to`
 to the originating message's ID and is delivered via `endpoint.outbox()`.
 
+### `#scheduler` — native schedule actor
+
+`#scheduler` is a compiled-in native actor (not Wasm). Plugins register timed
+dispatches by sending a CBOR array to `did:ma:<ipns>#scheduler` via `ma_send`.
+
+**Wire format** — 4 required elements, optional extra args at position 5+:
+
+```
+[":cron",     spec_str,     target_frag, verb_or_array, extra_args…]
+[":interval", duration_str, target_frag, verb_or_array, extra_args…]
+[":at",       timestamp_ms, target_frag, verb_or_array, extra_args…]
+[":random",   max_secs_int, target_frag, verb_or_array, extra_args…]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| type | text atom | `:cron`, `:interval`, `:at`, or `:random` |
+| spec | text / integer | cron string, duration string, Unix ms timestamp, or max_secs integer |
+| target_frag | text | bare fragment name (`"myentity"`) or full DID-URL (`did:ma:…#myentity`) |
+| verb_or_array | text atom or array | `":verb"` or `[":verb", arg1, …]` |
+| extra_args… | any CBOR | optional positional args appended after the verb |
+
+**Schedule types:**
+
+| Type | Spec | Behaviour |
+|------|------|-----------|
+| `:cron` | 6-field cron `"sec min hour day month weekday"` | Fires on schedule indefinitely |
+| `:interval` | Human duration: `"1h"`, `"30m"`, `"5s"`, `"2d12h"` | Fires every N seconds indefinitely |
+| `:at` | Unix timestamp in milliseconds (integer) | Fires once after the computed delay |
+| `:random` | Max seconds (integer) | Fires after 1–N random seconds, then self-reschedules |
+
+**Examples:**
+
+```cbor
+; Fire :tick on myentity every minute
+[":cron", "0 * * * * *", "myentity", ":tick"]
+
+; Fire [:grow, "small plant+=1", "bigplant+=4"] on garden every 30 minutes
+[":interval", "30m", "garden", ":grow", "small plant+=1", "bigplant+=4"]
+
+; Same, using array form for verb
+[":interval", "30m", "garden", [":grow", "small plant+=1", "bigplant+=4"]]
+
+; One-shot at a specific time
+[":at", 1748700000000, "myentity", ":wake"]
+
+; Random re-trigger within 5 minutes
+[":random", 300, "dog", ":scratch"]
+```
+
+**ACL:** Scheduled dispatch bypasses all ACL checks. The runtime is the trusted
+caller. Schedules are not persisted — they must be re-registered on each startup,
+typically from a plugin's `init()` when `lifecycle == "new"` or always on init.
+
 ## ma-core API used
 
 | Purpose | Call |

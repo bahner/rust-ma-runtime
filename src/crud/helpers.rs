@@ -137,11 +137,8 @@ pub(super) async fn acl_cache_update(ctx: &CrudHandlerCtx<'_>, cache_key: &str, 
     }
 }
 
-/// Load a plugin from `entity_node`, insert it into the entity registry
-/// (replacing any existing version), then register new static schedules from
-/// the updated node.  Old jobs for removed schedule entries will become no-ops
-/// at their next fire (guarded by `schedule_id` in the closure).  Non-fatal
-/// on schedule errors.
+/// Load a plugin from `entity_node` and insert it into the entity registry
+/// (replacing any existing version).
 pub(super) async fn register_entity_plugin(
     ctx: &CrudHandlerCtx<'_>,
     name: &str,
@@ -197,35 +194,6 @@ pub(super) async fn register_entity_plugin(
                 crate::i18n::t("entity-load-failed")
             );
             return;
-        }
-    }
-
-    // Register new static schedules from the updated entity node.
-    // Each job carries its schedule key (Some(id)) so that, if the schedule is
-    // later removed from the entity definition, the job becomes a no-op.
-    for (id, static_sched) in &entity_node.schedules {
-        let req = match crate::schedule::ScheduleRequest::from_static(static_sched) {
-            Ok(r) => r,
-            Err(e) => {
-                warn!(name = %name, id = %id, error = %e, "invalid static schedule; skipping");
-                continue;
-            }
-        };
-        let sched_ctx = crate::schedule::SchedulerCtx {
-            entity_registry: ctx.entity_registry.clone(),
-            kubo_rpc_url: ctx.kubo_rpc_url.to_string(),
-            our_did: ctx.our_did.to_string(),
-        };
-        if let Err(e) = crate::schedule::register_schedule(
-            &ctx.scheduler,
-            sched_ctx,
-            name.to_string(),
-            Some(id.clone()),
-            req,
-        )
-        .await
-        {
-            warn!(name = %name, id = %id, error = %e, "failed to register schedule on entity update");
         }
     }
 }

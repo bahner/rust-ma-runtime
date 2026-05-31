@@ -379,10 +379,9 @@ async fn handle_entity_plugin_message(
 
         let entity_node = crate::entity::EntityNode {
             kind: req.kind_protocol.clone(),
-            behavior: IpldLink::new(&req.behavior_cid),
+            behaviour: Some(IpldLink::new(&req.behaviour_cid)),
             acl: entity.acl.clone(),
             state: None,
-            schedules: std::collections::HashMap::new(),
             parent: Some(entity.fragment.clone()),
             label: None,
             lifecycle: Lifecycle::New,

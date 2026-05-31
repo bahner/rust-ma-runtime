@@ -116,14 +116,14 @@ struct CreateEntityCtx {
 
 // `ma_create_entity` host function: plugin requests creation of a new entity.
 //
-// Input is CBOR-encoded `{ "kind": "/ma/…/0.0.1", "behavior": "bafyCID" }`.
+// Input is CBOR-encoded `{ "kind": "/ma/…/0.0.1", "behaviour": "bafyCID" }`.
 // The runtime generates a nanoid fragment, queues the request, and returns the
 // fragment string (CBOR-encoded) to the plugin immediately.
 // Actual plugin loading and manifest persistence happen after dispatch returns.
 #[derive(serde::Deserialize)]
 struct CreateEntityInput {
     kind: String,
-    behavior: String,
+    behaviour: String,
 }
 
 host_fn!(ma_create_entity_fn(user_data: CreateEntityCtx; input: Vec<u8>) -> Vec<u8> {
@@ -135,7 +135,7 @@ host_fn!(ma_create_entity_fn(user_data: CreateEntityCtx; input: Vec<u8>) -> Vec<
     ctx.pending.push(CreateEntityRequest {
         fragment: fragment.clone(),
         kind_protocol: req.kind,
-        behavior_cid: req.behavior,
+        behaviour_cid: req.behaviour,
         parent,
     });
     let mut out = Vec::new();
@@ -214,9 +214,6 @@ pub struct EntityPlugin {
     /// Parent fragment — the entity that owns/created this one, if any.
     /// Immutable after creation. Only the parent may delete this entity.
     pub parent: Option<String>,
-    /// Static schedules declared in the entity definition.
-    /// Stored here so bootstrap can register them without re-fetching IPFS data.
-    pub schedules: HashMap<String, crate::schedule::StaticSchedule>,
     plugin: Mutex<Plugin>,
     /// Shared state context: pending bytes, last-persisted snapshot, dirty flag.
     state: UserData<StateCtx>,
@@ -250,24 +247,51 @@ impl EntityPlugin {
         envelope_tx: UnboundedSender<(String, SendEnvelope)>,
     ) -> Result<(Self, Lifecycle)> {
         let fragment = fragment.into();
-        let behavior_cid = &node.behavior.cid;
+        let behaviour_cid = node.behaviour.as_ref().map(|l| l.cid.as_str());
         let kind = kind_node.plugin_kind();
         let wasi = kind_node.wasi();
 
-        // Only Extism evaluator is currently supported.
+        // Native entities have no Wasm — they are compiled into the binary.
+        if kind_node.evaluator == Evaluator::Native {
+            if behaviour_cid.is_some() {
+                tracing::warn!(fragment = %fragment, "native entity has unexpected behaviour CID; ignoring");
+            }
+            let ep = Self {
+                fragment,
+                kind,
+                acl: node.acl.clone(),
+                parent: node.parent.clone(),
+                plugin: Mutex::new({
+                    // Placeholder — never called for native entities.
+                    // We still need a Plugin in the struct; use an empty no-op manifest.
+                    let manifest = Manifest::new([Wasm::data(vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00])]);
+                    tokio::task::block_in_place(|| Plugin::new(&manifest, [], false))
+                        .map_err(|e| anyhow!("failed to create placeholder plugin: {e}"))?
+                }),
+                state: UserData::new(StateCtx::new(vec![])),
+                create_queue: UserData::new(CreateEntityCtx { pending: vec![], caller_fragment: String::new() }),
+                delete_queue: UserData::new(DeleteEntityCtx { pending: vec![] }),
+            };
+            return Ok((ep, Lifecycle::Running));
+        }
+
+        // Extism path — require a behaviour CID.
         if kind_node.evaluator != Evaluator::Extism {
             return Err(anyhow!(
-                "unsupported evaluator {:?} for {fragment}; only 'extism' is implemented",
+                "unsupported evaluator {:?} for {fragment}",
                 kind_node.evaluator
             ));
         }
+        let behaviour_cid = behaviour_cid.ok_or_else(|| {
+            anyhow!("entity {fragment} has evaluator 'extism' but no behaviour CID")
+        })?;
 
-        debug!(fragment = %fragment, cid = %behavior_cid, kind = ?kind, wasi = wasi, "loading entity plugin");
+        debug!(fragment = %fragment, cid = %behaviour_cid, kind = ?kind, wasi = wasi, "loading entity plugin");
 
         // 1. Fetch Wasm bytes from IPFS.
-        let wasm_bytes = cat_bytes(kubo_url, behavior_cid)
+        let wasm_bytes = cat_bytes(kubo_url, behaviour_cid)
             .await
-            .with_context(|| format!("fetching wasm for {fragment} from {behavior_cid}"))?;
+            .with_context(|| format!("fetching wasm for {fragment} from {behaviour_cid}"))?;
 
         // 2. For stateful plugins: fetch persisted state so StateCtx has the
         //    correct baseline and init() can restore it.  Stateless plugins
@@ -366,7 +390,6 @@ impl EntityPlugin {
             kind,
             acl: node.acl.clone(),
             parent: node.parent.clone(),
-            schedules: node.schedules.clone(),
             plugin: Mutex::new(plugin),
             state,
             create_queue,
