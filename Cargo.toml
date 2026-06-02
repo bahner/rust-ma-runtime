@@ -34,6 +34,9 @@ tracing = "0.1"
 unic-langid = "0.9"
 zeroize = "1"
 
+[patch.crates-io]
+ma-core = { path = "../rust-ma-core" }
+
 [profile.release]
 opt-level = 3
 lto = true

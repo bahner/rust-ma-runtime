@@ -6,8 +6,9 @@ use crate::acl::check_full;
 use crate::entity::{EntityNode, IpldLink};
 
 use super::helpers::{
-    load_manifest, register_entity_plugin, send_crud_i18n_error, send_crud_i18n_errorf,
-    send_crud_ok, send_crud_ok_cid, send_crud_reply, send_crud_reply_cbor, with_manifest_crud,
+    load_manifest, register_entity_plugin, send_crud_data_cbor, send_crud_data_dag_cbor,
+    send_crud_i18n_error, send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid,
+    with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -44,7 +45,7 @@ pub(super) async fn handle_entities_ns(
             (None, []) => {
                 info!("{}", crate::i18n::t("root-list-entities"));
                 let names: Vec<String> = ctx.entity_registry.read().await.keys().cloned().collect();
-                send_crud_reply_cbor(message, reply_type, ctx, &names).await
+                send_crud_data_cbor(message, reply_type, ctx, &names).await
             }
             (Some(""), _) => {
                 send_crud_i18n_error(message, reply_type, ctx, "refuse-delete-root").await
@@ -75,10 +76,7 @@ async fn handle_single_entity(
                 .get(name.as_str())
                 .ok_or_else(|| anyhow!("entity not found: {name}"))?;
             let entity: EntityNode = crate::kubo::dag_get(ctx.kubo_rpc_url, &link.cid).await?;
-            let mut out = Vec::new();
-            ciborium::ser::into_writer(&entity, &mut out)
-                .context("serialising entity node as CBOR")?;
-            send_crud_reply(message, reply_type, ctx, &out).await
+            send_crud_data_cbor(message, reply_type, ctx, &entity).await
         }
         (Some(""), []) => {
             // Delete entity — requires `delete` + `entities` in root ACL.
@@ -188,10 +186,7 @@ async fn handle_entity_field(
                 .into_iter()
                 .find(|(k, _)| matches!(k, CborValue::Text(s) if s == field))
             {
-                let mut out = Vec::new();
-                ciborium::ser::into_writer(&value, &mut out)
-                    .context("encoding field value as CBOR")?;
-                return send_crud_reply(message, reply_type, ctx, &out).await;
+                return send_crud_data_cbor(message, reply_type, ctx, &value).await;
             }
         }
         return Err(anyhow!("field '{field}' not found in entity '{name}'"));
@@ -223,13 +218,7 @@ async fn handle_entity_acl_field(
     match (tail, args.as_slice()) {
         (None, []) => {
             let entity = fetch_entity_node(ctx, name).await?;
-            send_crud_reply_cbor(
-                message,
-                reply_type,
-                ctx,
-                &CborValue::Text(entity.acl.clone()),
-            )
-            .await
+            send_crud_data_dag_cbor(message, reply_type, ctx, &entity.acl).await
         }
         (Some(""), [CborValue::Text(acl_name)]) => {
             let manifest = load_manifest(ctx).await?;

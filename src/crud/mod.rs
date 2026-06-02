@@ -3,9 +3,9 @@
 //! Single message type `application/x-ma-crud`. The operation is encoded in
 //! the CBOR payload:
 //!
-//!   GET:    `[":get",    ":ns.key"]`
-//!   SET:    `[":ns.key", value]`   — value is a scalar or `/ipfs/…` path
-//!   DELETE: `[":delete", ":ns.key"]`
+//!   GET:    `[":get",    ".ns.key"]`
+//!   SET:    `[".ns.key", value]`   — value is a scalar or `/ipfs/…` path
+//!   DELETE: `[":delete", ".ns.key"]`
 //!
 //! All replies use `application/x-ma-crud-reply`.
 
@@ -112,6 +112,12 @@ async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx<'_
         "config" => config::handle_config_ns(message, &rest, tail, args, reply_type, ctx).await,
         "acl" => namespaces::handle_root_acl(message, tail, args, reply_type, ctx).await,
         "acls" => namespaces::handle_root_acls(message, &rest, tail, args, reply_type, ctx).await,
-        _ => helpers::send_crud_i18n_error(message, reply_type, ctx, "unknown-rpc-atom").await,
+        // Unknown first segment: treat the full path as a config key path.
+        // e.g. :owners → config["owners"], :foo.owners → config["foo"]["owners"]
+        _ => {
+            let mut full_rest = vec![ns.to_string()];
+            full_rest.extend(rest);
+            config::handle_config_ns(message, &full_rest, tail, args, reply_type, ctx).await
+        }
     }
 }

@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use ciborium::Value as CborValue;
-use ma_core::{Did, DidDocumentResolver, IpfsGatewayResolver, Ipld, CONTENT_TYPE_TERM};
+use ma_core::{
+    Did, DidDocumentResolver, IpfsGatewayResolver, Ipld, CONTENT_TYPE_TERM, CONTENT_TYPE_TERM_CBOR,
+    CONTENT_TYPE_TERM_DAG_CBOR, CONTENT_TYPE_TERM_YAML,
+};
 use tracing::{info, warn};
 
 use crate::entity::{EntityNode, KindNode, RuntimeManifest};
@@ -11,11 +14,11 @@ use super::CrudHandlerCtx;
 
 // ── Path helpers ───────────────────────────────────────────────────────────────
 
-/// Parse `:ns.seg1.seg2` → `("ns", ["seg1", "seg2"])`.
+/// Parse `.ns.seg1.seg2` → `("ns", ["seg1", "seg2"])`.
 pub(super) fn parse_path(path: &str) -> Result<(&str, Vec<String>)> {
     let body = path
-        .strip_prefix(':')
-        .ok_or_else(|| anyhow!("CRUD path must start with ':' — got: {path}"))?;
+        .strip_prefix('.')
+        .ok_or_else(|| anyhow!("CRUD path must start with '.' — got: {path}"))?;
     let (ns, rest_str) = body.split_once('.').unwrap_or((body, ""));
     if ns.is_empty() {
         return Err(anyhow!("CRUD path has no namespace: {path}"));
@@ -104,11 +107,8 @@ where
     {
         let mut stats = ctx.stats.write().await;
         stats.root_cid = Some(new_cid.clone());
-        if let Some(serde_yaml::Value::Sequence(ref seq)) = manifest.config.get("owners") {
-            stats.owners = seq
-                .iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect();
+        if !manifest.owners.is_empty() {
+            stats.owners.clone_from(&manifest.owners);
         }
     }
     Ok(new_cid)
@@ -275,6 +275,24 @@ pub(super) async fn send_crud_ok(
     send_crud_reply(incoming, reply_type, ctx, &out).await
 }
 
+pub(super) async fn send_crud_ok_path(
+    incoming: &ma_core::Message,
+    reply_type: &str,
+    ctx: &CrudHandlerCtx<'_>,
+    path: &str,
+) -> Result<()> {
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(
+        &CborValue::Array(vec![
+            CborValue::Text(":ok".to_string()),
+            CborValue::Text(path.to_string()),
+        ]),
+        &mut out,
+    )
+    .context("encoding [:ok, path]")?;
+    send_crud_reply(incoming, reply_type, ctx, &out).await
+}
+
 pub(super) async fn send_crud_ok_cid(
     incoming: &ma_core::Message,
     reply_type: &str,
@@ -320,6 +338,51 @@ pub(super) async fn send_crud_reply_cbor<T: serde::Serialize + Sync>(
     let mut out = Vec::new();
     ciborium::ser::into_writer(value, &mut out).context("encoding CBOR reply")?;
     send_crud_reply(incoming, reply_type, ctx, &out).await
+}
+
+/// Send a GET data reply whose payload is a raw CBOR-serialised struct
+/// (e.g. `EntityNode`).  Uses `CONTENT_TYPE_TERM_CBOR` so the receiver
+/// knows it must decode CBOR to display the value.
+pub(super) async fn send_crud_data_cbor<T: serde::Serialize + Sync>(
+    incoming: &ma_core::Message,
+    reply_type: &str,
+    ctx: &CrudHandlerCtx<'_>,
+    value: &T,
+) -> Result<()> {
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(value, &mut out).context("encoding CBOR data reply")?;
+    send_crud_reply_raw(incoming, reply_type, ctx, CONTENT_TYPE_TERM_CBOR, &out).await
+}
+
+/// Send a GET data reply whose payload is an inline YAML string (encoded
+/// as a CBOR text value).  Uses `CONTENT_TYPE_TERM_YAML` so the receiver
+/// can use it directly as editor content without further decoding.
+pub(super) async fn send_crud_data_yaml<T: serde::Serialize + Sync>(
+    incoming: &ma_core::Message,
+    reply_type: &str,
+    ctx: &CrudHandlerCtx<'_>,
+    value: &T,
+) -> Result<()> {
+    let yaml_str = serde_yaml::to_string(value).context("encoding YAML reply")?;
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(&CborValue::Text(yaml_str), &mut out)
+        .context("encoding YAML string as CBOR text")?;
+    send_crud_reply_raw(incoming, reply_type, ctx, CONTENT_TYPE_TERM_YAML, &out).await
+}
+
+/// Send a GET data reply whose payload is a `CIDv1` string (encoded as a
+/// CBOR text value).  Uses `CONTENT_TYPE_TERM_DAG_CBOR` so the receiver
+/// knows it must fetch the CID from IPFS to obtain the actual content.
+pub(super) async fn send_crud_data_dag_cbor(
+    incoming: &ma_core::Message,
+    reply_type: &str,
+    ctx: &CrudHandlerCtx<'_>,
+    cid: &str,
+) -> Result<()> {
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(&CborValue::Text(cid.to_string()), &mut out)
+        .context("encoding CID as CBOR text")?;
+    send_crud_reply_raw(incoming, reply_type, ctx, CONTENT_TYPE_TERM_DAG_CBOR, &out).await
 }
 
 pub(super) async fn send_crud_reply(

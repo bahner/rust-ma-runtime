@@ -409,6 +409,9 @@ pub struct RuntimeManifest {
     pub entities: HashMap<String, IpldLink>,
     #[serde(default)]
     pub i18n: HashMap<String, IpldLink>,
+    /// Owner DIDs — authoritative list. Controls who may use privileged RPC.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owners: Vec<String>,
     #[serde(default)]
     pub config: BTreeMap<String, serde_yaml::Value>,
 }

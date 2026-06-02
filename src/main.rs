@@ -329,7 +329,7 @@ async fn main() -> Result<()> {
     let entity_registry = plugin::new_entity_registry();
     let kind_registry = entity::new_kind_registry();
     if let Some(ref rc) = root_cid {
-        let count = bootstrap::load_entities(
+        let (count, updated_root) = bootstrap::load_entities(
             rc,
             &config.kubo_rpc_url,
             &our_did,
@@ -338,6 +338,9 @@ async fn main() -> Result<()> {
         )
         .await;
         info!(count = %count, "Entity plugins loaded");
+        if let Some(new_rc) = updated_root {
+            root_cid = Some(new_rc);
+        }
     }
 
     // ── Scheduler ─────────────────────────────────────────────────────────────
@@ -371,6 +374,7 @@ async fn main() -> Result<()> {
 
     // ── Load named ACLs into cache ─────────────────────────────────────────────
     let acl_cache = acl::new_acl_cache();
+    let mut manifest_owners: Vec<String> = Vec::new();
     if let Some(ref rc) = root_cid {
         let manifest: Result<entity::RuntimeManifest, _> =
             kubo::dag_get(&config.kubo_rpc_url, rc).await;
@@ -406,6 +410,9 @@ async fn main() -> Result<()> {
                 for (key, acl_map) in entries {
                     cache.insert(key, acl_map);
                 }
+                drop(cache);
+                // Owners from manifest are authoritative; merge into resolved_owners below.
+                manifest_owners = m.owners.clone();
             }
             Err(e) => {
                 warn!(error = %e, "failed to load manifest for ACL cache population");
@@ -418,7 +425,7 @@ async fn main() -> Result<()> {
         .signing_key()
         .context("failed to derive signing key")?;
 
-    // ── Resolve owners: --owner CLI + config.extra["owner"] (list or string) ──
+    // ── Resolve owners: manifest (authoritative) + config.yaml + --owner CLI ──
     let mut resolved_owners: Vec<String> = {
         let from_config = match config.extra.get("owners") {
             Some(serde_yaml::Value::Sequence(seq)) => seq
@@ -430,6 +437,12 @@ async fn main() -> Result<()> {
         };
         from_config
     };
+    // Manifest owners are authoritative when present.
+    for o in manifest_owners {
+        if !resolved_owners.contains(&o) {
+            resolved_owners.push(o);
+        }
+    }
     for o in &cli.owner {
         if !resolved_owners.contains(o) {
             resolved_owners.push(o.clone());

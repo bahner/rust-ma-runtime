@@ -59,6 +59,19 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
   denies a principal and overrides any wildcard allow. Capabilities are plain
   strings in YAML sequences — `/ma/rpc/0.0.1` requires `"rpc"`,
   `/ma/ipfs/0.0.1` requires `"ipfs"`.
+- **Manifest is the source of truth; ACLs are derivatives.** `RuntimeManifest`
+  paths are canonical. ACLs must always be derived from and kept in sync with
+  manifest data, never the reverse. Concretely:
+  - `manifest.owners` (a top-level `Vec<String>` field) is the authoritative
+    owners list. The in-memory root `AclMap` and `stats.owners` are derived
+    from it and must be updated whenever it changes.
+  - On bootstrap: owners are written to `manifest.owners` and the published
+    root ACL.
+  - On startup: owners are merged from config.yaml, `manifest.owners`, and
+    `--owner` CLI args (manifest takes precedence).
+  - On CRUD SET `.owners`: `grant_owners_in_acl` and `stats.owners` are updated
+    immediately (hot-swap, no restart needed).
+  - Never read the ACL to discover owners — read `manifest.owners`.
 - **Never default or fall back to open ACLs.** An empty `AclMap` (no entries)
   denies everyone. Code must never construct or substitute an open ACL
   (`{"*": ["*"]}`) as a fallback for a missing or unreadable ACL document.

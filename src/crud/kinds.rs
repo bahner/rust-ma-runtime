@@ -18,11 +18,11 @@ use super::CrudHandlerCtx;
 ///
 /// | Operation | CRUD payload                                          |
 /// |-----------|------------------------------------------------------|
-/// | List all  | `[":get", ":kinds"]`                                 |
-/// | Get kind  | `[":kinds", protocol_text]`                          |
-/// | Upsert    | `[":kinds", [protocol_text, cid_text]]`               |
-/// | Delete    | `[":kinds", [protocol_text]]`                        |
-/// | Refuse    | `[":delete", ":kinds"]`                              |
+/// | List all  | `[":get", ".kinds"]`                                 |
+/// | Get kind  | `[".kinds", protocol_text]`                          |
+/// | Upsert    | `[".kinds", [protocol_text, cid_text]]`               |
+/// | Delete    | `[".kinds", [protocol_text]]`                        |
+/// | Refuse    | `[":delete", ".kinds"]`                              |
 pub(super) async fn handle_kinds_ns(
     message: &ma_core::Message,
     rest: &[String],

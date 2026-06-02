@@ -352,7 +352,6 @@ pub async fn bootstrap_minimal_manifest(
     use crate::entity::{IpldLink, RuntimeManifest};
     use anyhow::Context as _;
     use ma_core::{AclMap, CapabilityEntry};
-    use std::collections::BTreeMap;
 
     // Build owner-only ACL: each owner → ["*"], no wildcard entry.
     let wildcard: std::collections::BTreeSet<String> = std::iter::once("*".to_string()).collect();
@@ -365,21 +364,9 @@ pub async fn bootstrap_minimal_manifest(
         .await
         .context("dag_put owner-only ACL")?;
 
-    // Build config with owners list.
-    let mut config: BTreeMap<String, serde_yaml::Value> = BTreeMap::new();
-    config.insert(
-        "owners".to_string(),
-        serde_yaml::Value::Sequence(
-            owners
-                .iter()
-                .map(|d| serde_yaml::Value::String(d.clone()))
-                .collect(),
-        ),
-    );
-
     let manifest = RuntimeManifest {
         acl: Some(IpldLink::new(&acl_cid)),
-        config,
+        owners: owners.to_vec(),
         ..Default::default()
     };
 

@@ -45,6 +45,10 @@ pub struct BootstrapRuntime {
     /// Reference an ACL by name in an `EntityNode`'s `acl` field.
     #[serde(default)]
     pub acls: HashMap<String, AclMap>,
+    /// Owner DIDs — persisted to `ma.yaml` during bootstrap so the daemon
+    /// recognises them at startup without additional configuration.
+    #[serde(default)]
+    pub owners: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,9 +209,13 @@ pub async fn build_manifest(
     }
 
     // 3a. Publish root transport-gate ACL.
-    // +owners: ["*"] is injected at load time — no need to embed it in the document.
+    // Owner DIDs are injected directly with ["*"] so the daemon loads their
+    // full permissions from IPFS without needing a separate ma.yaml entry.
     let root_acl_link: Option<IpldLink> = {
-        let root_acl: AclMap = cfg.acl.clone().unwrap_or_default();
+        let mut root_acl: AclMap = cfg.acl.clone().unwrap_or_default();
+        for owner in &cfg.owners {
+            root_acl.insert(owner.clone(), crate::acl::CapabilityEntry::from_caps(["*"]));
+        }
         let cid = kubo::dag_put(kubo_url, &root_acl)
             .await
             .context("dag_put root acl")?;
@@ -233,6 +241,7 @@ pub async fn build_manifest(
         kinds,
         entities: entities_map,
         i18n,
+        owners: cfg.owners.clone(),
         config: runtime_config,
     };
     let root_cid = kubo::dag_put(kubo_url, &root)
@@ -326,6 +335,7 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
             acl,
             entities,
             acls,
+            owners: vec![],
         },
     };
     serde_yaml::to_string(&yaml).context("serializing bootstrap YAML")
@@ -334,25 +344,28 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
 // ── Startup entity loading ────────────────────────────────────────────────────
 
 /// Fetch the `RuntimeManifest` at `root_cid`, load each entity plugin, and
-/// insert them into `registry`.  Returns the number of successfully loaded
-/// entities.
+/// insert them into `registry`.  Persists `lifecycle: running` back to IPFS
+/// for every successfully loaded entity whose stored lifecycle differs.
+/// Returns `(count, Some(new_root_cid))` when any entity nodes were updated,
+/// or `(count, None)` when nothing changed.
 pub async fn load_entities(
     root_cid: &str,
     kubo_url: &str,
     our_did: &str,
     registry: &plugin::EntityRegistry,
     envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, crate::entity::SendEnvelope)>,
-) -> usize {
-    let manifest = match kubo::dag_get::<RuntimeManifest>(kubo_url, root_cid).await {
+) -> (usize, Option<String>) {
+    let mut manifest = match kubo::dag_get::<RuntimeManifest>(kubo_url, root_cid).await {
         Ok(m) => m,
         Err(e) => {
             tracing::error!("Failed to fetch runtime manifest {root_cid}: {e}");
-            return 0;
+            return (0, None);
         }
     };
 
     let mut loaded = 0usize;
-    for (name, link) in &manifest.entities {
+    let mut manifest_updated = false;
+    for (name, link) in manifest.entities.clone() {
         let node: EntityNode = match kubo::dag_get(kubo_url, &link.cid).await {
             Ok(n) => n,
             Err(e) => {
@@ -385,6 +398,23 @@ pub async fn load_entities(
         {
             Ok((ep, lifecycle)) => {
                 tracing::info!(name = %name, lifecycle = %lifecycle, "{}", crate::i18n::t("entity-loaded"));
+                // Persist lifecycle transition (e.g. new/stopped → running) to IPFS.
+                if node.lifecycle != lifecycle {
+                    let mut updated = node.clone();
+                    updated.lifecycle = lifecycle;
+                    match kubo::dag_put(kubo_url, &updated).await {
+                        Ok(new_cid) => {
+                            tracing::debug!(name = %name, cid = %new_cid, "Updated entity lifecycle in IPFS");
+                            manifest
+                                .entities
+                                .insert(name.clone(), IpldLink::new(new_cid));
+                            manifest_updated = true;
+                        }
+                        Err(e) => {
+                            tracing::warn!(name = %name, error = %e, "Failed to write updated entity lifecycle to IPFS");
+                        }
+                    }
+                }
                 registry.write().await.insert(name.clone(), Arc::new(ep));
                 loaded += 1;
             }
@@ -393,7 +423,25 @@ pub async fn load_entities(
             }
         }
     }
-    loaded
+
+    if !manifest_updated {
+        return (loaded, None);
+    }
+
+    // Publish updated manifest and swap pin.
+    match kubo::dag_put(kubo_url, &manifest).await {
+        Ok(new_root) => {
+            if let Err(e) = kubo::pin_update(kubo_url, root_cid, &new_root).await {
+                tracing::warn!(old = %root_cid, new = %new_root, error = %e, "pin/update failed after lifecycle persist");
+            }
+            tracing::info!(root_cid = %new_root, "Published updated manifest after lifecycle transitions");
+            (loaded, Some(new_root))
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to publish manifest after lifecycle transitions");
+            (loaded, None)
+        }
+    }
 }
 
 // ── Graceful shutdown: persist entity states ──────────────────────────────────
@@ -419,28 +467,9 @@ pub async fn save_all_entity_states(
         .map(|(k, v)| (k.clone(), Arc::clone(v)))
         .collect();
 
-    // Phase 2: persist each entity's state (stateful only).
+    // Phase 2: persist each entity's state and lifecycle.
+    // Stateless entities skip state saving but still get lifecycle: stopped.
     for (name, entity) in &snapshot {
-        if entity.kind == PluginKind::Stateless {
-            continue;
-        }
-
-        tracing::info!(name = %name, "{}", crate::i18n::t("entity-state-saving"));
-
-        let state_cid = match entity.trigger_save(kubo_url).await {
-            Ok(Some(cid)) => cid,
-            Ok(None) => {
-                tracing::info!(name = %name, "{}", crate::i18n::t("entity-state-empty"));
-                continue;
-            }
-            Err(e) => {
-                tracing::warn!(name = %name, error = %e, "Failed to save entity state");
-                continue;
-            }
-        };
-        tracing::info!(name = %name, cid = %state_cid, "{}", crate::i18n::t("entity-state-saved"));
-
-        // Update entity node with new state link.
         let Some(entity_link) = manifest.entities.get(name).cloned() else {
             tracing::warn!(name = %name, "Entity in registry but not in manifest, skipping");
             continue;
@@ -452,7 +481,23 @@ pub async fn save_all_entity_states(
                 continue;
             }
         };
-        entity_node.state = Some(IpldLink::new(state_cid));
+
+        if entity.kind != PluginKind::Stateless {
+            tracing::info!(name = %name, "{}", crate::i18n::t("entity-state-saving"));
+            match entity.trigger_save(kubo_url).await {
+                Ok(Some(cid)) => {
+                    tracing::info!(name = %name, cid = %cid, "{}", crate::i18n::t("entity-state-saved"));
+                    entity_node.state = Some(IpldLink::new(cid));
+                }
+                Ok(None) => {
+                    tracing::info!(name = %name, "{}", crate::i18n::t("entity-state-empty"));
+                }
+                Err(e) => {
+                    tracing::warn!(name = %name, error = %e, "Failed to save entity state");
+                }
+            }
+        }
+
         // Mark lifecycle = stopped on clean shutdown (only if it was running).
         if entity_node.lifecycle == crate::entity::Lifecycle::Running {
             entity_node.lifecycle = crate::entity::Lifecycle::Stopped;
@@ -460,7 +505,7 @@ pub async fn save_all_entity_states(
 
         match kubo::dag_put(kubo_url, &entity_node).await {
             Ok(new_cid) => {
-                tracing::info!(name = %name, cid = %new_cid, "Updated entity node with new state");
+                tracing::info!(name = %name, cid = %new_cid, "Updated entity node on shutdown");
                 manifest
                     .entities
                     .insert(name.clone(), IpldLink::new(new_cid));
