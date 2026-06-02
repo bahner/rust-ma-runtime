@@ -584,25 +584,16 @@ impl EntityPlugin {
         }
     }
 
-    /// Tell the plugin to save its state by calling the `save_state` export.
+    /// Persist any state queued by `ma_set_state` during the last dispatch.
     ///
-    /// A well-behaved plugin responds by calling `ma_set_state(bytes)`.  If it
-    /// doesn't, `Ok(None)` is returned and `dirty` is unchanged (tough luck).
-    /// On IPFS success the `dirty` flag is cleared and the CID is returned.
+    /// Plugins call `ma_set_state` reactively inside `handle_call`; this method
+    /// flushes whatever was queued to IPFS and returns the resulting CID.
+    /// Returns `Ok(None)` when there is no pending state (nothing to save).
     /// Always returns `Ok(None)` for native entities (they manage their own state).
     pub async fn trigger_save(&self, kubo_url: &str) -> Result<Option<String>> {
-        let EntityBackend::Extism { plugin, state, .. } = &self.backend else {
+        let EntityBackend::Extism { state, .. } = &self.backend else {
             return Ok(None);
         };
-
-        tokio::task::block_in_place(|| {
-            let mut plugin = plugin
-                .lock()
-                .map_err(|e| anyhow!("plugin mutex poisoned: {e}"))?;
-            plugin
-                .call::<&[u8], Vec<u8>>("save_state", b"")
-                .map_err(|e| anyhow!("save_state() failed for '{}': {e}", self.fragment))
-        })?;
 
         let pending = state
             .get()
@@ -619,7 +610,6 @@ impl EntityPlugin {
             self.mark_saved(bytes);
             Ok(Some(cid))
         } else {
-            warn!(fragment = %self.fragment, "save_state export did not call ma_set_state");
             Ok(None)
         }
     }

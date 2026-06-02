@@ -1,6 +1,6 @@
 protocol: /ma/logger/0.0.1
 attributes:
-  wasi: false
+  wasi: true
   stateful: true
 api:
   - init

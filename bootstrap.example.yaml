@@ -40,18 +40,21 @@ runtime:
   #   ipfs dag get .../kinds/ma/stateless/python/0.0.1
   kinds:
     /ma/stateless/python/0.0.1:
-      wasi: true
+      attributes:
+        stateful: false
+        wasi: true
       api:
         - handle_cast
       host_functions:
         - ma_reply
         - ma_send
     /ma/stateful/python/0.0.1:
-      wasi: true
+      attributes:
+        stateful: true
+        wasi: true
       api:
         - init
         - handle_call
-        - save_state
       host_functions:
         - ma_reply
         - ma_send
@@ -116,6 +119,7 @@ runtime:
     /ma/logger/0.0.1:
       attributes:
         stateful: true
+        wasi: true
       api:
         - init
         - handle_call
