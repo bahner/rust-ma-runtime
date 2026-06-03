@@ -89,3 +89,9 @@ config-key-not-manifest = konfigūracijos raktas '%key%' nėra žinomas manifest
 wrong-crud-protocol = neteisingas CRUD protokolas: %type%
 entity-name-invalid = entity pavadinimas turi būti spausdinamas UTF-8
 reserved-entity-name = entity pavadinimas '%name%' yra rezervuotas
+
+# IPv6 config
+ipv6-enabled = IPv6 įjungtas — susieta su IPv4 ir IPv6
+ipv6-disabled = IPv6 išjungtas — siejamas tik IPv4 (norint vėl įjungti, reikalingas restart)
+ipv6-enable-restart-required = Išsaugota. Norint, kad šis pakeitimas įsigaliotų, reikalingas restart.
+ipv6-enable-unchanged = ipv6_enable jau nustatytas į tą reikšmę — jokių pakeitimų.

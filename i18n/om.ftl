@@ -89,3 +89,9 @@ config-key-not-manifest = murtoo config '%key%' murtoo manifest config beekamaa 
 wrong-crud-protocol = protokoola CRUD dogoggoraa: %type%
 entity-name-invalid = maqaan entity UTF-8 maxxansuu danda'u ta'uu qaba
 reserved-entity-name = maqaan entity '%name%' kuufameera
+
+# IPv6 config
+ipv6-enabled = IPv6 dandeessifame — IPv4 fi IPv6 lachuu walqabsiisa
+ipv6-disabled = IPv6 dhabamsiifame — IPv4 qofatu hidhame (deebi'uuf restart barbaachisa)
+ipv6-enable-restart-required = Kuusame. Jijjiirraan kun hojii irra ooluuf restart barbaachisa.
+ipv6-enable-unchanged = ipv6_enable durumaan gara gatii sanaatti qindaa'eera — jijjiirama hin jiru.

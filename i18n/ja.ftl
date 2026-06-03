@@ -89,3 +89,9 @@ config-key-not-manifest = configキー '%key%' は既知のmanifest configキー
 wrong-crud-protocol = 不正なCRUDプロトコル: %type%
 entity-name-invalid = entity名は印刷可能なUTF-8でなければなりません
 reserved-entity-name = entity名 '%name%' は予約済みです
+
+# IPv6 config
+ipv6-enabled = IPv6 有効 — IPv4 と IPv6 の両方にバインド中
+ipv6-disabled = IPv6 が無効になりました — IPv4 のみをバインドしています（再有効化には restart が必要です）
+ipv6-enable-restart-required = 保存しました。この変更を反映するには restart が必要です。
+ipv6-enable-unchanged = ipv6_enable はすでにその値に設定されています — 変更はありません。

@@ -89,3 +89,9 @@ config-key-not-manifest = config-nyckeln '%key%' är inte en känd manifest conf
 wrong-crud-protocol = fel CRUD-protokoll: %type%
 entity-name-invalid = entity-namn måste vara utskrivbart UTF-8
 reserved-entity-name = entity-namn '%name%' är reserverat
+
+# IPv6 config
+ipv6-enabled = IPv6 aktiverat — lyssnar på både IPv4 och IPv6
+ipv6-disabled = IPv6 är inaktiverat — binder endast IPv4 (omstart krävs för att återaktivera)
+ipv6-enable-restart-required = Sparat. Omstart krävs för att den här ändringen ska träda i kraft.
+ipv6-enable-unchanged = ipv6_enable är redan inställt på det värdet — ingen ändring.

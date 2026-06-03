@@ -89,3 +89,9 @@ config-key-not-manifest = a '%key%' config kulcs nem ismert manifest config kulc
 wrong-crud-protocol = helytelen CRUD protokoll: %type%
 entity-name-invalid = az entity neve nyomtatható UTF-8 legyen
 reserved-entity-name = az entity neve '%name%' foglalt
+
+# IPv6 config
+ipv6-enabled = IPv6 engedélyezve — IPv4 és IPv6 egyaránt kötve
+ipv6-disabled = IPv6 letiltva — csak IPv4 kötődik (az újraengedélyezéshez restart szükséges)
+ipv6-enable-restart-required = Mentve. A változtatás életbe lépéséhez restart szükséges.
+ipv6-enable-unchanged = Az ipv6_enable már erre az értékre van beállítva — nincs változás.

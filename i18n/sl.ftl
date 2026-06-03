@@ -89,3 +89,9 @@ config-key-not-manifest = konfiguracijski ključ '%key%' ni znan ključ manifest
 wrong-crud-protocol = napačen protokol CRUD: %type%
 entity-name-invalid = ime entity mora biti tiskljivi UTF-8
 reserved-entity-name = ime entity '%name%' je rezervirano
+
+# IPv6 config
+ipv6-enabled = IPv6 omogočeno — vezano na IPv4 in IPv6
+ipv6-disabled = IPv6 je onemogočen — poveže se samo IPv4 (za ponovno omogočitev je potreben ponovni zagon)
+ipv6-enable-restart-required = Shranjeno. Za uveljavitev te spremembe je potreben ponovni zagon.
+ipv6-enable-unchanged = ipv6_enable je že nastavljeno na to vrednost — brez sprememb.

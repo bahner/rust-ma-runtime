@@ -89,3 +89,9 @@ config-key-not-manifest = funguo ya config '%key%' si funguo inayojulikana ya ma
 wrong-crud-protocol = itifaki mbaya ya CRUD: %type%
 entity-name-invalid = jina la entity lazima liwe UTF-8 linaloweza kuchapishwa
 reserved-entity-name = jina la entity '%name%' limehifadhiwa
+
+# IPv6 config
+ipv6-enabled = IPv6 imewezeshwa — inaunganisha IPv4 na IPv6 zote mbili
+ipv6-disabled = IPv6 imezimwa — IPv4 peke yake inaunganishwa (kuanzisha upya kunahitajika ili kuwezesha tena)
+ipv6-enable-restart-required = Imehifadhiwa. Kuanzisha upya kunahitajika ili mabadiliko haya yaanze kutumika.
+ipv6-enable-unchanged = ipv6_enable tayari imewekwa kwa thamani hiyo — hakuna mabadiliko.

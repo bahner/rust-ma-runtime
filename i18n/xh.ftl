@@ -89,3 +89,9 @@ config-key-not-manifest = isitshixo se-config '%key%' asiyositshixo se-manifest 
 wrong-crud-protocol = iphrothokholi ye-CRUD engalunganga: %type%
 entity-name-invalid = igama le-entity kufuneka libe yi-UTF-8 enokuncinwa
 reserved-entity-name = igama le-entity '%name%' ligciniwe
+
+# IPv6 config
+ipv6-enabled = IPv6 iyasebenza — ibophezelela IPv4 ne IPv6 zombini
+ipv6-disabled = I-IPv6 ivaliwe — i-IPv4 kuphela ixhunyiwe (kufuneka restart ukuze ivulwe kwakhona)
+ipv6-enable-restart-required = Kugciniwe. Kufuneka restart ukuze le nguqulelo isebenze.
+ipv6-enable-unchanged = I-ipv6_enable sele imiselwe kulelo xabiso — akukho nguqulelo.

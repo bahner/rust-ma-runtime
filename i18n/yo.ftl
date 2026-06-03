@@ -89,3 +89,9 @@ config-key-not-manifest = bọtini config '%key%' kii ṣe bọtini manifest con
 wrong-crud-protocol = ilana CRUD ti ko tọ: %type%
 entity-name-invalid = orúkọ entity gbọdọ jẹ UTF-8 tí a lè tẹ
 reserved-entity-name = orúkọ entity '%name%' jẹ ìpamọ́
+
+# IPv6 config
+ipv6-enabled = IPv6 ti ṣiṣẹ — n so IPv4 àti IPv6 papọ̀
+ipv6-disabled = A ti pa IPv6 — IPv4 nikan ni a n sopọ (restart nilo lati mu pada wọle)
+ipv6-enable-restart-required = Ti fi pamọ. Restart nilo lati fi iyipada yii sinu ẹrọ.
+ipv6-enable-unchanged = ipv6_enable ti tẹlẹ ṣeto si iye yẹn — ko si iyipada.

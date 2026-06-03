@@ -89,3 +89,9 @@ config-key-not-manifest = config ki '%key%' i no wan manifest config ki we ol sa
 wrong-crud-protocol = CRUD protokol i rong: %type%
 entity-name-invalid = nem bilong entity i mas stap printable UTF-8
 reserved-entity-name = nem bilong entity '%name%' i reserved
+
+# IPv6 config
+ipv6-enabled = IPv6 i wok — em i baindim IPv4 na IPv6 tupela
+ipv6-disabled = IPv6 i no wok — IPv4 tasol i wok long nau (restart i nidim bilong mekim i wok gen)
+ipv6-enable-restart-required = Seivim pinis. Restart i nidim bilong dispela senis i wok.
+ipv6-enable-unchanged = ipv6_enable i stap olredi long dispela namba — i no gat senis.

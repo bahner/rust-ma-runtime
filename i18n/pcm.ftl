@@ -89,3 +89,9 @@ config-key-not-manifest = config key '%key%' no be known manifest config key
 wrong-crud-protocol = wrong CRUD protocol: %type%
 entity-name-invalid = entity name suppose be printable UTF-8
 reserved-entity-name = entity name '%name%' don reserve
+
+# IPv6 config
+ipv6-enabled = IPv6 don on — e dey bind IPv4 and IPv6 togeda
+ipv6-disabled = IPv6 don off — na only IPv4 dey bind (restart dey need to on am back)
+ipv6-enable-restart-required = E don save. Restart dey need make dis change work.
+ipv6-enable-unchanged = ipv6_enable don already set to dat value — no change.

@@ -93,3 +93,9 @@ config-key-not-manifest = የ config ቁልፍ '%key%' የሚታወቅ manifest 
 wrong-crud-protocol = ስህተት CRUD ፕሮቶኮል: %type%
 entity-name-invalid = የ entity ስም ሊታተም የሚችል UTF-8 መሆን አለበት
 reserved-entity-name = የ entity ስም '%name%' የተጠበቀ ነው
+
+# IPv6 config
+ipv6-enabled = IPv6 ነቅቷል — IPv4 እና IPv6 ሁለቱንም እያያዘ
+ipv6-disabled = IPv6 ተሰናክሏል — IPv4 ብቻ እየተሳሰረ ነው (እንደገና ለማስቻል restart ያስፈልጋል)
+ipv6-enable-restart-required = ተቀምጧል። ይህ ለውጥ ሥራ ላይ እንዲውል restart ያስፈልጋል።
+ipv6-enable-unchanged = ipv6_enable ቀድሞውኑ ወደዚያ ዋጋ ተቀምጧል — ምንም ለውጥ የለም።

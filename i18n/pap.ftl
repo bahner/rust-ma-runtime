@@ -89,3 +89,9 @@ config-key-not-manifest = e yabi di config '%key%' no ta un yabi di manifest con
 wrong-crud-protocol = protokòl CRUD rong: %type%
 entity-name-invalid = number di entity mester ta UTF-8 printabel
 reserved-entity-name = number di entity '%name%' ta reserva
+
+# IPv6 config
+ipv6-enabled = IPv6 habilitá — tá bind ku IPv4 i IPv6 tur dos
+ipv6-disabled = IPv6 a wordu desaktivá — ta bind solamente IPv4 (restart ta nesesario pa re-aktivá)
+ipv6-enable-restart-required = Guardá. Restart ta nesesario pa e kambio aki drenta na vigor.
+ipv6-enable-unchanged = ipv6_enable ta kaba seteá na e valor ei — sin kambio.

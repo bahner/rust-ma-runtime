@@ -20,6 +20,7 @@ pub const DAEMON_CONFIG_KEYS_PUB: &[&str] = &[
     "did_resolver_positive_ttl_secs",
     "did_resolver_negative_ttl_secs",
     "log_file",
+    "ipv6_enable",
 ];
 
 const DAEMON_CONFIG_KEYS: &[&str] = DAEMON_CONFIG_KEYS_PUB;
@@ -71,6 +72,12 @@ pub fn daemon_config_key_value_pub(cfg: &ma_core::Config, key: &str) -> serde_ya
         "log_file" => cfg.log_file.as_ref().map_or(serde_yaml::Value::Null, |p| {
             serde_yaml::Value::String(p.to_string_lossy().into_owned())
         }),
+        "ipv6_enable" => serde_yaml::Value::Bool(
+            cfg.extra
+                .get("ipv6_enable")
+                .and_then(serde_yaml::Value::as_bool)
+                .unwrap_or(true),
+        ),
         _ => serde_yaml::Value::Null,
     }
 }
@@ -110,6 +117,14 @@ pub fn set_daemon_config_key_pub(cfg: &mut ma_core::Config, key: &str, val: &ser
         }
         "log_file" => {
             cfg.log_file = val.as_str().map(std::path::PathBuf::from);
+        }
+        "ipv6_enable" => {
+            if let Some(b) = val.as_bool() {
+                cfg.extra.insert(
+                    serde_yaml::Value::String("ipv6_enable".to_string()),
+                    serde_yaml::Value::Bool(b),
+                );
+            }
         }
         _ => {}
     }
@@ -282,6 +297,40 @@ pub(super) async fn handle_config_ns(
         (Some(""), [value]) => {
             let key = key.as_str().to_string();
             let yaml_val = cbor_to_yaml(value);
+            // ipv6_enable is stored in config.extra; detect changes and
+            // require a restart for the new value to take effect.
+            if key == "ipv6_enable" {
+                let new_val = yaml_val.as_bool().unwrap_or(true);
+                let current_val = ctx
+                    .shared_config
+                    .read()
+                    .await
+                    .extra
+                    .get("ipv6_enable")
+                    .and_then(serde_yaml::Value::as_bool)
+                    .unwrap_or(true);
+                if new_val == current_val {
+                    return send_crud_ok_path(
+                        message,
+                        reply_type,
+                        ctx,
+                        &crate::i18n::t("ipv6-enable-unchanged"),
+                    )
+                    .await;
+                }
+                set_daemon_config_key(&mut *ctx.shared_config.write().await, &key, &yaml_val);
+                let save_result = ctx.shared_config.read().await.save();
+                if let Err(e) = save_result {
+                    warn!(key = %key, error = %e, "failed to save config.yaml after CRUD update");
+                }
+                return send_crud_ok_path(
+                    message,
+                    reply_type,
+                    ctx,
+                    &crate::i18n::t("ipv6-enable-restart-required"),
+                )
+                .await;
+            }
             if is_daemon_key {
                 set_daemon_config_key(&mut *ctx.shared_config.write().await, &key, &yaml_val);
                 let save_result = ctx.shared_config.read().await.save();

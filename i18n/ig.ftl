@@ -89,3 +89,9 @@ config-key-not-manifest = igodo config '%key%' abụghị igodo manifest config 
 wrong-crud-protocol = protocol CRUD dị njọ: %type%
 entity-name-invalid = aha entity ga abụ UTF-8 enwere ike ị depụta
 reserved-entity-name = aha entity '%name%' edobere
+
+# IPv6 config
+ipv6-enabled = Enyere IPv6 ikike — na-ejikọ IPv4 na IPv6 abụọ
+ipv6-disabled = E mechie IPv6 — naanị IPv4 ka e na-ejikọ (restart dị mkpa iji weghachite ya)
+ipv6-enable-restart-required = Echekwara. Restart dị mkpa ka mgbanwe a bata n'ọrụ.
+ipv6-enable-unchanged = Etolara ipv6_enable n'uru ahụ — enweghị mgbanwe.

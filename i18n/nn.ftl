@@ -89,3 +89,9 @@ config-key-not-manifest = config-nøkkelen '%key%' er ikkje ein kjend manifest c
 wrong-crud-protocol = feil CRUD-protokoll: %type%
 entity-name-invalid = entity-namn må vere skrivbart UTF-8
 reserved-entity-name = entity-namn '%name%' er reservert
+
+# IPv6 config
+ipv6-enabled = IPv6 aktivert — bind til både IPv4 og IPv6
+ipv6-disabled = IPv6 er deaktivert — bind berre IPv4 (restart krevst for å aktivere på nytt)
+ipv6-enable-restart-required = Lagra. Restart krevst for at denne endringa skal tre i kraft.
+ipv6-enable-unchanged = ipv6_enable er allereie sett til den verdien — ingen endring.

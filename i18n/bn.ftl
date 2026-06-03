@@ -89,3 +89,9 @@ config-key-not-manifest = config কী '%key%' একটি পরিচিত 
 wrong-crud-protocol = ভুল CRUD প্রোটোকল: %type%
 entity-name-invalid = entity নামটি অবশ্যই মুদ্রণযোগ্য UTF-8 হতে হবে
 reserved-entity-name = entity নাম '%name%' সংরক্ষিত
+
+# IPv6 config
+ipv6-enabled = IPv6 সক্রিয় — IPv4 এবং IPv6 উভয়ই বাঁধা হচ্ছে
+ipv6-disabled = IPv6 নিষ্ক্রিয় — শুধুমাত্র IPv4 বাঁধাই হচ্ছে (পুনরায় সক্রিয় করতে restart প্রয়োজন)
+ipv6-enable-restart-required = সংরক্ষিত হয়েছে। এই পরিবর্তন কার্যকর হতে restart প্রয়োজন।
+ipv6-enable-unchanged = ipv6_enable ইতিমধ্যে সেই মানে সেট করা আছে — কোনো পরিবর্তন নেই।

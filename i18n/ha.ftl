@@ -89,3 +89,9 @@ config-key-not-manifest = maɓallin config '%key%' ba shi ne maɓallin manifest 
 wrong-crud-protocol = kuskuren CRUD protocol: %type%
 entity-name-invalid = sunan entity dole ne ya kasance UTF-8 da za a buga
 reserved-entity-name = sunan entity '%name%' ya keɓe
+
+# IPv6 config
+ipv6-enabled = An kunna IPv6 — yana ɗaurewa IPv4 da IPv6
+ipv6-disabled = An kashe IPv6 — ana ɗaure IPv4 kawai (ana buƙatar sake farawa don sake kunna)
+ipv6-enable-restart-required = An adana. Ana buƙatar sake farawa don wannan canjin ya yi aiki.
+ipv6-enable-unchanged = ipv6_enable an riga an saita shi zuwa wannan ƙima — babu canji.

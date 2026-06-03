@@ -89,3 +89,9 @@ config-key-not-manifest = la clave de config '%key%' no es una clave de manifest
 wrong-crud-protocol = protocolo CRUD incorrecto: %type%
 entity-name-invalid = el nombre de entity debe ser UTF-8 imprimible
 reserved-entity-name = el nombre de entity '%name%' está reservado
+
+# IPv6 config
+ipv6-enabled = IPv6 habilitado — vinculando tanto IPv4 como IPv6
+ipv6-disabled = IPv6 deshabilitado — vinculando solo IPv4 (se requiere reinicio para volver a habilitar)
+ipv6-enable-restart-required = Guardado. Se requiere reinicio para que este cambio surta efecto.
+ipv6-enable-unchanged = ipv6_enable ya está establecido en ese valor — sin cambios.

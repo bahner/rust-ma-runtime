@@ -89,3 +89,9 @@ config-key-not-manifest = konfiguratsioonivõti '%key%' ei ole teadaolev manifes
 wrong-crud-protocol = vale CRUD-protokoll: %type%
 entity-name-invalid = entity nimi peab olema prinditav UTF-8
 reserved-entity-name = entity nimi '%name%' on reserveeritud
+
+# IPv6 config
+ipv6-enabled = IPv6 on lubatud — seob nii IPv4 kui ka IPv6
+ipv6-disabled = IPv6 on keelatud — seotakse ainult IPv4 (uuesti lubamiseks on vajalik restart)
+ipv6-enable-restart-required = Salvestatud. Muudatuse jõustumiseks on vajalik restart.
+ipv6-enable-unchanged = ipv6_enable on juba sellele väärtusele seatud — muudatusi pole.

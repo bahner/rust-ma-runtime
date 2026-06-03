@@ -89,3 +89,9 @@ config-key-not-manifest = khóa config '%key%' không phải là khóa manifest 
 wrong-crud-protocol = giao thức CRUD sai: %type%
 entity-name-invalid = tên entity phải là UTF-8 có thể in được
 reserved-entity-name = tên entity '%name%' đã được đặt trước
+
+# IPv6 config
+ipv6-enabled = IPv6 đã bật — đang liên kết cả IPv4 và IPv6
+ipv6-disabled = IPv6 bị tắt — chỉ đang liên kết IPv4 (cần restart để bật lại)
+ipv6-enable-restart-required = Đã lưu. Cần restart để thay đổi này có hiệu lực.
+ipv6-enable-unchanged = ipv6_enable đã được đặt thành giá trị đó — không có thay đổi.

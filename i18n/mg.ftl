@@ -89,3 +89,9 @@ config-key-not-manifest = ny fanalahidin'ny config '%key%' dia tsy fanalahidy ma
 wrong-crud-protocol = diso ny CRUD protocol: %type%
 entity-name-invalid = ny anaran'ny entity dia tsy maintsy UTF-8 azo atonta
 reserved-entity-name = ny anaran'ny entity '%name%' dia voatokana
+
+# IPv6 config
+ipv6-enabled = IPv6 voalefaka — mampifandray IPv4 sy IPv6
+ipv6-disabled = Voarara ny IPv6 — IPv4 ihany no mifamatotra (restart no ilaina mba hamerenana azy)
+ipv6-enable-restart-required = Voatahiry. Restart no ilaina mba hisy fiantraikany io fanovana io.
+ipv6-enable-unchanged = Efa voapetraka amin'io sanda io ny ipv6_enable — tsy misy fanovana.

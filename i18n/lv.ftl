@@ -89,3 +89,9 @@ config-key-not-manifest = konfigurācijas atslēga '%key%' nav zināma manifest 
 wrong-crud-protocol = nepareizs CRUD protokols: %type%
 entity-name-invalid = entity nosaukumam jābūt drukājamam UTF-8
 reserved-entity-name = entity nosaukums '%name%' ir rezervēts
+
+# IPv6 config
+ipv6-enabled = IPv6 iespējots — saista gan IPv4, gan IPv6
+ipv6-disabled = IPv6 ir atspējots — tiek piesaistīts tikai IPv4 (atkārtotai iespējošanai nepieciešams restart)
+ipv6-enable-restart-required = Saglabāts. Lai šīs izmaiņas stātos spēkā, nepieciešams restart.
+ipv6-enable-unchanged = ipv6_enable jau ir iestatīts uz šo vērtību — nav izmaiņu.

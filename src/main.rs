@@ -177,7 +177,17 @@ async fn main() -> Result<()> {
         .context("failed to derive runtime IPNS id from 'runtime_ipns' key")?;
 
     // ── iroh endpoint ──────────────────────────────────────────────────────────
-    let mut endpoint = ma_core::new_ma_endpoint(secrets.iroh_secret_key).await?;
+    let ipv6_enabled = config
+        .extra
+        .get("ipv6_enable")
+        .and_then(serde_yaml::value::Value::as_bool)
+        .unwrap_or(true);
+    if ipv6_enabled {
+        info!("{}", crate::i18n::t("ipv6-enabled"));
+    } else {
+        info!("{}", crate::i18n::t("ipv6-disabled"));
+    }
+    let mut endpoint = ma_core::new_ma_endpoint(secrets.iroh_secret_key, ipv6_enabled).await?;
     let rpc_messages = endpoint.service(rpc::RPC_PROTOCOL_ID);
     let ipfs_messages = if ipfs_publisher_enabled {
         Some(endpoint.service(IPFS_PROTOCOL_ID))

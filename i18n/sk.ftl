@@ -89,3 +89,9 @@ config-key-not-manifest = konfiguračný kľúč '%key%' nie je známym kľúčo
 wrong-crud-protocol = nesprávny protokol CRUD: %type%
 entity-name-invalid = názov entity musí byť tlačiteľné UTF-8
 reserved-entity-name = názov entity '%name%' je rezervovaný
+
+# IPv6 config
+ipv6-enabled = IPv6 povolené — viaže sa na IPv4 aj IPv6
+ipv6-disabled = IPv6 je zakázané — viaže sa iba IPv4 (na opätovné povolenie je potrebný restart)
+ipv6-enable-restart-required = Uložené. Na uplatnenie tejto zmeny je potrebný restart.
+ipv6-enable-unchanged = ipv6_enable je už nastavené na túto hodnotu — žiadna zmena.

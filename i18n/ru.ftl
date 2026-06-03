@@ -89,3 +89,9 @@ config-key-not-manifest = ключ config '%key%' не является изве
 wrong-crud-protocol = неверный протокол CRUD: %type%
 entity-name-invalid = имя entity должно быть печатным UTF-8
 reserved-entity-name = имя entity '%name%' зарезервировано
+
+# IPv6 config
+ipv6-enabled = IPv6 включён — привязка к IPv4 и IPv6 одновременно
+ipv6-disabled = IPv6 отключён — привязывается только IPv4 (для повторного включения необходим restart)
+ipv6-enable-restart-required = Сохранено. Для применения этого изменения необходим restart.
+ipv6-enable-unchanged = ipv6_enable уже установлен в это значение — изменений нет.

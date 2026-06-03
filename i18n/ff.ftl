@@ -89,3 +89,9 @@ config-key-not-manifest = sorol config '%key%' alaa e sorol manifest config gann
 wrong-crud-protocol = protokol CRUD moƴƴi alaa: %type%
 entity-name-invalid = innde entity ngoodha UTF-8 e bindateji
 reserved-entity-name = innde entity '%name%' ndi dokkaa
+
+# IPv6 config
+ipv6-enabled = IPv6 heɓii — jokku IPv4 e IPv6 ɗiɗi
+ipv6-disabled = IPv6 haɓɓitaama — IPv4 tan woni seŋtiɗo (restart haɓeteeɗo ngam yuɓɓinde)
+ipv6-enable-restart-required = Abbitaama. Restart haɓeteeɗo ngam tabitinde huɓɓinaango ngoo.
+ipv6-enable-unchanged = ipv6_enable heɓii tan ko ɗuum boorti — alaa huunde feewi.

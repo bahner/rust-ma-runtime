@@ -89,3 +89,9 @@ config-key-not-manifest = cheia de config '%key%' nu este o cheie de manifest co
 wrong-crud-protocol = protocol CRUD greșit: %type%
 entity-name-invalid = numele entității trebuie să fie UTF-8 imprimabil
 reserved-entity-name = numele entității '%name%' este rezervat
+
+# IPv6 config
+ipv6-enabled = IPv6 activat — leagă atât IPv4, cât și IPv6
+ipv6-disabled = IPv6 dezactivat — se leagă doar IPv4 (este necesară repornirea pentru a reactiva)
+ipv6-enable-restart-required = Salvat. Este necesară repornirea pentru ca această modificare să intre în vigoare.
+ipv6-enable-unchanged = ipv6_enable este deja setat la acea valoare — fără modificări.

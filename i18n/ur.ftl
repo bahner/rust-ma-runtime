@@ -89,3 +89,9 @@ config-key-not-manifest = config کی چابی '%key%' ایک معروف manifes
 wrong-crud-protocol = غلط CRUD پروٹوکول: %type%
 entity-name-invalid = entity کا نام قابلِ پرنٹ UTF-8 ہونا چاہیے
 reserved-entity-name = entity کا نام '%name%' محفوظ ہے
+
+# IPv6 config
+ipv6-enabled = IPv6 فعال ہے — IPv4 اور IPv6 دونوں سے منسلک ہو رہا ہے
+ipv6-disabled = IPv6 بند ہے — صرف IPv4 سے منسلک ہو رہا ہے (دوبارہ فعال کرنے کے لیے restart ضروری ہے)
+ipv6-enable-restart-required = محفوظ ہو گیا۔ یہ تبدیلی نافذ کرنے کے لیے restart ضروری ہے۔
+ipv6-enable-unchanged = ipv6_enable پہلے سے اس قدر پر مقرر ہے — کوئی تبدیلی نہیں۔

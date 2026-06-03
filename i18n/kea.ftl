@@ -89,3 +89,9 @@ config-key-not-manifest = xavi di config '%key%' ka é un xavi di manifest confi
 wrong-crud-protocol = protokolu CRUD eradu: %type%
 entity-name-invalid = nomi di entity ten di ser UTF-8 imprimivel
 reserved-entity-name = nomi di entity '%name%' ta rezervadu
+
+# IPv6 config
+ipv6-enabled = IPv6 ativadu — ligadu a IPv4 i IPv6 na mes ora
+ipv6-disabled = IPv6 dizativadu — só IPv4 ta ligadu (restart é nesesáriu pa reativá)
+ipv6-enable-restart-required = Guardadu. Restart é nesesáriu pa kes mudansa entrá n'vigor.
+ipv6-enable-unchanged = ipv6_enable djá sta definidu pa kel valor — sem mudansa.

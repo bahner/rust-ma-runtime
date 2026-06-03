@@ -89,3 +89,9 @@ config-key-not-manifest = kle config '%key%' la pa yon kle manifest config ki ko
 wrong-crud-protocol = move protokòl CRUD: %type%
 entity-name-invalid = non entity a dwe UTF-8 ki ka enprime
 reserved-entity-name = non entity '%name%' rezerve
+
+# IPv6 config
+ipv6-enabled = IPv6 aktive — konekte tou de IPv4 ak IPv6
+ipv6-disabled = IPv6 dezaktive — IPv4 sèlman k ap konekte (restart nesesè pou reaktive)
+ipv6-enable-restart-required = Sove. Restart nesesè pou chanjman sa a antre an vigè.
+ipv6-enable-unchanged = ipv6_enable deja mete sou valè sa a — pa gen chanjman.

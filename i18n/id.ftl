@@ -89,3 +89,9 @@ config-key-not-manifest = kunci config '%key%' bukan kunci manifest config yang 
 wrong-crud-protocol = protokol CRUD salah: %type%
 entity-name-invalid = nama entity harus berupa UTF-8 yang dapat dicetak
 reserved-entity-name = nama entity '%name%' sudah dicadangkan
+
+# IPv6 config
+ipv6-enabled = IPv6 diaktifkan — mengikat IPv4 maupun IPv6
+ipv6-disabled = IPv6 dinonaktifkan — hanya IPv4 yang diikat (restart diperlukan untuk mengaktifkan kembali)
+ipv6-enable-restart-required = Tersimpan. Restart diperlukan agar perubahan ini berlaku.
+ipv6-enable-unchanged = ipv6_enable sudah diatur ke nilai tersebut — tidak ada perubahan.

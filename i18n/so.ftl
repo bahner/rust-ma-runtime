@@ -89,3 +89,9 @@ config-key-not-manifest = furaha config '%key%' maaha furah manifest config la g
 wrong-crud-protocol = protokoolka CRUD ee khaldan: %type%
 entity-name-invalid = magaca entity waa inuu noqdaa UTF-8 la daabici karo
 reserved-entity-name = magaca entity '%name%' waa la kaydiyay
+
+# IPv6 config
+ipv6-enabled = IPv6 waxa la shiday — waxay xidhaa IPv4 iyo IPv6 labadaba
+ipv6-disabled = IPv6 waa la dami — IPv4 kaliya ayaa la xidaya (dib u bilaabid ayaa loo baahan yahay si dib loogu shido)
+ipv6-enable-restart-required = Waxa la keydsaday. Dib u bilaabid ayaa loo baahan yahay si isbeddelkani saamayn u yeesho.
+ipv6-enable-unchanged = ipv6_enable horay ayuu u dejiyay qiimahan — wax is beddel ah ma jiro.

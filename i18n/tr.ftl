@@ -89,3 +89,9 @@ config-key-not-manifest = config anahtarı '%key%' bilinen bir manifest config a
 wrong-crud-protocol = yanlış CRUD protokolü: %type%
 entity-name-invalid = entity adı yazdırılabilir UTF-8 olmalıdır
 reserved-entity-name = entity adı '%name%' ayrılmıştır
+
+# IPv6 config
+ipv6-enabled = IPv6 etkin — hem IPv4 hem de IPv6 üzerinde dinleniyor
+ipv6-disabled = IPv6 devre dışı bırakıldı — yalnızca IPv4 bağlanıyor (yeniden etkinleştirmek için restart gerekiyor)
+ipv6-enable-restart-required = Kaydedildi. Bu değişikliğin geçerli olması için restart gerekiyor.
+ipv6-enable-unchanged = ipv6_enable zaten bu değere ayarlanmış — değişiklik yok.

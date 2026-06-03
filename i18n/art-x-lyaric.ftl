@@ -91,3 +91,9 @@ config-key-not-manifest = config key '%key%' nah known manifest config key
 wrong-crud-protocol = wrong CRUD protocol: %type%
 entity-name-invalid = di entity name must be clean printable UTF-8
 reserved-entity-name = di entity name '%name%' ital, it reserved
+
+# IPv6 config
+ipv6-enabled = IPv6 lively up — holdin both IPv4 an IPv6 inna oneness
+ipv6-disabled = IPv6 downstrike — only IPv4 a hold (restart needeth fi rise it back)
+ipv6-enable-restart-required = Irie-saved. Restart needeth fi dis change fi livity.
+ipv6-enable-unchanged = ipv6_enable already set to dat value — no change seen.

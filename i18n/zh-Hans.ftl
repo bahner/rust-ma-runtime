@@ -89,3 +89,9 @@ config-key-not-manifest = config 键 '%key%' 不是已知的 manifest config 键
 wrong-crud-protocol = 错误的 CRUD 协议：%type%
 entity-name-invalid = entity 名称必须是可打印的 UTF-8
 reserved-entity-name = entity 名称 '%name%' 已被保留
+
+# IPv6 config
+ipv6-enabled = IPv6 已启用 — 同时绑定 IPv4 和 IPv6
+ipv6-disabled = IPv6 已禁用 — 仅绑定 IPv4（重新启用需要 restart）
+ipv6-enable-restart-required = 已保存。此更改生效需要 restart。
+ipv6-enable-unchanged = ipv6_enable 已设置为该值 — 无变化。

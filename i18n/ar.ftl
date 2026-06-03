@@ -89,3 +89,9 @@ config-key-not-manifest = مفتاح config '%key%' ليس مفتاح manifest c
 wrong-crud-protocol = بروتوكول CRUD خاطئ: %type%
 entity-name-invalid = يجب أن يكون اسم الكيان UTF-8 قابلاً للطباعة
 reserved-entity-name = اسم الكيان '%name%' محجوز
+
+# IPv6 config
+ipv6-enabled = IPv6 مُفعَّل — ربط IPv4 و IPv6 معاً
+ipv6-disabled = IPv6 معطل — يتم الربط بـ IPv4 فقط (يلزم إعادة التشغيل لإعادة التفعيل)
+ipv6-enable-restart-required = تم الحفظ. يلزم إعادة التشغيل لتفعيل هذا التغيير.
+ipv6-enable-unchanged = ipv6_enable مضبوط بالفعل على تلك القيمة — لا تغيير.

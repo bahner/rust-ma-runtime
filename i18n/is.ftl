@@ -89,3 +89,9 @@ config-key-not-manifest = stillingarlykillinn '%key%' er ekki þekktur manifest-
 wrong-crud-protocol = rangur CRUD-samskiptaregla: %type%
 entity-name-invalid = entity-nafnið verður að vera prentanlegt UTF-8
 reserved-entity-name = entity-nafnið '%name%' er frátekið
+
+# IPv6 config
+ipv6-enabled = IPv6 virkjað — bindar bæði IPv4 og IPv6
+ipv6-disabled = IPv6 er óvirkt — bindur aðeins IPv4 (restart er nauðsynlegt til að virkja aftur)
+ipv6-enable-restart-required = Vistað. Restart er nauðsynlegt til að þessi breyting taki gildi.
+ipv6-enable-unchanged = ipv6_enable er þegar stillt á þetta gildi — engar breytingar.

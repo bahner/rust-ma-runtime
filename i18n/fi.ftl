@@ -89,3 +89,9 @@ config-key-not-manifest = config-avain '%key%' ei ole tunnettu manifest config -
 wrong-crud-protocol = väärä CRUD-protokolla: %type%
 entity-name-invalid = entity-nimen täytyy olla tulostettavaa UTF-8
 reserved-entity-name = entity-nimi '%name%' on varattu
+
+# IPv6 config
+ipv6-enabled = IPv6 käytössä — sitoo sekä IPv4:n että IPv6:n
+ipv6-disabled = IPv6 on poistettu käytöstä — sidotaan vain IPv4 (uudelleenkäynnistys vaaditaan uudelleenaktivointiin)
+ipv6-enable-restart-required = Tallennettu. Muutoksen voimaantulo vaatii uudelleenkäynnistyksen.
+ipv6-enable-unchanged = ipv6_enable on jo asetettu siihen arvoon — ei muutosta.

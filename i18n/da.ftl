@@ -89,3 +89,9 @@ config-key-not-manifest = konfigurationsnøglen '%key%' er ikke en kendt manifes
 wrong-crud-protocol = forkert CRUD-protokoll: %type%
 entity-name-invalid = entity-navn skal være udskrivbart UTF-8
 reserved-entity-name = entity-navn '%name%' er reserveret
+
+# IPv6 config
+ipv6-enabled = IPv6 aktiveret — binder til både IPv4 og IPv6
+ipv6-disabled = IPv6 er deaktiveret — binder kun IPv4 (restart er nødvendig for at genaktivere)
+ipv6-enable-restart-required = Gemt. Restart er nødvendig, for at ændringen træder i kraft.
+ipv6-enable-unchanged = ipv6_enable er allerede sat til den værdi — ingen ændring.

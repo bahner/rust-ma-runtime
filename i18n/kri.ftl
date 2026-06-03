@@ -89,3 +89,9 @@ config-key-not-manifest = config ki '%key%' na nɔ nɔ manifest config ki
 wrong-crud-protocol = rɔng CRUD protokɔl: %type%
 entity-name-invalid = di entity nem fɔ bi printable UTF-8
 reserved-entity-name = di entity nem '%name%' reserved
+
+# IPv6 config
+ipv6-enabled = IPv6 don on — e de bind IPv4 an IPv6 togeda
+ipv6-disabled = IPv6 don turn aff — na only IPv4 e bin (restart nid fo put am bak on)
+ipv6-enable-restart-required = Sev don. Restart nid fo dis chench fo wok.
+ipv6-enable-unchanged = ipv6_enable don set to dat valu olredi — no chench.

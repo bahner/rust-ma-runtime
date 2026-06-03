@@ -89,3 +89,9 @@ config-key-not-manifest = config-sleutel '%key%' is geen bekende manifest config
 wrong-crud-protocol = verkeerd CRUD-protocol: %type%
 entity-name-invalid = entity-naam moet afdrukbare UTF-8 zijn
 reserved-entity-name = entity-naam '%name%' is gereserveerd
+
+# IPv6 config
+ipv6-enabled = IPv6 ingeschakeld — bindt zowel IPv4 als IPv6
+ipv6-disabled = IPv6 uitgeschakeld — bindt alleen IPv4 (herstart vereist om opnieuw in te schakelen)
+ipv6-enable-restart-required = Opgeslagen. Herstart vereist om deze wijziging door te voeren.
+ipv6-enable-unchanged = ipv6_enable is al ingesteld op die waarde — geen wijziging.

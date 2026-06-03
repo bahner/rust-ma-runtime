@@ -89,3 +89,9 @@ config-key-not-manifest = конфигурационният ключ '%key%' н
 wrong-crud-protocol = грешен CRUD протокол: %type%
 entity-name-invalid = Името на entity трябва да бъде отпечатваем UTF-8
 reserved-entity-name = Името на entity '%name%' е запазено
+
+# IPv6 config
+ipv6-enabled = IPv6 е активиран — свързва се с IPv4 и IPv6 едновременно
+ipv6-disabled = IPv6 е деактивиран — свързва се само с IPv4 (необходимо е рестартиране за повторно активиране)
+ipv6-enable-restart-required = Запазено. Необходимо е рестартиране, за да влезе промяната в сила.
+ipv6-enable-unchanged = ipv6_enable вече е зададен на тази стойност — без промяна.

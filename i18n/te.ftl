@@ -89,3 +89,9 @@ config-key-not-manifest = config కీ '%key%' తెలిసిన manifest c
 wrong-crud-protocol = తప్పు CRUD ప్రోటోకాల్: %type%
 entity-name-invalid = entity పేరు ముద్రించదగిన UTF-8 అయి ఉండాలి
 reserved-entity-name = entity పేరు '%name%' రిజర్వు చేయబడింది
+
+# IPv6 config
+ipv6-enabled = IPv6 ప్రారంభించబడింది — IPv4 మరియు IPv6 రెండింటికీ బైండ్ చేయబడుతోంది
+ipv6-disabled = IPv6 నిష్క్రియం చేయబడింది — IPv4 మాత్రమే బైండ్ అవుతోంది (మళ్ళీ ప్రారంభించడానికి restart అవసరం)
+ipv6-enable-restart-required = సేవ్ చేయబడింది. ఈ మార్పు అమలుకు restart అవసరం.
+ipv6-enable-unchanged = ipv6_enable ఇప్పటికే ఆ విలువకు సెట్ చేయబడింది — మార్పు లేదు.
