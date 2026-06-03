@@ -353,11 +353,16 @@ pub async fn bootstrap_minimal_manifest(
     use anyhow::Context as _;
     use ma_core::{AclMap, CapabilityEntry};
 
-    // Build owner-only ACL: each owner → ["*"], no wildcard entry.
+    // Unclaimed system (no owners): open ACL so DID publishing works out of the box.
+    // Once an owner claims the runtime, the manifest is rebuilt with an owner-only ACL.
     let wildcard: std::collections::BTreeSet<String> = std::iter::once("*".to_string()).collect();
     let mut acl_map = AclMap::new();
-    for owner in owners {
-        acl_map.insert(owner.clone(), CapabilityEntry::Allow(wildcard.clone()));
+    if owners.is_empty() {
+        acl_map.insert("*".to_string(), CapabilityEntry::Allow(wildcard.clone()));
+    } else {
+        for owner in owners {
+            acl_map.insert(owner.clone(), CapabilityEntry::Allow(wildcard.clone()));
+        }
     }
 
     let acl_cid = crate::kubo::dag_put(kubo_rpc_url, &acl_map)
