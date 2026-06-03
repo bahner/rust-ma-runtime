@@ -122,8 +122,7 @@ follow XDG paths via ma-core:
 | ACL | `$XDG_CONFIG_HOME/ma/ma.acl` (optional) |
 | Log | `$XDG_DATA_HOME/ma/ma.log` |
 
-`secret_bundle_passphrase` must be set (env `MA_MA_SECRET_BUNDLE_PASSPHRASE`,
-or `MA_SECRET_BUNDLE_PASSPHRASE`, or in the YAML config).
+`secret_bundle_passphrase` must be set (env `MA_SECRET_BUNDLE_PASSPHRASE`, or in the YAML config).
 
 `kubo_rpc_url` defaults to `http://127.0.0.1:5001`.
 
@@ -278,7 +277,7 @@ The JSON object contains:
 - RPC replies: CBOR atom (`:pong`, `:ok`, `:error`) or tuple `[":ok", payload]` / `[":error", reason]`.
 - Entity content in replies: CBOR-encoded `EntityNode` (same structure as
   stored in IPFS DAG-CBOR), never JSON.
-- Entity definitions written by users in ego use **YAML** as the human-readable
+- Entity definitions written by users in zion use **YAML** as the human-readable
   format. YAML is stored to IPFS via `dag_put` (DAG-CBOR), and the resulting
   CID is the canonical reference.
 
@@ -323,7 +322,7 @@ the named entity plugin (Wasm `handle_cast`).
 ### `:edit` verb
 
 `:entities.<name>:edit` returns the current `EntityNode` as CBOR. The **client**
-(ego) is responsible for opening an editor so the user can modify it. After
+(zion) is responsible for opening an editor so the user can modify it. After
 editing, the client publishes the updated node to IPFS (`dag_put`), then sends
 `:entities.<name>: <new-cid>` to register it. The runtime never initiates an
 editor session; it only stores and retrieves by CID.
