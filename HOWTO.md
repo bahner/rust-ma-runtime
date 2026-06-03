@@ -135,7 +135,7 @@ curl http://127.0.0.1:5003/status.json
 
 zion is the browser-based actor terminal.  Open it at:
 
-**<https://間.bahner.com>** (Punycode: `https://xn--nf5a.bahner.com`)
+**<https://zion.bahner.com>**
 
 1. Create an identity (pick a username, set a passphrase).
 

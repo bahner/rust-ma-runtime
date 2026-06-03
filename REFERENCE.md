@@ -1,0 +1,796 @@
+# 間 Runtime (`ma`)
+
+A lean Tokio daemon that bridges browser-based `did:ma:` identities to Kubo
+(IPFS) and manages a Wasm entity/plugin system over iroh QUIC transport.
+
+---
+
+## Design philosophy
+
+間 is built around one idea: **secure messaging and actor interaction should
+be fast and lightweight**, not just correct.
+
+The cryptographic primitive choices follow the same school of thought as
+[WireGuard](https://www.wireguard.com/) — pick the fastest algorithms that are
+still thoroughly secure, keep the code small, and avoid complexity:
+
+| Concern | 間 choice | Why |
+|---------|-----------|-----|
+| Wire format | CBOR | Compact, schema-free, no string parsing |
+| Hashing | BLAKE3 | Fast and modern — same school as WireGuard |
+| Key agreement | X25519 | Small, fast, well-understood |
+| Signatures | Ed25519 | Small keys, fast verification, no surprises |
+| Transport | iroh QUIC | Hole-punching, NAT traversal, end-to-end |
+| Identity | W3C DID | Decentralised, self-describing, auditable |
+
+The result is a system that is not [DIDComm](https://identity.foundation/didcomm-messaging/spec/)
+— it does not implement that standard — but shares its security model:
+sender-authenticated, end-to-end encrypted messages rooted in
+[W3C DID](https://www.w3.org/TR/did-core/) identities. The wire format is
+leaner and the transport is faster. No JSON parsing in the hot path. No round
+trips that are not necessary.
+
+**Why Rust?** [iroh](https://iroh.computer/) is an IPFS spinoff — a leaner,
+faster successor to the original libp2p QUIC stack. At the moment iroh is only
+available as a Rust crate, so the language choice is not ideological: it is
+simply the price of admission for the best transport available.
+
+`ma` has not been independently audited. The cryptographic design is sound,
+but treat it as a well-engineered tool under active development, not a
+certified security product.
+
+---
+
+## Design principles
+
+- **No backward compatibility.** This is active development. Clean, simple
+  code is preferred over compatibility shims for hypothetical users. Remove
+  old forms without hesitation when a better design emerges.
+- **No local protocol code.** All publish logic, validation, secret-bundle
+  handling, config, ACL, and transport are provided by `ma-core`. Local code
+  is nothing but glue.
+- **Entity lifecycle.** Every entity tracks a `Lifecycle` state:
+  `New` → `Running` | `Error`; `Stopped` on graceful shutdown. `New` is set
+  on creation. After `init()` returns `:ok` the state becomes `Running`; a
+  CBOR `[:error, reason]` reply sets it to `Error` (plugin remains
+  dispatchable for debugging). `Stopped` is written to the manifest only on
+  clean shutdown. Kinds whose `api` list does not include `init` skip the
+  call and start `Running` directly.
+- **Plugin evaluators.** Each `KindNode` carries an `Evaluator` field
+  (default: `Extism`). Only `Extism` is implemented; `Native`, `Bash`, and
+  `Lua` are reserved for future use. `load()` returns `Err` if asked to load
+  a kind with an unsupported evaluator.
+- **Manifest is the source of truth; ACLs are derivatives.**
+  `RuntimeManifest.owners` is the authoritative owners list. The in-memory
+  root `AclMap` and stats are derived from it and must be updated whenever it
+  changes. Never read the ACL to discover owners — read `manifest.owners`.
+- **Never fall back to an open ACL.** An empty `AclMap` (no entries) denies
+  everyone. Code must never substitute `{"*": ["*"]}` as a fallback for a
+  missing ACL. A missing ACL is a configuration error — fail loudly. The
+  `:acl:` delete verb on the root ACL is therefore a no-op; replace it with
+  a new CID via `:acl: <cid>`.
+- **Keys in memory only.** IPNS private key material arriving in a request
+  is used once and immediately zeroized. The daemon's own keys live in an
+  encrypted `SecretBundle` on disk, decrypted into memory at startup and
+  never written out again.
+- **Strict input validation.** Every incoming CBOR envelope on
+  `/ma/ipfs/0.0.1` is validated by `validate_ipfs_publish_request`: checks
+  content-type, DID document proof signature, and that the sender's IPNS
+  identity matches the document's DID.
+- **Replay protection.** A `ReplayGuard` (sliding 120-second window) is
+  applied to `/ma/ipfs/0.0.1` messages before any processing.
+
+---
+
+## Overview
+
+`ma` exposes three iroh QUIC services on behalf of clients that cannot reach the
+Kubo RPC API directly (e.g. the `zion` browser actor):
+
+| Service | Protocol ID | Purpose |
+|---------|-------------|---------|
+| IPFS publisher | `/ma/ipfs/0.0.1` | Receives signed DID-document publish requests and forwards them to Kubo |
+| RPC | `/ma/rpc/0.0.1` | Entity/plugin dispatch, ping/pong |
+| CRUD | `/ma/crud/0.0.1` | Structured data management (entities, kinds, config, namespaces) |
+
+The daemon derives its own `did:ma:` identity at startup, publishes its own DID
+document to IPFS/IPNS, and then enters the main event loop.
+
+---
+
+## Architecture
+
+```
+zion (browser WASM) ──iroh QUIC──► /ma/rpc/0.0.1
+                                       │
+                                       ├─ (unfragmented) → ping
+                                       └─ #<name>        → Wasm plugin dispatch
+                   ──iroh QUIC──► /ma/crud/0.0.1
+                                       │
+                                       ├─ :entities.*    → entity management
+                                       ├─ :kinds.*       → kind registry
+                                       ├─ :config.*      → runtime config
+                                       └─ :namespaces.*  → namespace management
+                   ──iroh QUIC──► /ma/ipfs/0.0.1
+                                       │
+                                       └─ publish DID document to Kubo/IPNS
+```
+
+Entity Wasm plugins are loaded from IPFS at startup.  State is persisted back
+to IPFS on graceful shutdown.
+
+---
+
+## Wire format
+
+**All data exchanged between peers over iroh transport is CBOR. Never JSON.**
+
+| Direction | Format |
+|-----------|--------|
+| RPC request (atom) | CBOR text string: `:verb` |
+| RPC request (with args) | CBOR array: `[":verb", arg1, arg2, …]` |
+| RPC reply (success) | CBOR atom `:ok`, or tuple `[":ok", payload]` |
+| RPC reply (error) | CBOR atom `:error`, or tuple `[":error", reason]` |
+| Entity content in replies | CBOR-encoded `EntityNode` (DAG-CBOR structure, never JSON) |
+| IPFS publish request | CBOR-encoded signed envelope (`application/x-ma-ipfs-request`) |
+
+The one exception: the Kubo HTTP RPC API (`/api/v0/…`) speaks JSON internally.
+That is a private implementation detail of the `kubo` sub-crate and is never
+exposed to peers.
+
+Entity definitions authored in zion use **YAML** as the human-readable format.
+YAML is stored to IPFS via `dag_put` (DAG-CBOR), and the resulting CID is the
+canonical reference.
+
+---
+
+## Prerequisites
+
+- Rust (latest stable)
+- [Kubo](https://docs.ipfs.tech/install/command-line/) running on
+  `http://127.0.0.1:5001` (or set `kubo_rpc_url` in config)
+
+---
+
+## Building
+
+```sh
+cargo build --release
+```
+
+Binary: `target/release/ma`.
+
+---
+
+## First-time setup
+
+### 1. Generate config and secret bundle
+
+On the very first start `ma` detects a missing secret bundle and generates a
+full headless config automatically — no manual step required. You can also
+trigger generation explicitly:
+
+```sh
+ma --gen-headless-config
+```
+
+Writes four random 32-byte keys (plus a `runtime_ipns` key) encrypted with a
+random passphrase to:
+
+| File | Default path |
+|------|-------------|
+| Config | `$XDG_CONFIG_HOME/ma/ma.yaml` |
+| Secret bundle | `$XDG_CONFIG_HOME/ma/ma.bin` |
+
+The passphrase is printed once and also written into `ma.yaml` automatically,
+so `ma` can restart without any manual input.  Store it in a password manager
+as a backup.  If you prefer not to keep it in the config file, remove the
+`secret_bundle_passphrase:` line and supply it via `MA_SECRET_BUNDLE_PASSPHRASE`.
+
+### 2. Minimal runtime (no bootstrap needed)
+
+On first start, if no `root_cid` is found in IPNS and none is given via
+`--root-cid`, the daemon automatically publishes a minimal `RuntimeManifest`
+to Kubo and uses it as the runtime head. This manifest contains:
+
+- `config.owners` — empty (no owner yet)
+- `acl` — absent (deny-all for all incoming transport until claimed)
+- `entities`, `kinds`, `i18n` — all empty
+
+The daemon is immediately functional for CRUD operations. To establish
+ownership, run `.my.ma:claim` from zion (or `POST /claim` with your DID).
+This updates the live transport ACL so you can issue RPC/CRUD requests.
+
+If claiming remotely is not practical, set owners directly in `config.yaml`
+or via `--owner` (repeatable) before starting the daemon:
+
+```yaml
+# ~/.config/ma/ma.yaml
+owners:
+  - did:ma:<your-ipns>
+  - did:ma:<another-ipns>
+```
+
+```sh
+ma --owner did:ma:<your-ipns> --owner did:ma:<another-ipns>
+```
+
+Owners listed this way are granted `["*"]` in the live transport ACL at
+startup, before any manifest ACL is loaded.
+
+To add a permanent ACL to the manifest:
+
+```
+@ma:acl: <cid>   # set an AclMap CID as the root transport-gate ACL
+```
+
+### 3. Bootstrap entities and locales (optional)
+
+Run once after Kubo is ready to set up the entity system:
+
+```sh
+ma --gen-root-cid bootstrap.example.yaml
+```
+
+This publishes kind nodes, entity nodes, and the root `RuntimeManifest` as
+IPLD DAG-CBOR objects to Kubo, then prints the generated `root_cid` and exits.
+
+Locale files from `i18n/` are embedded in the binary at build time via
+`src/i18n.yaml` (generated by `make src/i18n.yaml`). To rebuild the locale
+map after editing any `.ftl` file:
+
+```sh
+make src/i18n.yaml
+make release
+```
+
+Recommended runtime model:
+- Runtime head CID is read from IPNS at startup.
+- `--root-cid <cid>` overrides IPNS for the current process.
+
+Warning for `--root-cid`:
+- It immediately resets runtime head for this run.
+- If you pass the wrong CID, retrieve the previous CID from runtime logs and restart with that value.
+
+On subsequent starts, the daemon restores runtime head from IPNS automatically.
+
+#### `bootstrap.yaml` format
+
+```yaml
+runtime:
+  owner: did:ma:<your-ipns>   # DID of the operator; shown by `ma --status`
+
+  # Kinds: protocol families → implementations → metadata
+  kinds:
+    stateless:
+      ping:
+        protocol: /ma/stateless/ping/0.0.1
+        wasi: false             # Rust/native Extism plugin
+        api:
+          - handle_cast         # fn handle_cast() — process incoming message
+        host_functions:
+          - ma_send             # full-control outbound envelope
+      python:
+        protocol: /ma/stateless/python/0.0.1
+        wasi: true              # Python/WASI plugin
+        api:
+          - handle_cast
+        host_functions:
+          - ma_reply            # reply to sender
+          - ma_send
+    stateful:
+      python:
+        protocol: /ma/stateful/python/0.0.1
+        wasi: true
+        api:
+          - init                # called on load with persisted state bytes
+          - handle_call
+          - save_state          # janitor snapshot trigger
+        host_functions:
+          - ma_reply
+          - ma_send
+          - ma_set_state        # persist state to IPFS via runtime
+
+  # Entities: named plugin instances
+  entities:
+    ping:
+      kind: /ma/stateless/ping/0.0.1
+      behaviour_cid: bafkrei…   # CID of compiled .wasm — `ipfs add plugin.wasm`
+      acl: ""                  # "" = deny-all; use a named ACL ref for open access
+    fortune:
+      kind: /ma/stateless/python/0.0.1
+      behaviour_cid: Qm…
+      acl: ""
+      # owner: did:ma:<other>  # optional; falls back to runtime.owner
+```
+
+---
+
+## Running
+
+```sh
+ma
+# or
+ma --acl-file /etc/ma/acl.yaml --status-bind 0.0.0.0:5003
+```
+
+---
+
+## CLI flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--gen-root-cid <YAML>` | — | Publish bootstrap manifest to IPFS, print `root_cid`, then exit |
+| `--root-cid <CID>` | — | WARNING: resets runtime head for this process; recover prior CID from logs if mistaken |
+| `--owner <DID>` | — | DID(s) of the runtime owner(s); repeat for multiple; falls back to `owners:` in config |
+| `--acl-file <PATH>` | — | ACL YAML; open (`*`) if omitted |
+| `--poll-ms <MS>` | `100` | Service poll interval |
+| `--i18n <LANG>` | — | Log language (e.g. `nb`, `en`). Also `MA_I18N` env var. Falls back to `i18n:` in config or `nb`. |
+| `--status-bind <ADDR>` | `127.0.0.1:5003` | Status HTTP server address |
+| `--gen-headless-config` | — | Generate config + bundle, then exit |
+| `--slug <SLUG>` | `ma` | Config/bundle slug (also `MA_SLUG` env). Never put in `ma.yaml` — see [Configuration keys](#configuration-keys-mayaml). |
+
+---
+
+## Startup sequence
+
+1. Parse CLI, load config.
+2. If `--gen-headless-config`: write config + bundle (including `runtime_ipns` key), exit.
+3. If secret bundle is missing: auto-generate headless config and continue.
+4. If `--gen-root-cid <yaml>`: wait for Kubo, publish IPLD manifest, print `root_cid`, exit.
+5. Load ACL (deny-all until manifest is loaded later).
+6. Load `SecretBundle`.
+7. Create iroh QUIC endpoint, register services (RPC, IPFS publisher if enabled, CRUD if enabled).
+8. Build own DID document, spawn background publish to IPNS.
+9. Wait for Kubo readiness (10 attempts).
+10. Resolve `root_cid` from `--root-cid` CLI or runtime IPNS. If none found, publish a
+    minimal empty `RuntimeManifest` to Kubo and use that CID as the runtime head.
+11. Fetch locale from `RuntimeManifest.config.i18n`; fall back to embedded FTL if unavailable.
+12. Load Wasm entity plugins from IPFS manifest.
+13. Start `#scheduler` native actor.
+14. Load named ACLs into cache from manifest; replace transport-gate ACL from manifest ACL.
+15. Resolve owners from CLI `--owner` and `config.extra.owners`; seed live ACL.
+16. Start status HTTP server.
+17. Main event loop: drain RPC, IPFS, and CRUD inboxes every `poll_ms`.
+18. On `Ctrl-C`: save entity states to IPFS, update manifest CID in config, close endpoint.
+
+---
+
+## Entity / plugin system
+
+### Concept
+
+All entities are created and managed via CRUD messages to the runtime.
+Entity behaviour lives in Wasm blobs stored on IPFS.
+
+### IPLD schema (DAG-CBOR on Kubo)
+
+```
+RuntimeManifest { owner, kinds: {family→implementation→CID}, entities: {name→CID→EntityNode}, acl: CID?, acls: {name→CID} }
+KindNode        { protocol, api: [String] }
+EntityNode      { name, kind, behaviour: {"//":CID}, state: {"//":CID}?, owner, acl: {"//":CID}, wasi: bool }
+```
+
+### Management CRUD — dot-path protocol
+
+Send CBOR to the **bare** runtime DID (`did:ma:<runtime>`, no fragment) on
+`/ma/crud/0.0.1`. Operations are encoded in the CBOR payload:
+
+```
+GET:    [":get",    ".ns.key"]
+SET:    [".ns.key", value]
+DELETE: [":delete", ".ns.key"]
+```
+
+#### Entities
+
+| Path | GET | SET | DELETE |
+|------|-----|-----|--------|
+| `:entities` | List all entity names | — | — |
+| `:entities.<name>` | Get EntityNode | — | — |
+| `:entities.<name>` (SET) | — | Create/update entity by CID | — |
+| `:entities.<name>` (DELETE) | — | — | Delete entity |
+
+#### Kinds
+
+| Path | GET | SET | DELETE |
+|------|-----|-----|--------|
+| `:kinds` | List all kinds | — | — |
+| `:kinds.<family>` | List implementations | — | — |
+| `:kinds.<family>.<impl>` | Get kind ref | Set kind ref CID | Delete kind ref |
+
+#### Config
+
+| Path | GET | SET | DELETE |
+|------|-----|-----|--------|
+| `:config` | Get entire config map | — | — |
+| `:config.<key>` | Get value | Set value | Delete key |
+
+#### Ping (RPC)
+
+Send `:ping` as a CBOR atom on `/ma/rpc/0.0.1` to any entity fragment
+(`did:ma:<runtime>#ping`) — the entity plugin handles it.
+
+#### From zion terminal
+
+```
+# list entities
+@sky:entities
+
+# get entity
+@sky:entities.ping
+
+# create / update entity (CID is the EntityNode dag-cbor CID)
+@sky:entities.ping: bafyreiXXXXXXXX
+
+# delete entity
+@sky:entities.ping:
+
+# set a kind
+@sky:kinds.ma-entity.wasi: bafyreiYYYYYYYY
+
+# set a config key
+@sky:config.poll_interval_ms: 250
+```
+
+### Plugin ABI
+
+Each Wasm plugin must export:
+
+| Export | Description |
+|--------|-------------|
+| `init(state: Bytes)` | Called at load with persisted state (empty bytes on first load) |
+| `handle_message(PluginInput JSON) → PluginOutput JSON` | Handle an incoming RPC message |
+| `get_state() → Bytes` | Return current state for IPFS persistence |
+
+**`PluginInput`:**
+```json
+{
+  "msg": {
+    "id": "…", "from": "did:ma:…", "to": "did:ma:…#name",
+    "created_at": 1234567890123456789,
+    "expires": 1234567890,
+    "reply_to": null,
+    "content_type": "application/cbor",
+    "content": [/* bytes */]
+  },
+  "ctx": { "self": "did:ma:…#name", "owner": "did:ma:…" }
+}
+```
+
+**`PluginOutput`:**
+```json
+{ "reply": { "content_type": "application/json", "content": [/* bytes */] } }
+```
+`"reply": null` for no reply.
+
+### Entity lifecycle states
+
+| State | Meaning |
+|-------|---------|
+| `New` | Just created; `init()` has not yet been called |
+| `Running` | `init()` returned `:ok`, or kind has no `init` in its API |
+| `Error` | `init()` or a dispatch returned `[:error, reason]`; still dispatchable for debugging |
+| `Stopped` | Written to manifest on clean shutdown only |
+
+---
+
+## `#scheduler` — native schedule actor
+
+`#scheduler` is a compiled-in native actor (not Wasm). Plugins register timed
+dispatches by sending a CBOR array to `did:ma:<runtime>#scheduler`.
+
+Schedules are **not persisted** — they must be re-registered on each startup,
+typically from a plugin's `init()` handler.
+
+### Wire format
+
+Four required elements; optional extra args at position 5+:
+
+```
+[":cron",     spec_str,     target_frag, verb_or_array, extra_args…]
+[":interval", duration_str, target_frag, verb_or_array, extra_args…]
+[":at",       timestamp_ms, target_frag, verb_or_array, extra_args…]
+[":random",   max_secs_int, target_frag, verb_or_array, extra_args…]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| type | CBOR text atom | `:cron`, `:interval`, `:at`, or `:random` |
+| spec | text / integer | cron string, duration string, Unix ms timestamp, or max_secs integer |
+| target_frag | text | bare fragment (`"myentity"`) or full DID-URL (`did:ma:…#myentity`) |
+| verb_or_array | text atom or array | `":verb"` or `[":verb", arg1, …]` |
+| extra_args… | any CBOR | optional positional args appended after the verb |
+
+### Schedule types
+
+| Type | Spec | Behaviour |
+|------|------|----------|
+| `:cron` | 6-field cron string `"sec min hour day month weekday"` | Fires on schedule indefinitely |
+| `:interval` | Human duration: `"1h"`, `"30m"`, `"5s"`, `"2d12h"` | Fires every N seconds indefinitely |
+| `:at` | Unix timestamp in milliseconds (integer) | Fires once after the computed delay |
+| `:random` | Max seconds (integer) | Fires after 1–N random seconds, then self-reschedules |
+
+### Examples
+
+```cbor
+; Fire :tick on myentity every minute
+[":cron", "0 * * * * *", "myentity", ":tick"]
+
+; Fire [:grow, "small plant+=1"] on garden every 30 minutes
+[":interval", "30m", "garden", ":grow", "small plant+=1"]
+
+; Same, using array form for verb+args
+[":interval", "30m", "garden", [":grow", "small plant+=1"]]
+
+; One-shot at a specific Unix timestamp (ms)
+[":at", 1748700000000, "myentity", ":wake"]
+
+; Random re-trigger within 5 minutes
+[":random", 300, "dog", ":scratch"]
+```
+
+### ACL
+
+Scheduled dispatch **bypasses all ACL checks**. The runtime is the trusted
+caller. Never expose the scheduler fragment to untrusted peers in an ACL.
+
+---
+
+## ACL
+
+Capabilities are plain strings in YAML sequences. The default when no
+`--acl-file` is given allows everyone to use both services.
+
+```yaml
+acl:
+  "*": [rpc, ipfs]            # everyone: RPC + IPFS publish (default)
+  "did:ma:alice": [owner]     # alice: full access
+  "did:ma:bob": [rpc]         # bob: RPC only, no IPFS publish
+  "did:ma:eve":               # null = explicit deny
+```
+
+Built-in capabilities:
+
+| Capability | Required by |
+|------------|-------------|
+| `rpc` | `/ma/rpc/0.0.1` |
+| `ipfs` | `/ma/ipfs/0.0.1` |
+| `"*"` | Wildcard — grants all capabilities when used in an Allow set |
+| `create` / `update` / `delete` | Namespace / entity management |
+
+Rules: deny always wins; direct match wins over wildcard; fragment stripped
+from DID-URLs before lookup.
+
+### Group resolution
+
+ACL entries can reference a local `ma-set` actor as a group via the
+`+#<fragment>` syntax:
+
+```yaml
+acl:
+  "+#admins": ["*"]   # anyone in the local 'admins' set gets all capabilities
+  "did:ma:eve":        # explicit deny overrides group membership
+```
+
+Resolution calls `[:contains, caller]` on the named actor via `handle_call`.
+This is a single-member probe — there is no bulk fetch of group members.
+Groups are resolved at check time, not cached.
+
+---
+
+## Status web server
+
+| Endpoint | Content-Type | Description |
+|----------|-------------|-------------|
+| `GET /` | `text/html` | Human-friendly page |
+| `GET /status.json` | `application/json` | Machine-readable status |
+| `GET /bootstrap.yaml` | `text/yaml` | Bootstrap template for this runtime |
+| `POST /claim` | — | Claim ownership: body `{"did":"did:ma:…"}` |
+
+### CORS policy (default-deny except allowlist)
+
+Status endpoints are served with a CORS allowlist (not `*`).
+
+Default allowed origins:
+
+- `http://localhost:8000`
+- `http://127.0.0.1:8000`
+- `https://zion.bahner.com`
+
+Override in config extra as either a YAML list or comma-separated string:
+
+```yaml
+status_cors_allowed_origins:
+  - http://localhost:8000
+  - http://127.0.0.1:8000
+  - https://zion.bahner.com
+```
+
+### `status.json`
+
+```json
+{
+  "did": "did:ma:<ipns>",
+  "ipns": "/ipns/<ipns>",
+  "endpoint_id": "<iroh-id>",
+  "uptime_secs": 42,
+  "ipfs_publisher": true,
+  "ipfs_requests": 0,
+  "rpc_requests": 0,
+  "pings_received": 0,
+  "started_at": 1234567890,
+  "entity_names": ["greeter", "counter"],
+  "runtime": {"/": "bafyreiXXXX"}
+}
+```
+
+---
+
+## Runtime tuning keys (config extra)
+
+These keys are safe/anonymous operational settings and are also mirrored into
+the runtime manifest `config` node.
+
+```yaml
+did_resolver_positive_ttl_secs: 60
+did_resolver_negative_ttl_secs: 10
+
+did_document_publishing_interval_secs: 300
+did_document_publishing_timeout_secs: 120
+did_document_publishing_lifetime_hours: 8760
+
+ipns_publish_lifetime_hours: 8760
+ipns_publish_allow_offline: true
+ipns_publish_resolve: false
+
+status_cors_allowed_origins:
+  - http://localhost:8000
+  - http://127.0.0.1:8000
+  - https://zion.bahner.com
+```
+
+### IPNS safety notes
+
+- Keep `ipns_secret_key` private and encrypted in `SecretBundle`.
+- Prefer `ipns_publish_resolve: false` and explicit republish intervals to
+  reduce publish-time dependency on network resolution.
+- Use bounded timeouts for publish operations
+  (`did_document_publishing_timeout_secs`).
+
+---
+
+## Configuration keys (`ma.yaml`)
+
+### `slug`
+
+`slug` is **CLI/env-only** (`--slug` / `MA_SLUG`). It is never written to
+`config.yaml` — the runtime needs the slug to locate the config file in the
+first place, creating an unsolvable catch-22 if the slug were stored there.
+
+### Protected keys
+
+These keys are never readable or writable via `:config.*` RPC:
+
+| Key | Reason |
+|-----|--------|
+| `slug` | CLI/env-only (catch-22, see above) |
+| `secret_bundle` | Key material path — must not leak |
+| `secret_bundle_passphrase` | Secret — must never be exposed via RPC |
+| `config_path` | Internal path — not user-settable via RPC |
+| any key starting with `secret` | Blanket guard for future secret fields |
+
+### Daemon config keys
+
+Readable and writable via `:config.<key>` RPC. Changes take effect immediately
+in memory and are saved to `config.yaml`:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `kubo_rpc_url` | string | Kubo RPC URL (default `http://127.0.0.1:5001`) |
+| `secret_bundle_passphrase` | string | Bundle passphrase. Also `MA_SECRET_BUNDLE_PASSPHRASE` env. Written automatically by `--gen-headless-config`. |
+| `ipfs_publisher` | bool | Enable `/ma/ipfs/0.0.1` (default `true`) |
+| `crud_service` | bool | Enable `/ma/crud/0.0.1` (default `true`) |
+| `owners` | list | Owner DIDs granted `["*"]` in the live ACL at startup |
+| `log_level` | string | Log level for the log file |
+| `log_level_stdout` | string | Log level for stdout |
+| `log_file` | string or null | Path to log file |
+| `did_resolver_positive_ttl_secs` | u64 | Cache TTL for resolved DIDs |
+| `did_resolver_negative_ttl_secs` | u64 | Cache TTL for failed DID lookups |
+
+### Manifest config keys
+
+Stored in the IPFS DAG (`manifest.config`), not in `config.yaml`. These
+persist across restarts because they live in IPFS.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `i18n` | string | Active language BCP-47 tag (e.g. `nb`, `zh-Hans`). Setting via `:config.i18n: nb` reloads translations immediately. |
+| `i18n_cid` | string | IPFS CID of the compiled locale DAG-CBOR node (set by `make src/i18n.yaml`) |
+| other | any | Free-form runtime metadata |
+
+Runtime root CID publishing uses a deterministic Kubo key alias derived from the
+`runtime_ipns` key in `SecretBundle`.
+
+---
+
+## Internationalisation
+
+Log and status messages are translated using a lightweight subset of
+[Fluent](https://projectfluent.org/) (FTL): `key = value` lines only. No
+attributes, selectors, or `{ $var }` substitutions — all runtime log strings
+are plain declarative messages.
+
+FTL files live in `i18n/`. They are compiled into the binary at build time via
+`make src/i18n.yaml`. The active language is read from
+`RuntimeManifest.config.i18n` at startup; if absent, falls back to `nb`.
+
+### Changing the runtime language
+
+```
+# from the zion terminal (takes effect immediately, persists to manifest):
+@ma:config.i18n: nb
+
+# or via CLI flag / env var (current process only):
+ma --i18n nb
+MA_I18N=nb ma
+```
+
+### FTL file conventions
+
+- `i18n/en.ftl` is the **canonical source** — it defines every key.
+- All other `i18n/*.ftl` files mirror the same key set with translated values.
+- Technical terms are kept verbatim: DID, IPFS, IPNS, RPC, ACL, iroh, CID,
+  `#root`, `/ma/ipfs/0.0.1`, `:ping`, `:pong`, Bootstrap, Plugin, manifest.
+- Missing keys fall back to the key name string.
+- **Never copy English text into non-English locale files.** Translate
+  properly or leave the key absent — silently pasting English values into a
+  non-English file misleads users.
+- Every `i18n/*.ftl` file **must** contain a `lang-name` key whose value is
+  the language's own name for itself (autonym), e.g. `lang-name = Norsk bokmål`.
+
+### Adding a new language
+
+1. Create `i18n/<code>.ftl` with all keys from `i18n/en.ftl` translated,
+   including `lang-name = <autonym>`.
+2. Rebuild (`make src/i18n.yaml && make release`). `build.rs` scans
+   `i18n/*.ftl` and regenerates `BUNDLED_LANGS` automatically — no manual
+   code change required.
+
+### BCP-47 private-use and special language tags
+
+| Code | Language | Notes |
+|------|----------|-------|
+| `art-x-lyaric` | Dread Talk (Rasta) | BCP-47 private-use tag for Lyaric / Rastafarian Iyaric dialect |
+| `qbc` | Belter Creole | The conlang from *The Expanse*; ISO 639-3 code `qbc` |
+
+Tags containing `-x-` are passed through verbatim. Use the full tag as both
+the filename stem and the entry in `BUNDLED_LANGS`.
+
+---
+
+## Security notes
+
+- **IPNS keys are zero-use.** The sender's IPNS private key carried in each
+  `/ma/ipfs/0.0.1` request is used once for the Kubo publish call and
+  immediately zeroized.
+- **Replay protection** via a 120-second sliding window on `/ma/ipfs/0.0.1`.
+- **Input validation** via `validate_ipfs_publish_request` (ma-core): checks
+  content-type, DID document proof, sender identity match.
+- **Wasm sandboxing** via extism/Wasmtime.
+- **No auto-execution** of arbitrary CIDs — plugins load only from
+  `behaviour_cid` values in the signed IPLD manifest.
+- Config and bundle files are created with mode `0600`.
+
+---
+
+## Makefile
+
+```sh
+make build          # cargo build
+make release        # cargo build --release
+make check          # cargo check
+make run            # run the daemon
+make src/i18n.yaml  # publish i18n/*.ftl to IPFS and embed CIDs into the binary
+make install        # install binary to $PREFIX/bin (default ~/.local/bin)
+```

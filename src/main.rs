@@ -944,11 +944,10 @@ fn runtime_manifest_config(
 }
 
 fn status_cors_allowed_origins(config: &Config) -> Vec<String> {
-    const DEFAULTS: [&str; 4] = [
+    const DEFAULTS: [&str; 3] = [
         "http://localhost:8000",
         "http://127.0.0.1:8000",
-        "https://xn--nf5a.bahner.com",
-        "https://間.bahner.com",
+        "https://zion.bahner.com",
     ];
 
     if let Some(val) = config.extra.get("status_cors_allowed_origins") {
