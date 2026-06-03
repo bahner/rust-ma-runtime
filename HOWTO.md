@@ -138,6 +138,12 @@ zion is the browser-based actor terminal.  Open it at:
 **<https://間.bahner.com>** (Punycode: `https://xn--nf5a.bahner.com`)
 
 1. Create an identity (pick a username, set a passphrase).
+
+   The username is **local only** — it never leaves your browser and is
+   not part of your DID or published anywhere.  Your public identity is
+   your `did:ma:…` key pair, which is cryptographically generated and
+   contains no personal information.  You start out fully pseudonymous.
+
 2. Claim ownership of your local runtime — this discovers it, connects,
    registers your zion identity as the owner, and persists the claim to
    `ma.yaml` in one step:
@@ -162,6 +168,44 @@ not publish its DID document to `ma`, which means no one could call you —
 a chicken-and-egg problem.  The open window is short and local-only (the
 runtime is only reachable via iroh QUIC using your endpoint ID, which you
 have not shared yet).
+
+### Privacy and encryption
+
+All messages between actors — `@alice hello` to `@bob`, RPC calls,
+inbox replies — are **end-to-end encrypted** using X25519 key agreement.
+The iroh QUIC transport layer adds a further layer of encryption in
+transit.  Neither `ma` nor anyone on the network path can read message
+content.
+
+Secure messaging has been a design goal since day one.  The design follows
+the principles of [DIDComm](https://identity.foundation/didcomm-messaging/spec/)
+— sender-authenticated, end-to-end encrypted messages rooted in
+[W3C DID](https://www.w3.org/TR/did-core/) identities — but does not
+implement the DIDComm standard itself.  DIDComm mandates JSON-based
+envelopes (JWM/JOSE); `ma` uses CBOR instead, which is leaner and faster
+to parse.  DIDComm is transport-agnostic in principle but defines HTTPS
+and WebSockets as its standard transports; `ma` uses iroh QUIC exclusively.
+The security model is equivalent: messages are signed by the sender's DID
+key and encrypted for the recipient's DID key.  Only the wire format
+differs.
+
+`ma` has not been independently audited.  For now, think of it as a toy
+that is safe to play with — the cryptographic design is sound, but it has
+not been reviewed by a third party.  For high-stakes use, wait for an
+audit or use a tool that has already been through one.
+
+Anonymity was not a design goal of `did:ma:`, but as a secret messenger
+for everyday use it should be **good enough** — your DID is a
+random-looking key string with no personally identifying information baked
+in, your username is purely local, and you choose what you publish in your
+DID document.  If you do not associate your DID with your real name
+anywhere, there is nothing in the protocol that links them.
+
+No guarantees are given though.  Metadata (who talks to whom, when, how
+often) is visible to anyone who can observe iroh traffic, and if you
+publish a DID document that contains your name or website you have made
+that choice yourself.  For adversarial threat models, use a tool that was
+designed for anonymity from the ground up.
 
 ---
 
@@ -329,8 +373,23 @@ replies render as green; `:error` replies as red.
 
 This is where it gets fun.
 
-Plugins are Wasm modules.  The simplest are written in Python using
-`extism-py`.  Here is a minimal stateless plugin:
+Plugins are [Extism](https://extism.org/) Wasm modules.  Extism is a
+universal plug-in system: you write your plugin in whichever language you
+prefer, compile it to Wasm, and the runtime loads it.  Official PDKs
+(plug-in development kits) exist for
+[Rust](https://github.com/extism/rust-pdk),
+[Python](https://github.com/extism/python-pdk),
+[Go](https://github.com/extism/go-pdk),
+[JavaScript/TypeScript](https://github.com/extism/js-pdk),
+[C/C++](https://github.com/extism/c-pdk),
+[Zig](https://github.com/extism/zig-pdk),
+[Java](https://github.com/extism/java-pdk),
+[C#/.NET](https://github.com/extism/dotnet-pdk),
+and more — see the [Extism docs](https://extism.org/docs/overview) for the
+full list.
+
+The simplest way to get started is Python using `extism-py`.  Here is a
+minimal stateless plugin:
 
 ```python
 import extism
@@ -425,6 +484,11 @@ The [ma-python](https://github.com/bahner/ma-python) repository has working
 examples for counter, fortune, register, set, and logger — all production
 plugins used in the standard bootstrap.
 
+If you want to understand the message types being exchanged under the hood
+— content-types, wire format, inbox and RPC protocols — the
+[ma-spec](https://github.com/bahner/ma-spec) repository has the full
+specification.
+
 ---
 
 ## Calling someone else's runtime
@@ -439,13 +503,26 @@ an alias manually:
 # Call their fortune entity
 @sky#fortune:handle_cast
 
-# Send them a message
+# Send them a plain message
 @sky hello there
+
+# Send a chat message (ephemeral / real-time — not stored in inbox)
+@sky:say hello there
+
+# Send a third-person action (the classic IRC /me)
+@sky:emote waves hello
 ```
 
 They receive your message in their inbox, identified by your DID.  If they
 have an alias for you, they see `@you`; otherwise they see the full
 `did:ma:…`.  This is why aliases matter on both sides.
+
+**`:say` and `:emote`** are the two essential interactive message types,
+both well-established since IRC days.  `:say` sends an ephemeral chat
+message — the receiver displays it immediately and is not expected to
+archive it.  `:emote` sends a third-person action in the style of IRC
+`/me`: if `@sky` runs `@you:emote waves hello`, you see
+`* @sky waves hello`.  Both are always end-to-end encrypted.
 
 > **Note:** Port 5003 is a local-only status interface — it must never be
 > exposed to the internet.  There is no network-based discovery of other
@@ -478,7 +555,9 @@ have an alias for you, they see `@you`; otherwise they see the full
 .my.inbox.0:                    delete message 0
 
 # Sending
-@target body                    send a text message
+@target body                    send a persistent text message (stored in inbox)
+@target:say body                send an ephemeral chat message (display & discard)
+@target:emote body              send a third-person action  (* @target body)
 @target#entity:verb [args]      call an entity verb
 
 # Status

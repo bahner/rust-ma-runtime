@@ -5,6 +5,46 @@ A lean Tokio daemon that bridges browser-based `did:ma:` identities to Kubo
 
 ---
 
+## Design philosophy
+
+間 is built around one idea: **secure messaging and actor interaction should
+be fast and lightweight**, not just correct.
+
+The cryptographic primitive choices follow the same school of thought as
+[WireGuard](https://www.wireguard.com/) — pick the fastest algorithms that are still
+thoroughly secure, keep the code small, and avoid complexity:
+
+| Concern | 間 choice | Common alternative |
+|---------|-----------|-------------------|
+| Serialisation | CBOR | JSON |
+| Hashing | BLAKE3 | SHA-2 |
+| Key agreement | X25519 | RSA / DH |
+| Signatures | Ed25519 | RSA / ECDSA |
+| Transport | iroh QUIC | HTTP(S) |
+
+Once DID documents are published to IPFS and resolved by both sides, 間
+message exchange is significantly leaner than a comparable
+[DIDComm](https://identity.foundation/didcomm-messaging/spec/)
+implementation: no JSON parsing overhead, no unnecessary round trips.
+
+間 follows **DIDComm principles** — sender-authenticated, end-to-end
+encrypted messages rooted in [W3C DID](https://www.w3.org/TR/did-core/)
+identities — without implementing the DIDComm standard itself.  The
+security model is equivalent; only the wire format (CBOR + iroh QUIC
+instead of JSON + HTTPS) and performance profile differ.
+
+**Why Rust?**  The transport row is the deciding factor.  [iroh](https://iroh.computer/)
+is an IPFS spinoff — a leaner, faster successor to the original libp2p QUIC
+stack — and time has shown it to be the right substrate for this kind of
+peer-to-peer work.  At the moment iroh is only available as a Rust crate, so
+the language choice is not ideological: it is simply the price of admission
+for the best transport available.
+
+`ma` has not been independently audited.  The cryptographic design is
+sound, but treat it as a well-engineered toy until an audit says otherwise.
+
+---
+
 ## Overview
 
 `ma` exposes three iroh QUIC services on behalf of clients that cannot reach the
