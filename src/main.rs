@@ -177,17 +177,7 @@ async fn main() -> Result<()> {
         .context("failed to derive runtime IPNS id from 'runtime_ipns' key")?;
 
     // ── iroh endpoint ──────────────────────────────────────────────────────────
-    let ipv6_enabled = config
-        .extra
-        .get("ipv6_enable")
-        .and_then(serde_yaml::value::Value::as_bool)
-        .unwrap_or(true);
-    if ipv6_enabled {
-        info!("{}", crate::i18n::t("ipv6-enabled"));
-    } else {
-        info!("{}", crate::i18n::t("ipv6-disabled"));
-    }
-    let mut endpoint = ma_core::new_ma_endpoint(secrets.iroh_secret_key, ipv6_enabled).await?;
+    let mut endpoint = ma_core::new_ma_endpoint(secrets.iroh_secret_key, false).await?;
     let rpc_messages = endpoint.service(rpc::RPC_PROTOCOL_ID);
     let ipfs_messages = if ipfs_publisher_enabled {
         Some(endpoint.service(IPFS_PROTOCOL_ID))
@@ -384,7 +374,6 @@ async fn main() -> Result<()> {
 
     // ── Load named ACLs into cache ─────────────────────────────────────────────
     let acl_cache = acl::new_acl_cache();
-    let mut manifest_owners: Vec<String> = Vec::new();
     if let Some(ref rc) = root_cid {
         let manifest: Result<entity::RuntimeManifest, _> =
             kubo::dag_get(&config.kubo_rpc_url, rc).await;
@@ -420,9 +409,6 @@ async fn main() -> Result<()> {
                 for (key, acl_map) in entries {
                     cache.insert(key, acl_map);
                 }
-                drop(cache);
-                // Owners from manifest are authoritative; merge into resolved_owners below.
-                manifest_owners = m.owners.clone();
             }
             Err(e) => {
                 warn!(error = %e, "failed to load manifest for ACL cache population");
@@ -435,7 +421,7 @@ async fn main() -> Result<()> {
         .signing_key()
         .context("failed to derive signing key")?;
 
-    // ── Resolve owners: manifest (authoritative) + config.yaml + --owner CLI ──
+    // ── Resolve owners: --owner CLI + config.extra["owner"] (list or string) ──
     let mut resolved_owners: Vec<String> = {
         let from_config = match config.extra.get("owners") {
             Some(serde_yaml::Value::Sequence(seq)) => seq
@@ -447,12 +433,6 @@ async fn main() -> Result<()> {
         };
         from_config
     };
-    // Manifest owners are authoritative when present.
-    for o in manifest_owners {
-        if !resolved_owners.contains(&o) {
-            resolved_owners.push(o);
-        }
-    }
     for o in &cli.owner {
         if !resolved_owners.contains(o) {
             resolved_owners.push(o.clone());

@@ -234,6 +234,17 @@ pub async fn build_manifest(
             serde_yaml::Value::String(active_lang.to_string()),
         );
     }
+    if !cfg.owners.is_empty() {
+        runtime_config.insert(
+            "owners".to_string(),
+            serde_yaml::Value::Sequence(
+                cfg.owners
+                    .iter()
+                    .map(|o| serde_yaml::Value::String(o.clone()))
+                    .collect(),
+            ),
+        );
+    }
     let root = RuntimeManifest {
         acl: root_acl_link,
         acls: acls_map,

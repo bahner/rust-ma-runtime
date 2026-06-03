@@ -1,5 +1,11 @@
 # 間 Runtime (`ma`)
 
+## Agent rules
+
+- **Never modify files outside the current workspace without explicit user approval.** Always ask first.
+
+---
+
 A lean daemon that exposes `/ma/ipfs/0.0.1` and `/ma/rpc/0.0.1` on behalf of
 clients that cannot reach the Kubo RPC API directly (e.g. browser-based 間
 actors). It runs on a host with a Kubo daemon, derives its own `did:ma` identity
