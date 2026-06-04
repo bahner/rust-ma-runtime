@@ -4,13 +4,13 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::State;
-use axum::http::{header, HeaderValue, Method};
+use axum::http::{header, Method};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
-use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
 use crate::acl::SharedAcl;
@@ -41,25 +41,9 @@ pub struct StatusState {
     pub acl: SharedAcl,
 }
 
-pub fn spawn_status_server(
-    stats: SharedStats,
-    acl: SharedAcl,
-    status_bind: SocketAddr,
-    allowed_origins: &[String],
-) {
-    let origin_values: Vec<HeaderValue> = allowed_origins
-        .iter()
-        .filter_map(|origin| match HeaderValue::from_str(origin) {
-            Ok(v) => Some(v),
-            Err(err) => {
-                warn!(origin = %origin, error = %err, "invalid CORS origin in config; skipping");
-                None
-            }
-        })
-        .collect();
-
+pub fn spawn_status_server(stats: SharedStats, acl: SharedAcl, status_bind: SocketAddr) {
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list(origin_values))
+        .allow_origin(Any)
         .allow_methods([Method::GET, Method::POST])
         .allow_headers([header::CONTENT_TYPE]);
 

@@ -35,7 +35,6 @@ const MANIFEST_CONFIG_KEYS: &[&str] = &[
     "ipns_publish_lifetime_hours",
     "ipns_publish_resolve",
     "ipns_publish_allow_offline",
-    "status_cors_allowed_origins",
 ];
 
 /// Keys that are never exposed or writable via CRUD.

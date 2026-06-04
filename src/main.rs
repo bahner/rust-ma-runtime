@@ -460,8 +460,7 @@ async fn main() -> Result<()> {
         ..Default::default()
     }));
 
-    let cors_origins = status_cors_allowed_origins(&config);
-    status::spawn_status_server(stats.clone(), acl.clone(), cli.status_bind, &cors_origins);
+    status::spawn_status_server(stats.clone(), acl.clone(), cli.status_bind);
 
     // Periodisk DID-republisering fra in-memory runtime-head.
     // Publiserer umiddelbart ved CID-endring; ellers maks én gang per dag (cache-oppvarming).
@@ -930,49 +929,5 @@ fn runtime_manifest_config(
                 .unwrap_or(true),
         ),
     );
-    out.insert(
-        "status_cors_allowed_origins".to_string(),
-        serde_yaml::Value::Sequence(
-            status_cors_allowed_origins(config)
-                .into_iter()
-                .map(serde_yaml::Value::String)
-                .collect(),
-        ),
-    );
-
     out
-}
-
-fn status_cors_allowed_origins(config: &Config) -> Vec<String> {
-    const DEFAULTS: [&str; 3] = [
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "https://zion.bahner.com",
-    ];
-
-    if let Some(val) = config.extra.get("status_cors_allowed_origins") {
-        if let Some(items) = val.as_sequence() {
-            let origins: Vec<String> = items
-                .iter()
-                .filter_map(serde_yaml::Value::as_str)
-                .map(ToString::to_string)
-                .collect();
-            if !origins.is_empty() {
-                return origins;
-            }
-        }
-        if let Some(s) = val.as_str() {
-            let origins: Vec<String> = s
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(ToString::to_string)
-                .collect();
-            if !origins.is_empty() {
-                return origins;
-            }
-        }
-    }
-
-    DEFAULTS.iter().map(ToString::to_string).collect()
 }
