@@ -17,8 +17,7 @@ use clap::Parser;
 use ma_core::config::{Config, MaArgs, SecretBundle};
 use ma_core::ipfs::IpfsDidPublisher;
 use ma_core::{
-    ipns_from_secret, Did, Ipld, ReplayGuard, IPFS_PROTOCOL_ID, MESSAGE_TYPE_RPC,
-    MESSAGE_TYPE_RPC_REPLY,
+    ipns_from_secret, Did, Ipld, IPFS_PROTOCOL_ID, MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY,
 };
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -311,11 +310,7 @@ async fn main() -> Result<()> {
     let mut ipfs_state = if ipfs_publisher_enabled {
         let messages = ipfs_messages.expect("ipfs inbox exists when publisher is enabled");
         info!("IPFS publisher service enabled");
-        Some(ipfs::IpfsServiceState {
-            messages,
-            publisher,
-            replay_guard: ReplayGuard::default(),
-        })
+        Some(ipfs::IpfsServiceState::new(messages, publisher))
     } else {
         info!("IPFS publisher service disabled (set ipfs_publisher: true in config to enable)");
         None
@@ -676,6 +671,7 @@ async fn main() -> Result<()> {
                                 kubo_rpc_url: &kubo_url,
                                 publisher: &ipfs.publisher,
                                 resolver: Arc::clone(&shared_resolver),
+                                doc_cache: Arc::clone(&ipfs.doc_cache),
                             },
                             &mut ipfs.replay_guard,
                         )

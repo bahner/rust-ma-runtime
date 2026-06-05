@@ -3,12 +3,14 @@ use ma_core::ipfs::IpfsDidPublisher;
 use ma_core::ipfs::MA_IPNS_ALIAS_HASH_PREFIX;
 use ma_core::ipfs_add;
 use ma_core::{
-    ipns_from_secret, validate_ipfs_request, Did, Document, Inbox, IpfsGatewayResolver,
-    ReplayGuard, SigningKey, ValidatedIpfsRequest, MESSAGE_TYPE_RPC_REPLY,
+    ipns_from_secret, resolve_endpoint_for_protocol, validate_ipfs_request, Did, Document, Inbox,
+    IpfsGatewayResolver, ReplayGuard, SigningKey, ValidatedIpfsRequest, MESSAGE_TYPE_RPC_REPLY,
 };
 use reqwest::multipart;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 
@@ -16,11 +18,29 @@ use crate::acl::{check_full, AclMap, CAP_IPFS};
 use crate::i18n;
 use crate::rpc::RPC_PROTOCOL_ID;
 
+/// Cache of sender DID base-id → their most-recently-seen Document.
+/// Populated when a `DidDocumentPublish` request arrives; used to avoid
+/// IPNS re-resolution when delivering the ipfs-store CID reply.
+pub type DocCache = Arc<Mutex<HashMap<String, Document>>>;
+
 /// All state owned by the optional IPFS publisher service.
 pub struct IpfsServiceState {
     pub messages: Inbox<ma_core::Message>,
     pub publisher: IpfsDidPublisher,
     pub replay_guard: ReplayGuard,
+    /// Recently-seen sender documents — avoids IPNS lookups for reply delivery.
+    pub doc_cache: DocCache,
+}
+
+impl IpfsServiceState {
+    pub fn new(messages: Inbox<ma_core::Message>, publisher: IpfsDidPublisher) -> Self {
+        Self {
+            messages,
+            publisher,
+            replay_guard: ReplayGuard::default(),
+            doc_cache: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
 }
 
 pub struct IpfsHandlerCtx<'a> {
@@ -30,6 +50,8 @@ pub struct IpfsHandlerCtx<'a> {
     pub kubo_rpc_url: &'a str,
     pub publisher: &'a IpfsDidPublisher,
     pub resolver: Arc<IpfsGatewayResolver>,
+    /// Shared document cache — populated on `DidDocumentPublish`, read on Store.
+    pub doc_cache: DocCache,
 }
 
 pub async fn do_publish_own_document(
@@ -377,6 +399,76 @@ async fn import_key(kubo_url: &str, key_name: &str, key_bytes: Vec<u8>) -> Resul
     Ok(id.trim().to_string())
 }
 
+/// Encode `[:ok, cid]` as CBOR bytes for an IPFS service reply.
+fn encode_ok_cid_reply(cid: &str) -> Result<Vec<u8>> {
+    let reply_atom: Vec<ciborium::Value> = vec![
+        ciborium::Value::Text(":ok".to_string()),
+        ciborium::Value::Text(cid.to_string()),
+    ];
+    let mut reply_bytes = Vec::new();
+    ciborium::ser::into_writer(&ciborium::Value::Array(reply_atom), &mut reply_bytes)
+        .context("failed to encode CBOR ok-cid reply")?;
+    Ok(reply_bytes)
+}
+
+/// Build an RPC reply `Message` addressed to the sender's `#rpc` fragment.
+///
+/// Returns `(message, sender_did, rpc_did_url)`.
+fn build_rpc_reply_message(
+    ctx: &IpfsHandlerCtx<'_>,
+    from: &str,
+    in_reply_to: &str,
+    payload: &[u8],
+) -> Result<(ma_core::Message, Did, String)> {
+    let sender = Did::try_from(from).with_context(|| format!("invalid sender DID: {from}"))?;
+    let rpc_did_url = format!("did:ma:{}#rpc", sender.ipns);
+    let mut reply = ma_core::Message::new(
+        ctx.our_did,
+        &rpc_did_url,
+        MESSAGE_TYPE_RPC_REPLY,
+        "application/cbor",
+        payload,
+        ctx.signing_key,
+    )
+    .context("failed to build reply message")?;
+    reply.reply_to = Some(in_reply_to.to_string());
+    Ok((reply, sender, rpc_did_url))
+}
+
+/// Extract the iroh endpoint ID for `RPC_PROTOCOL_ID` from a document's `ma.services`.
+fn rpc_endpoint_from_doc(doc: &Document) -> Option<String> {
+    let services = doc
+        .ma
+        .as_ref()
+        .and_then(|ma| ma.get("services").ok().flatten())
+        .and_then(|s| serde_json::to_value(s).ok());
+    resolve_endpoint_for_protocol(services.as_ref(), RPC_PROTOCOL_ID)
+}
+
+/// Open an RPC outbox for `sender`.  Prefers a cached document (avoids IPNS
+/// re-resolution); falls back to the resolver if the cache misses.
+async fn open_rpc_outbox_for_sender(
+    ctx: &IpfsHandlerCtx<'_>,
+    sender: &Did,
+) -> Result<ma_core::Outbox> {
+    let cached_doc = ctx.doc_cache.lock().await.get(&sender.base_id()).cloned();
+
+    if let Some(ref doc) = cached_doc {
+        if let Some(eid) = rpc_endpoint_from_doc(doc) {
+            return ctx
+                .endpoint
+                .connect_outbox(doc, &eid, &sender.base_id(), RPC_PROTOCOL_ID)
+                .await
+                .map_err(anyhow::Error::from);
+        }
+    }
+
+    ctx.endpoint
+        .outbox(ctx.resolver.as_ref(), &sender.base_id(), RPC_PROTOCOL_ID)
+        .await
+        .map_err(anyhow::Error::from)
+}
+
 pub async fn handle_ipfs_message(
     message: &ma_core::Message,
     acl: &AclMap,
@@ -394,42 +486,44 @@ pub async fn handle_ipfs_message(
 
     match validated {
         ValidatedIpfsRequest::DidDocumentPublish(v) => {
-            info!(from = %message.from, id = %message.id, "{}", i18n::t("did-publish-request-received"));
-            let key = Zeroizing::new(v.ipns_secret_key.clone());
-            let cid = ctx
-                .publisher
-                .publish_document(&v.document_bytes, &key)
-                .await
-                .context("kubo DID publish failed")?
-                .ok_or_else(|| anyhow!("publisher returned no CID"))?;
-            info!(did = %v.document_did.id(), cid = %cid, "{}", i18n::t("document-published"));
+            handle_did_document_publish(message, *v, ctx).await
+        }
+        ValidatedIpfsRequest::Store(v) => handle_ipfs_store(message, &v, ctx).await,
+    }
+}
 
-            let reply_atom: Vec<ciborium::Value> = vec![
-                ciborium::Value::Text(":ok".to_string()),
-                ciborium::Value::Text(cid.clone()),
-            ];
-            let mut reply_bytes = Vec::new();
-            ciborium::ser::into_writer(&ciborium::Value::Array(reply_atom), &mut reply_bytes)
-                .context("failed to encode ipfs-publish reply")?;
+async fn handle_did_document_publish(
+    message: &ma_core::Message,
+    v: ma_core::ValidatedIpfsPublish,
+    ctx: &IpfsHandlerCtx<'_>,
+) -> Result<()> {
+    info!(from = %message.from, id = %message.id, "{}", i18n::t("did-publish-request-received"));
 
-            let sender = Did::try_from(message.from.as_str())
-                .with_context(|| format!("invalid sender DID: {}", message.from))?;
-            let rpc_did_url = format!("did:ma:{}#rpc", sender.ipns);
+    let key = Zeroizing::new(v.ipns_secret_key.clone());
+    let cid = ctx
+        .publisher
+        .publish_document(&v.document_bytes, &key)
+        .await
+        .context("kubo DID publish failed")?
+        .ok_or_else(|| anyhow!("publisher returned no CID"))?;
+    info!(did = %v.document_did.id(), cid = %cid, "{}", i18n::t("document-published"));
 
-            let mut reply = ma_core::Message::new(
-                ctx.our_did,
-                &rpc_did_url,
-                MESSAGE_TYPE_RPC_REPLY,
-                "application/cbor",
-                &reply_bytes,
-                ctx.signing_key,
-            )
-            .context("failed to build ipfs-publish reply")?;
-            reply.reply_to = Some(message.id.clone());
+    let reply_bytes = encode_ok_cid_reply(&cid)?;
+    let (reply, sender, rpc_did_url) =
+        build_rpc_reply_message(ctx, &message.from, &message.id, &reply_bytes)?;
 
+    // Cache the document so subsequent Store requests from this sender skip IPNS.
+    ctx.doc_cache
+        .lock()
+        .await
+        .insert(sender.base_id(), v.document.clone());
+
+    // Send reply using the document we already have — no IPNS re-lookup needed.
+    match rpc_endpoint_from_doc(&v.document) {
+        Some(eid) => {
             match ctx
                 .endpoint
-                .outbox(ctx.resolver.as_ref(), &sender.base_id(), RPC_PROTOCOL_ID)
+                .connect_outbox(&v.document, &eid, &sender.base_id(), RPC_PROTOCOL_ID)
                 .await
             {
                 Ok(mut outbox) => {
@@ -443,11 +537,13 @@ pub async fn handle_ipfs_message(
                     warn!(error = %err, to = %rpc_did_url, "{}", i18n::t("did-publish-resolve-failed"));
                 }
             }
-
-            Ok(())
         }
-        ValidatedIpfsRequest::Store(v) => handle_ipfs_store(message, &v, ctx).await,
+        None => {
+            warn!(to = %rpc_did_url, "{}", i18n::t("did-publish-resolve-failed"));
+        }
     }
+
+    Ok(())
 }
 
 async fn handle_ipfs_store(
@@ -476,34 +572,11 @@ async fn handle_ipfs_store(
 
     info!(cid = %cid, from = %orig_message.from, "{}", i18n::t("ipfs-stored"));
 
-    let reply_atom: Vec<ciborium::Value> = vec![
-        ciborium::Value::Text(":ok".to_string()),
-        ciborium::Value::Text(cid.clone()),
-    ];
-    let mut reply_bytes = Vec::new();
-    ciborium::ser::into_writer(&ciborium::Value::Array(reply_atom), &mut reply_bytes)
-        .context("failed to encode ipfs-store reply")?;
+    let reply_bytes = encode_ok_cid_reply(&cid)?;
+    let (reply, sender, rpc_did_url) =
+        build_rpc_reply_message(ctx, &orig_message.from, &orig_message.id, &reply_bytes)?;
 
-    let sender = Did::try_from(orig_message.from.as_str())
-        .with_context(|| format!("invalid sender DID: {}", orig_message.from))?;
-    let rpc_did_url = format!("did:ma:{}#rpc", sender.ipns);
-
-    let mut reply = ma_core::Message::new(
-        ctx.our_did,
-        &rpc_did_url,
-        MESSAGE_TYPE_RPC_REPLY,
-        "application/cbor",
-        &reply_bytes,
-        ctx.signing_key,
-    )
-    .context("failed to build ipfs-store reply")?;
-    reply.reply_to = Some(orig_message.id.clone());
-
-    match ctx
-        .endpoint
-        .outbox(ctx.resolver.as_ref(), &sender.base_id(), RPC_PROTOCOL_ID)
-        .await
-    {
+    match open_rpc_outbox_for_sender(ctx, &sender).await {
         Ok(mut outbox) => {
             outbox
                 .send(&reply)
