@@ -21,11 +21,11 @@ pub const RPC_PROTOCOL_ID: &str = "/ma/rpc/0.0.1";
 
 // ── Handler context ────────────────────────────────────────────────────────────
 
-pub struct RpcHandlerCtx<'a> {
-    pub our_did: &'a str,
-    pub signing_key: &'a SigningKey,
-    pub endpoint: &'a dyn ma_core::MaEndpoint,
-    pub kubo_rpc_url: &'a str,
+pub struct RpcHandlerCtx {
+    pub our_did: Arc<str>,
+    pub signing_key: Arc<SigningKey>,
+    pub endpoint: Arc<dyn ma_core::MaEndpoint>,
+    pub kubo_rpc_url: Arc<str>,
     pub resolver: Arc<IpfsGatewayResolver>,
     pub entity_registry: EntityRegistry,
     pub kind_registry: crate::entity::KindRegistry,
@@ -61,7 +61,7 @@ async fn persist_new_entity(
 pub async fn handle_rpc_message(
     message: &ma_core::Message,
     acl: &AclMap,
-    ctx: &RpcHandlerCtx<'_>,
+    ctx: &RpcHandlerCtx,
 ) -> Result<()> {
     // Intra-runtime messages (sender = `<our_did>#<entity>`) skip the root ACL
     // transport gate — they are trusted local dispatches between entities on
@@ -86,7 +86,7 @@ pub async fn handle_rpc_message(
         .context("invalid CBOR in RPC message")?;
 
     // Fragment routing: entity plugin dispatch.
-    if let Some(fragment) = extract_fragment(&message.to, ctx.our_did) {
+    if let Some(fragment) = extract_fragment(&message.to, &ctx.our_did) {
         let ep = ctx.entity_registry.read().await.get(fragment).cloned();
         return if let Some(entity) = ep {
             match handle_entity_plugin_message(message, term, &entity, ctx).await {
@@ -99,13 +99,13 @@ pub async fn handle_rpc_message(
                         error = %reason,
                         "plugin dispatch rejected"
                     );
-                    send_rpc_error_reply(message, ctx, &reason).await
+                    send_rpc_error_reply(message, ctx, &reason)
                 }
             }
         } else {
             let reason = format!("unknown entity fragment: {fragment}");
             info!(fragment = %fragment, "{}", crate::i18n::t("entity-not-found"));
-            send_rpc_error_reply(message, ctx, &reason).await
+            send_rpc_error_reply(message, ctx, &reason)
         };
     }
 
@@ -121,7 +121,7 @@ pub async fn handle_rpc_message(
         let mut pong = Vec::new();
         ciborium::ser::into_writer(&CborValue::Text(":pong".to_string()), &mut pong)
             .context("encode :pong")?;
-        return send_rpc_reply(message, ctx, pong).await;
+        return send_rpc_reply(message, ctx, &pong);
     }
     send_rpc_i18n_error(message, ctx, "rpc-unknown-verb").await
 }
@@ -145,7 +145,7 @@ async fn handle_entity_plugin_message(
     message: &ma_core::Message,
     term: CborValue,
     entity: &crate::plugin::EntityPlugin,
-    ctx: &RpcHandlerCtx<'_>,
+    ctx: &RpcHandlerCtx,
 ) -> Result<()> {
     info!(fragment = %entity.fragment, from = %message.from, "{}", crate::i18n::t("entity-dispatched"));
 
@@ -230,7 +230,7 @@ async fn handle_entity_plugin_message(
 
     // If the plugin called `ma_set_state` during this dispatch, persist to IPFS.
     if let Some(state_bytes) = result.pending_state {
-        match ipfs_add(ctx.kubo_rpc_url, state_bytes.clone()).await {
+        match ipfs_add(&ctx.kubo_rpc_url, state_bytes.clone()).await {
             Ok(cid) => {
                 debug!(fragment = %entity.fragment, %cid, "plugin state saved via ma_set_state");
                 entity.mark_saved(state_bytes);
@@ -269,8 +269,8 @@ async fn handle_entity_plugin_message(
             req.fragment.clone(),
             &entity_node,
             &kind_node,
-            ctx.our_did,
-            ctx.kubo_rpc_url,
+            &ctx.our_did,
+            &ctx.kubo_rpc_url,
             ctx.envelope_tx.clone(),
         )
         .await
@@ -285,7 +285,7 @@ async fn handle_entity_plugin_message(
                     let mut running_node = entity_node.clone();
                     running_node.lifecycle = Lifecycle::Running;
                     if let Err(e) = persist_new_entity(
-                        ctx.kubo_rpc_url,
+                        &ctx.kubo_rpc_url,
                         old_cid,
                         &req.fragment,
                         &running_node,
@@ -378,17 +378,13 @@ async fn handle_entity_plugin_message(
 
 // ── Generic reply helper ───────────────────────────────────────────────────────
 
-async fn send_rpc_reply(
-    incoming: &ma_core::Message,
-    ctx: &RpcHandlerCtx<'_>,
-    content: Vec<u8>,
-) -> Result<()> {
-    send_rpc_reply_typed(incoming, ctx, CONTENT_TYPE_TERM, &content).await
+fn send_rpc_reply(incoming: &ma_core::Message, ctx: &RpcHandlerCtx, content: &[u8]) -> Result<()> {
+    send_rpc_reply_typed(incoming, ctx, CONTENT_TYPE_TERM, content)
 }
 
-async fn send_rpc_reply_typed(
+fn send_rpc_reply_typed(
     incoming: &ma_core::Message,
-    ctx: &RpcHandlerCtx<'_>,
+    ctx: &RpcHandlerCtx,
     content_type: &str,
     content: &[u8],
 ) -> Result<()> {
@@ -396,40 +392,46 @@ async fn send_rpc_reply_typed(
         .with_context(|| format!("invalid sender DID: {}", incoming.from))?;
 
     let mut reply = ma_core::Message::new(
-        ctx.our_did,
+        ctx.our_did.as_ref(),
         &incoming.from,
         MESSAGE_TYPE_RPC_REPLY,
         content_type,
         content,
-        ctx.signing_key,
+        &ctx.signing_key,
     )
     .context("failed to build RPC reply")?;
     reply.reply_to = Some(incoming.id.clone());
 
-    match ctx
-        .endpoint
-        .outbox(ctx.resolver.as_ref(), &sender.base_id(), RPC_PROTOCOL_ID)
-        .await
-    {
-        Ok(mut outbox) => {
-            outbox.send(&reply).await.context("RPC reply send failed")?;
-            info!(
-                to = %incoming.from,
-                reply_to = %incoming.id,
-                "{}",
-                crate::i18n::t("rpc-reply-sent")
-            );
+    // Spawn the delivery so the event loop is never blocked by DID resolution
+    // or QUIC connection setup. The reply is fire-and-forget from the handler's
+    // perspective; failures are logged but do not affect the caller.
+    let endpoint = Arc::clone(&ctx.endpoint);
+    let resolver = Arc::clone(&ctx.resolver);
+    let from = incoming.from.clone();
+    let msg_id = incoming.id.clone();
+    tokio::spawn(async move {
+        match endpoint
+            .outbox(resolver.as_ref(), &sender.base_id(), RPC_PROTOCOL_ID)
+            .await
+        {
+            Ok(mut outbox) => {
+                if let Err(err) = outbox.send(&reply).await {
+                    warn!(error = %err, to = %from, "RPC reply send failed");
+                } else {
+                    info!(to = %from, reply_to = %msg_id, "{}", crate::i18n::t("rpc-reply-sent"));
+                }
+            }
+            Err(err) => {
+                warn!(error = %err, to = %from, "RPC reply delivery failed");
+            }
         }
-        Err(err) => {
-            warn!(error = %err, to = %incoming.from, "RPC reply delivery failed");
-        }
-    }
+    });
     Ok(())
 }
 
 /// Resolve the caller's preferred language from their DID document.
 /// Falls back to the runtime's own language on any error.
-async fn rpc_caller_lang(from: &str, ctx: &RpcHandlerCtx<'_>) -> String {
+async fn rpc_caller_lang(from: &str, ctx: &RpcHandlerCtx) -> String {
     if let Ok(doc) = ctx.resolver.resolve(from).await {
         if let Some(Ipld::Map(ma)) = &doc.ma {
             if let Some(Ipld::String(lang)) = ma.get("lang") {
@@ -445,16 +447,16 @@ async fn rpc_caller_lang(from: &str, ctx: &RpcHandlerCtx<'_>) -> String {
 /// Send an RPC error reply with the message localised to the caller's language.
 async fn send_rpc_i18n_error(
     incoming: &ma_core::Message,
-    ctx: &RpcHandlerCtx<'_>,
+    ctx: &RpcHandlerCtx,
     key: &str,
 ) -> Result<()> {
     let lang = rpc_caller_lang(&incoming.from, ctx).await;
-    send_rpc_error_reply(incoming, ctx, &crate::i18n::t_lang(&lang, key)).await
+    send_rpc_error_reply(incoming, ctx, &crate::i18n::t_lang(&lang, key))
 }
 
-async fn send_rpc_error_reply(
+fn send_rpc_error_reply(
     incoming: &ma_core::Message,
-    ctx: &RpcHandlerCtx<'_>,
+    ctx: &RpcHandlerCtx,
     reason: &str,
 ) -> Result<()> {
     let mut payload = Vec::new();
@@ -466,5 +468,5 @@ async fn send_rpc_error_reply(
         &mut payload,
     )
     .context("failed to encode RPC error reply")?;
-    send_rpc_reply(incoming, ctx, payload).await
+    send_rpc_reply(incoming, ctx, &payload)
 }

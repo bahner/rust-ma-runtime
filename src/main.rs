@@ -195,6 +195,10 @@ async fn main() -> Result<()> {
         None
     };
 
+    // Convert endpoint to Arc so it can be shared across tokio::spawn tasks.
+    // All service() registrations are complete at this point.
+    let endpoint: Arc<dyn ma_core::MaEndpoint> = Arc::from(endpoint);
+
     // ── Own DID document (ma extension uses protocol + runtime link) ─────────
     let mut root_cid = cli.root_cid.clone();
     let lang_cid = config
@@ -621,10 +625,10 @@ async fn main() -> Result<()> {
                         &message,
                         &*acl.read().await,
                         &rpc::RpcHandlerCtx {
-                            our_did: &our_did,
-                            signing_key: &signing_key,
-                            endpoint: &*endpoint,
-                            kubo_rpc_url: &kubo_url,
+                            our_did: Arc::from(our_did.as_str()),
+                            signing_key: Arc::new(signing_key.clone()),
+                            endpoint: Arc::clone(&endpoint),
+                            kubo_rpc_url: Arc::from(kubo_url.as_str()),
                             resolver: Arc::clone(&shared_resolver),
                             entity_registry: entity_registry.clone(),
                             kind_registry: kind_registry.clone(),
@@ -661,7 +665,9 @@ async fn main() -> Result<()> {
                             let mut s = stats.write().await;
                             s.ipfs_requests += 1;
                         }
-                        if let Err(err) = ipfs::handle_ipfs_message(
+                        if let Err(err) = tokio::time::timeout(
+                            Duration::from_mins(1),
+                            ipfs::handle_ipfs_message(
                             &message,
                             &*acl.read().await,
                             &ipfs::IpfsHandlerCtx {
@@ -674,8 +680,9 @@ async fn main() -> Result<()> {
                                 doc_cache: Arc::clone(&ipfs.doc_cache),
                             },
                             &mut ipfs.replay_guard,
-                        )
+                        ))
                         .await
+                        .unwrap_or_else(|_| Err(anyhow::anyhow!("ipfs handler timed out")))
                         {
                             warn!(error = %err, from = %message.from, "{}", i18n::t("ipfs-message-rejected"));
                         }
@@ -699,7 +706,9 @@ async fn main() -> Result<()> {
                         // the same SharedAcl (e.g. :acl: edit-save), and holding
                         // a read guard across that await would deadlock.
                         let acl_snapshot = acl.read().await.clone();
-                        if let Err(err) = crud::handle_crud_message(
+                        if let Err(err) = tokio::time::timeout(
+                            Duration::from_secs(30),
+                            crud::handle_crud_message(
                             &message,
                             &acl_snapshot,
                             &crud::CrudHandlerCtx {
@@ -716,8 +725,9 @@ async fn main() -> Result<()> {
                                 root_acl: acl.clone(),
                                 envelope_tx: envelope_tx.clone(),
                             },
-                        )
+                        ))
                         .await
+                        .unwrap_or_else(|_| Err(anyhow::anyhow!("crud handler timed out")))
                         {
                             warn!(error = %err, from = %message.from, "CRUD message rejected");
                         }
@@ -823,13 +833,10 @@ async fn main() -> Result<()> {
     }
 
     info!("{}", i18n::t("closing-endpoint"));
-    if tokio::time::timeout(Duration::from_secs(5), endpoint.close())
-        .await
-        .is_err()
-    {
-        warn!("endpoint close timed out after 5 s, forcing exit");
-        std::process::exit(0);
-    }
+    // Arc<dyn MaEndpoint> cannot call close() (&mut self) directly.
+    // Dropping the Arc signals shutdown; spawned reply tasks will complete or
+    // be cleaned up when the process exits.
+    drop(endpoint);
     info!("{}", i18n::t("shutdown-complete"));
     Ok(())
 }
