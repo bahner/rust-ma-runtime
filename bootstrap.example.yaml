@@ -236,14 +236,14 @@ runtime:
     avatar:
       kind: /ma/avatar/0.0.1
       behaviour:
-        /: bafybeibpykikfzljc2gzle4mzan6qdelfwruhzni5gtrb6sm2hv3qne2xe
+        /: bafybeie6j4rk2nbrdu7yph2vrmraitaacemfbntw4bbbn2vcjoqgd6shhq
       acl: open
 
     # Clearing house — placement authority for the runtime world.
     house:
       kind: /ma/house/0.0.1
       behaviour:
-        /: bafybeihtk4zddeqn5d4ydzfpbl3fhf45luweu5un3fp4voijsqfj7a3epy
+        /: bafybeig47hbfdhe66doj3ry5srvkqszrpkotwdmlaypmr26ruq3ptawwdq
       acl: open
 
     # The common room.
@@ -251,5 +251,5 @@ runtime:
     room:
       kind: /ma/room/0.0.1
       behaviour:
-        /: bafybeicxyporygxtrjck2ijp4vnusq362m6ky4kgnxoyw52kzzog7xejru
+        /: bafybeifnk6cgxfufmg3w6blahqefcnwbt5wpx2fvrltyo4kq2gq5lwzzsy
       acl: open

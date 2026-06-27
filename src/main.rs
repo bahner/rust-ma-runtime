@@ -44,6 +44,10 @@ struct Cli {
     #[arg(long)]
     gen_root_cid: Option<PathBuf>,
 
+    /// Bootstrap from YAML: publish manifest to IPFS and start the daemon using the resulting root CID.
+    #[arg(long)]
+    bootstrap: Option<PathBuf>,
+
     /// WARNING: resets runtime head for this process. If wrong, recover old CID from logs.
     #[arg(long)]
     root_cid: Option<String>,
@@ -150,6 +154,31 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // ── bootstrap: publish manifest from YAML, use resulting CID, then continue ──
+    let bootstrap_root_cid: Option<String> = if let Some(ref yaml_path) = cli.bootstrap {
+        let publisher = IpfsDidPublisher::new(&config.kubo_rpc_url)
+            .with_context(|| format!("invalid kubo_rpc_url: {}", config.kubo_rpc_url))?;
+        publisher
+            .wait_until_ready(10)
+            .await
+            .context("kubo RPC is not reachable for bootstrap")?;
+
+        let runtime_config = runtime_manifest_config(&config);
+        let result = bootstrap::run_bootstrap(
+            yaml_path,
+            &config.kubo_rpc_url,
+            runtime_config,
+            effective_lang_base.as_deref().unwrap_or("nb"),
+            cli.root_cid.as_deref(),
+        )
+        .await
+        .context("bootstrap failed")?;
+        info!(root_cid = %result.root_cid, "Bootstrap complete");
+        Some(result.root_cid)
+    } else {
+        None
+    };
+
     if let Some(ref cid) = cli.root_cid {
         Cid::try_from(cid.as_str()).with_context(|| format!("invalid --root-cid CID: {cid}"))?;
         info!(root_cid = %cid, "runtime head reset for this session");
@@ -200,8 +229,8 @@ async fn main() -> Result<()> {
     let endpoint: Arc<dyn ma_core::MaEndpoint> = Arc::from(endpoint);
 
     // ── Own DID document (ma extension uses protocol + runtime link) ─────────
-    // root_cid priority: --root-cid CLI (one-time override) > IPNS resolution
-    let mut root_cid = cli.root_cid.clone();
+    // root_cid priority: --root-cid CLI > --bootstrap generated CID > IPNS resolution
+    let mut root_cid = cli.root_cid.clone().or(bootstrap_root_cid);
     let lang_cid = config
         .extra
         .get("i18n_cid")
