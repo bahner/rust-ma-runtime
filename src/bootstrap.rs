@@ -374,6 +374,7 @@ pub async fn load_entities(
     our_did: &str,
     registry: &plugin::EntityRegistry,
     envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, crate::entity::SendEnvelope)>,
+    avatar_key: [u8; 32],
 ) -> (usize, Option<String>) {
     let mut manifest = match kubo::dag_get::<RuntimeManifest>(kubo_url, root_cid).await {
         Ok(m) => m,
@@ -413,6 +414,8 @@ pub async fn load_entities(
             our_did,
             kubo_url,
             envelope_tx.clone(),
+            registry.clone(),
+            avatar_key,
         )
         .await
         {

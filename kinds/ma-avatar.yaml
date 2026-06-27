@@ -1,0 +1,11 @@
+protocol: /ma/avatar/0.0.1
+attributes:
+  wasi: true
+  stateful: true
+api:
+  - init
+  - handle_call
+host_functions:
+  - ma_set_state
+  - ma_reply
+  - ma_avatar_id

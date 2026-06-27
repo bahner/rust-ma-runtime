@@ -13,6 +13,7 @@
 //! export is called (for Extism) or which path the closure takes (for Native).
 
 use std::{
+    cell::RefCell,
     collections::HashMap,
     sync::{Arc, Mutex},
 };
@@ -27,6 +28,21 @@ use crate::entity::{
     CastInput, CreateEntityRequest, EntityCtx, EntityNode, Evaluator, KindNode, Lifecycle,
     PluginKind, ReplyRequest, SendEnvelope,
 };
+
+// ── ma_call reply capture ─────────────────────────────────────────────────────
+//
+// Python plugins return results via the `ma_reply` host function (outbox),
+// not as the Wasm export return value.  When `ma_call_fn` dispatches
+// synchronously to another entity, we intercept the first `ma_reply` and
+// capture its content bytes instead of enqueuing to the outbox.
+//
+// CALL_CAPTURE states:
+//   None          — not in capture mode (normal outbox)
+//   Some(None)    — capture active, waiting for first ma_reply
+//   Some(Some(b)) — reply captured; subsequent ma_reply calls use normal outbox
+thread_local! {
+    static CALL_CAPTURE: RefCell<Option<Option<Vec<u8>>>> = const { RefCell::new(None) };
+}
 
 // ── Native dispatch type ─────────────────────────────────────────────────────
 
@@ -105,6 +121,19 @@ host_fn!(ma_send_fn(user_data: OutboxCtx; input: Vec<u8>) -> Vec<u8> {
 // automatically — plugin only provides the reply body.
 host_fn!(ma_reply_fn(user_data: OutboxCtx; input: Vec<u8>) -> Vec<u8> {
     let req: ReplyRequest = from_cbor_bytes(&input)?;
+    // If inside a synchronous ma_call, capture the first reply instead of enqueuing.
+    let captured = CALL_CAPTURE.with(|c| {
+        let mut guard = c.borrow_mut();
+        if matches!(*guard, Some(None)) {
+            *guard = Some(Some(req.content.clone()));
+            true
+        } else {
+            false
+        }
+    });
+    if captured {
+        return Ok(Vec::new());
+    }
     let envelope = SendEnvelope {
         to: req.msg.from,
         content_type: req.content_type,
@@ -193,6 +222,155 @@ host_fn!(ma_create_entity_fn(user_data: CreateEntityCtx; input: Vec<u8>) -> Vec<
     ciborium::ser::into_writer(&fragment, &mut out)
         .map_err(|e| extism::Error::msg(format!("ma_create_entity: CBOR encode: {e}")))?;
     Ok(out)
+});
+
+// ── ma_avatar_id host function ────────────────────────────────────────────────
+
+// Context captured by `ma_avatar_id` host function.
+// The key is derived from the runtime's IPNS secret at startup and never changes.
+struct AvatarIdCtx {
+    key: [u8; 32],
+}
+
+// `ma_avatar_id` host function: compute a per-runtime pseudonymous avatar ID.
+//
+// Input:  DID string (UTF-8 bytes), e.g. "did:ma:k51alice…"
+// Output: 24 hex chars (first 12 bytes of blake3 keyed hash).
+//
+// The key is derived from the runtime's IPNS secret, so:
+//   - Same DID → same avatar_id within this runtime (deterministic across restarts).
+//   - Different runtimes → different avatar_ids (privacy across worlds).
+//   - The DID is never stored by house/avatar plugins; only the avatar_id is kept.
+host_fn!(ma_avatar_id_fn(user_data: AvatarIdCtx; input: Vec<u8>) -> Vec<u8> {
+    let did = String::from_utf8(input)
+        .map_err(|e| extism::Error::msg(format!("ma_avatar_id: invalid UTF-8: {e}")))?;
+    let arc = user_data.get()?;
+    let key = arc.lock().unwrap().key;
+    let hash = blake3::keyed_hash(&key, did.as_bytes());
+    let hex: String = hash.as_bytes()[..12]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    Ok(hex.into_bytes())
+});
+
+// ── ma_call host function ─────────────────────────────────────────────────────
+
+// Context captured by the `ma_call` host function.
+struct CallCtx {
+    registry: EntityRegistry,
+    /// DID of the calling entity — used as `from` in the synthetic message.
+    caller_did: String,
+    /// Fragment of the calling entity — prevents self-calls.
+    caller_fragment: String,
+}
+
+// Input sent by the plugin to `ma_call`.
+#[derive(serde::Deserialize)]
+struct CallRequest {
+    /// Bare fragment name of the target entity (no `#` prefix).
+    to: String,
+    /// CBOR-encoded verb atom or array to send to the target.
+    #[serde(with = "serde_bytes")]
+    content: Vec<u8>,
+}
+
+// `ma_call` host function: synchronous call to another entity in this runtime.
+//
+// The plugin passes a CBOR-encoded `CallRequest { to, content }`.
+// The runtime looks up the target entity by fragment, builds a synthetic
+// `LocalMessage`, dispatches to `handle_call`, and returns the raw reply bytes.
+//
+// Safety: called inside `block_in_place`; acquiring the tokio RwLock via
+// `Handle::current().block_on` is permitted in that context.
+// Self-calls are rejected to prevent deadlocks.
+host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
+    let req: CallRequest = from_cbor_bytes(&input)?;
+
+    let arc = user_data.get()?;
+    let ctx = arc.lock().unwrap();
+    let registry = ctx.registry.clone();
+    let caller_did = ctx.caller_did.clone();
+    let caller_fragment = ctx.caller_fragment.clone();
+    drop(ctx);
+
+    if req.to == caller_fragment {
+        let mut out = Vec::new();
+        ciborium::ser::into_writer(
+            &ciborium::Value::Array(vec![
+                ciborium::Value::Text(":error".into()),
+                ciborium::Value::Text("ma_call: self-call not allowed".into()),
+            ]),
+            &mut out,
+        )
+        .map_err(|e| extism::Error::msg(format!("ma_call encode: {e}")))?;
+        return Ok(out);
+    }
+
+    let ep = tokio::runtime::Handle::current()
+        .block_on(async { registry.read().await.get(&req.to).cloned() });
+
+    let ep = match ep {
+        Some(ep) => ep,
+        None => {
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &ciborium::Value::Array(vec![
+                    ciborium::Value::Text(":error".into()),
+                    ciborium::Value::Text(format!("ma_call: entity #{} not found", req.to)),
+                ]),
+                &mut out,
+            )
+            .map_err(|e| extism::Error::msg(format!("ma_call encode: {e}")))?;
+            return Ok(out);
+        }
+    };
+
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .saturating_mul(1_000_000_000);
+
+    let msg = crate::entity::LocalMessage {
+        id: format!("ma-call-{}-{}", caller_fragment, req.to),
+        from: caller_did,
+        to: format!("#{}", req.to),
+        created_at: now_ns,
+        expires: now_ns + 5_000_000_000,
+        reply_to: None,
+        content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
+        content: req.content,
+    };
+    let cast_input = CastInput { msg };
+
+    // Enable reply capture for synchronous dispatch.
+    CALL_CAPTURE.with(|c| *c.borrow_mut() = Some(None));
+    let dispatch_err = ep.handle_call(&cast_input).err();
+    // Read captured reply and exit capture mode regardless of outcome.
+    let reply = CALL_CAPTURE.with(|c| c.borrow_mut().take().and_then(|v| v));
+
+    if let Some(e) = dispatch_err {
+        let mut out = Vec::new();
+        ciborium::ser::into_writer(
+            &ciborium::Value::Array(vec![
+                ciborium::Value::Text(":error".into()),
+                ciborium::Value::Text(format!("ma_call: dispatch failed: {e}")),
+            ]),
+            &mut out,
+        )
+        .map_err(|err| extism::Error::msg(format!("ma_call encode: {err}")))?;
+        return Ok(out);
+    }
+    // Return the captured ma_reply content, or :ok if plugin never replied.
+    if let Some(bytes) = reply {
+        Ok(bytes)
+    } else {
+        let mut out = Vec::new();
+        ciborium::ser::into_writer(&ciborium::Value::Text(":ok".into()), &mut out)
+            .map_err(|e| extism::Error::msg(format!("ma_call encode: {e}")))?;
+        Ok(out)
+    }
 });
 
 // ── ma_delete_entity host function ───────────────────────────────────────────
@@ -316,6 +494,8 @@ impl EntityPlugin {
         our_did: &str,
         kubo_url: &str,
         envelope_tx: UnboundedSender<(String, SendEnvelope)>,
+        entity_registry: EntityRegistry,
+        avatar_key: [u8; 32],
     ) -> Result<(Self, Lifecycle)> {
         let fragment = fragment.into();
         let behaviour_cid = node.behaviour.as_ref().map(|l| l.cid.as_str());
@@ -377,6 +557,12 @@ impl EntityPlugin {
         let delete_queue: UserData<DeleteEntityCtx> = UserData::new(DeleteEntityCtx {
             pending: Vec::new(),
         });
+        let call_ctx: UserData<CallCtx> = UserData::new(CallCtx {
+            registry: entity_registry,
+            caller_did: format!("{}#{}", our_did, &fragment),
+            caller_fragment: fragment.clone(),
+        });
+        let avatar_id_ctx: UserData<AvatarIdCtx> = UserData::new(AvatarIdCtx { key: avatar_key });
         let ctx_for_init = EntityCtx {
             self_did: format!("{}#{}", our_did, &fragment),
             fragment: fragment.clone(),
@@ -417,6 +603,14 @@ impl EntityPlugin {
                     delete_queue.clone(),
                     ma_delete_entity_fn,
                 ),
+            ),
+            (
+                "ma_call",
+                Function::new("ma_call", [PTR], [PTR], call_ctx, ma_call_fn),
+            ),
+            (
+                "ma_avatar_id",
+                Function::new("ma_avatar_id", [PTR], [PTR], avatar_id_ctx, ma_avatar_id_fn),
             ),
         ];
         let allowed: std::collections::HashSet<&str> = kind_node

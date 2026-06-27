@@ -32,6 +32,7 @@ pub struct RpcHandlerCtx {
     pub envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, SendEnvelope)>,
     pub stats: SharedStats,
     pub acl_cache: AclCache,
+    pub avatar_key: [u8; 32],
 }
 
 // ── Entity creation helper ─────────────────────────────────────────────────────
@@ -272,6 +273,8 @@ async fn handle_entity_plugin_message(
             &ctx.our_did,
             &ctx.kubo_rpc_url,
             ctx.envelope_tx.clone(),
+            ctx.entity_registry.clone(),
+            ctx.avatar_key,
         )
         .await
         {

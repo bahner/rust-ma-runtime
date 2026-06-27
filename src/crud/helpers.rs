@@ -190,6 +190,8 @@ pub(super) async fn register_entity_plugin(
         ctx.our_did,
         ctx.kubo_rpc_url,
         ctx.envelope_tx.clone(),
+        ctx.entity_registry.clone(),
+        ctx.avatar_key,
     )
     .await
     {

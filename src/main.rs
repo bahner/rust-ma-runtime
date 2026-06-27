@@ -200,6 +200,7 @@ async fn main() -> Result<()> {
     let endpoint: Arc<dyn ma_core::MaEndpoint> = Arc::from(endpoint);
 
     // ── Own DID document (ma extension uses protocol + runtime link) ─────────
+    // root_cid priority: --root-cid CLI (one-time override) > IPNS resolution
     let mut root_cid = cli.root_cid.clone();
     let lang_cid = config
         .extra
@@ -240,6 +241,13 @@ async fn main() -> Result<()> {
     let doc_cbor = our_document
         .encode()
         .context("failed to encode own DID document")?;
+
+    // Derive the avatar pseudonymisation key from the IPNS secret BEFORE it is
+    // moved into the publish closure and zeroized.  This key is stable across
+    // restarts (deterministic from the IPNS key) and never leaves the process.
+    let avatar_key: [u8; 32] =
+        blake3::derive_key("ma avatar-id v1", &secrets.ipns_secret_key.to_vec());
+
     let ipns_key = secrets.ipns_secret_key.to_vec();
     let kubo_url_clone = config.kubo_rpc_url.clone();
     let did_for_log = our_did.clone();
@@ -334,6 +342,7 @@ async fn main() -> Result<()> {
             &our_did,
             &entity_registry,
             envelope_tx.clone(),
+            avatar_key,
         )
         .await;
         info!(count = %count, "Entity plugins loaded");
@@ -635,6 +644,7 @@ async fn main() -> Result<()> {
                             envelope_tx: envelope_tx.clone(),
                             stats: stats.clone(),
                             acl_cache: acl_cache.clone(),
+                            avatar_key,
                         },
                     )
                     .await
@@ -724,6 +734,7 @@ async fn main() -> Result<()> {
                                 acl_cache: acl_cache.clone(),
                                 root_acl: acl.clone(),
                                 envelope_tx: envelope_tx.clone(),
+                                avatar_key,
                             },
                         ))
                         .await
