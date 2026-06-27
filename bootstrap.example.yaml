@@ -243,7 +243,7 @@ runtime:
     house:
       kind: /ma/house/0.0.1
       behaviour:
-        /: bafybeig47hbfdhe66doj3ry5srvkqszrpkotwdmlaypmr26ruq3ptawwdq
+        /: bafybeif52nzzwszcytxuhf25xo7hgvq6dlkqxlywwozexuegy65wh6tyqq
       acl: open
 
     # The common room.
@@ -251,5 +251,5 @@ runtime:
     room:
       kind: /ma/room/0.0.1
       behaviour:
-        /: bafybeifnk6cgxfufmg3w6blahqefcnwbt5wpx2fvrltyo4kq2gq5lwzzsy
+        /: bafybeieaasdxphjxoporqduww6o7h5vww3gca7bcrycql6pn7loa4sdbvu
       acl: open
