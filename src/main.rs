@@ -806,17 +806,27 @@ async fn main() -> Result<()> {
                         }
                     };
                     msg.reply_to = env.reply_to;
-                    match endpoint
-                        .outbox(shared_resolver.as_ref(), &recipient.base_id(), rpc::RPC_PROTOCOL_ID)
+                    // Spawn each delivery independently so one unreachable peer
+                    // cannot block others. Cap the outbox-open at 5 seconds.
+                    let ep   = Arc::clone(&endpoint);
+                    let res  = Arc::clone(&shared_resolver);
+                    let base = recipient.base_id().to_string();
+                    tokio::spawn(async move {
+                        match tokio::time::timeout(
+                            Duration::from_secs(5),
+                            ep.outbox(res.as_ref(), &base, rpc::RPC_PROTOCOL_ID),
+                        )
                         .await
-                    {
-                        Ok(mut outbox) => {
-                            if let Err(e) = outbox.send(&msg).await {
-                                warn!(fragment = %fragment, to = %env.to, error = %e, "plugin envelope delivery failed");
+                        {
+                            Ok(Ok(mut outbox)) => {
+                                if let Err(e) = outbox.send(&msg).await {
+                                    warn!(fragment = %fragment, to = %env.to, error = %e, "plugin envelope delivery failed");
+                                }
                             }
+                            Ok(Err(e)) => warn!(fragment = %fragment, to = %env.to, error = %e, "plugin envelope: outbox open failed"),
+                            Err(_)     => warn!(fragment = %fragment, to = %env.to, "plugin envelope: outbox connect timed out (5 s)"),
                         }
-                        Err(e) => warn!(fragment = %fragment, to = %env.to, error = %e, "plugin envelope: outbox open failed"),
-                    }
+                    });
                 }
             }
             signal = &mut ctrl_c => {
