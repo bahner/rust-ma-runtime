@@ -6,7 +6,7 @@ api:
   - init
   - handle_call
 host_functions:
-  - ma_set_state
   - ma_reply
+  - ma_set_state
   - ma_send
   - ma_call

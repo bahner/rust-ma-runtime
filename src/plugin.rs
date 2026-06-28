@@ -577,11 +577,18 @@ impl EntityPlugin {
             lifecycle: node.lifecycle.clone(),
         };
 
+        // IMPORTANT: This order MUST match the @extism.import_fn declaration order
+        // in the Python actor library chain (actor.py → avatar.py / root.py).
+        // extism-py assigns IMPORT_INDEX sequentially across all @extism.import_fn
+        // declarations, and ffi.__invoke_host_func(idx) indexes into the FILTERED
+        // host_fns array by position.  The filter preserves all_fns order, so
+        // IMPORT_INDEX must equal the position in this list after filtering.
+        //
+        // Python IMPORT_INDEX assignments:
+        //   actor.py:  ma_reply=0, ma_set_state=1, ma_send=2, ma_call=3
+        //   avatar.py: ma_avatar_id=4
+        //   root.py:   ma_create_entity=4, ma_delete_entity=5
         let all_fns: Vec<(&str, Function)> = vec![
-            (
-                "ma_send",
-                Function::new("ma_send", [PTR], [PTR], outbox_ctx_send, ma_send_fn),
-            ),
             (
                 "ma_reply",
                 Function::new("ma_reply", [PTR], [PTR], outbox_ctx_reply, ma_reply_fn),
@@ -589,6 +596,18 @@ impl EntityPlugin {
             (
                 "ma_set_state",
                 Function::new("ma_set_state", [PTR], [PTR], state.clone(), ma_set_state_fn),
+            ),
+            (
+                "ma_send",
+                Function::new("ma_send", [PTR], [PTR], outbox_ctx_send, ma_send_fn),
+            ),
+            (
+                "ma_call",
+                Function::new("ma_call", [PTR], [PTR], call_ctx, ma_call_fn),
+            ),
+            (
+                "ma_avatar_id",
+                Function::new("ma_avatar_id", [PTR], [PTR], avatar_id_ctx, ma_avatar_id_fn),
             ),
             (
                 "ma_create_entity",
@@ -609,14 +628,6 @@ impl EntityPlugin {
                     delete_queue.clone(),
                     ma_delete_entity_fn,
                 ),
-            ),
-            (
-                "ma_call",
-                Function::new("ma_call", [PTR], [PTR], call_ctx, ma_call_fn),
-            ),
-            (
-                "ma_avatar_id",
-                Function::new("ma_avatar_id", [PTR], [PTR], avatar_id_ctx, ma_avatar_id_fn),
             ),
         ];
         let allowed: std::collections::HashSet<&str> = kind_node

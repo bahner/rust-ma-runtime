@@ -67,8 +67,10 @@ runtime:
         - init
         - handle_cast
       host_functions:
-        - ma_send
         - ma_reply
+        - ma_set_state
+        - ma_send
+        - ma_call
         - ma_create_entity
         - ma_delete_entity
       allow:
@@ -131,7 +133,7 @@ runtime:
 
     # Clearing house — two-phase claim/accept placement authority.
     # Tracks who/what is where (containment tree).
-    # Build: make -C ../ma-python/house ipfs
+    # Build: make -C ../ma-python/ma_runtime_house ipfs
     /ma/house/0.0.1:
       attributes:
         stateful: true
@@ -140,14 +142,15 @@ runtime:
         - init
         - handle_call
       host_functions:
-        - ma_set_state
         - ma_reply
+        - ma_set_state
+        - ma_send
         - ma_call
       allow:
         - "*"
 
     # Room — social hub entity.
-    # Build: make -C ../ma-python/room ipfs
+    # Build: make -C ../ma-python/ma_runtime_room ipfs
     /ma/room/0.0.1:
       attributes:
         stateful: true
@@ -156,15 +159,15 @@ runtime:
         - init
         - handle_call
       host_functions:
-        - ma_set_state
         - ma_reply
+        - ma_set_state
         - ma_send
         - ma_call
       allow:
         - "*"
 
     # Avatar identity registry — pseudonymous IDs + display names.
-    # Build: make -C ../ma-python/avatar ipfs
+    # Build: make -C ../ma-python/ma_runtime_avatar ipfs
     /ma/avatar/0.0.1:
       attributes:
         stateful: true
@@ -173,8 +176,10 @@ runtime:
         - init
         - handle_call
       host_functions:
-        - ma_set_state
         - ma_reply
+        - ma_set_state
+        - ma_send
+        - ma_call
         - ma_avatar_id
       allow:
         - "*"
@@ -186,12 +191,11 @@ runtime:
   #             `acl` references a named ACL from `acls:` above (empty = deny-all).
   entities:
     # Root orchestrator — the single entry point for entity creation.
-    # Built from ma-python/root.
-    # Rebuild: make -C ../ma-python/root ipfs
+    # Build: make -C ../ma-python/ma_runtime_root ipfs
     root:
       kind: /ma/root/0.0.1
       behaviour:
-        /: bafybeiejlgxuwikjwrht6xexwcjsfdctntpiat7emujcq346e64jckj3bi
+        /: bafybeihms53tqvf5aawpslx3h2c72y2guitsk6qph7cyialjka2dc2nnqe
       acl: open
 
     # Counter — atomic integer with :get/:set/:inc/:dec/:reset verbs.
@@ -236,14 +240,14 @@ runtime:
     avatar:
       kind: /ma/avatar/0.0.1
       behaviour:
-        /: bafybeidbou2lmbbfwwxpckmjaiv2pjjshvfdff2vnh7kmdotgda5lyr3h4
+        /: bafybeib3ljkgq34i5isujlrmac2vppyffwqsuybrs57aabm7x7d2p5xzd4
       acl: open
 
     # Clearing house — placement authority for the runtime world.
     house:
       kind: /ma/house/0.0.1
       behaviour:
-        /: bafybeifj3og5725cswnaitlh53wp3c2ode6auwltlkiwn6udcnpqy7y6lu
+        /: bafybeidjxj2d3sgr5bqxx265ynarjll7hw6qwbyah5ug35o3tiwze4ba4y
       acl: open
 
     # The common room.
@@ -251,5 +255,5 @@ runtime:
     room:
       kind: /ma/room/0.0.1
       behaviour:
-        /: bafybeieaasdxphjxoporqduww6o7h5vww3gca7bcrycql6pn7loa4sdbvu
+        /: bafybeiavhgs6zdpg3wscwopltimnh6pfhwsoc7izjnewxqefewlqfuhxga
       acl: open
