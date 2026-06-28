@@ -36,12 +36,16 @@ use crate::entity::{
 // synchronously to another entity, we intercept the first `ma_reply` and
 // capture its content bytes instead of enqueuing to the outbox.
 //
-// CALL_CAPTURE states:
-//   None          — not in capture mode (normal outbox)
-//   Some(None)    — capture active, waiting for first ma_reply
-//   Some(Some(b)) — reply captured; subsequent ma_reply calls use normal outbox
+// A stack is used so that nested `ma_call` invocations (e.g. room → house →
+// avatar) each have their own capture slot and do not clobber each other.
+//
+// Stack entry states:
+//   None          — this frame is waiting for the first ma_reply
+//   Some(bytes)   — reply has been captured for this frame
+//
+// Push before dispatch, pop after to retrieve the captured reply.
 thread_local! {
-    static CALL_CAPTURE: RefCell<Option<Option<Vec<u8>>>> = const { RefCell::new(None) };
+    static CALL_CAPTURE: RefCell<Vec<Option<Vec<u8>>>> = const { RefCell::new(Vec::new()) };
 }
 
 // ── Native dispatch type ─────────────────────────────────────────────────────
@@ -121,15 +125,17 @@ host_fn!(ma_send_fn(user_data: OutboxCtx; input: Vec<u8>) -> Vec<u8> {
 // automatically — plugin only provides the reply body.
 host_fn!(ma_reply_fn(user_data: OutboxCtx; input: Vec<u8>) -> Vec<u8> {
     let req: ReplyRequest = from_cbor_bytes(&input)?;
-    // If inside a synchronous ma_call, capture the first reply instead of enqueuing.
+    // If inside a synchronous ma_call, capture the first reply for the
+    // innermost active frame (top of stack).  Only captures once per frame.
     let captured = CALL_CAPTURE.with(|c| {
-        let mut guard = c.borrow_mut();
-        if matches!(*guard, Some(None)) {
-            *guard = Some(Some(req.content.clone()));
-            true
-        } else {
-            false
+        let mut stack = c.borrow_mut();
+        if let Some(slot) = stack.last_mut() {
+            if slot.is_none() {
+                *slot = Some(req.content.clone());
+                return true;
+            }
         }
+        false
     });
     if captured {
         return Ok(Vec::new());
@@ -344,11 +350,11 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
     };
     let cast_input = CastInput { msg };
 
-    // Enable reply capture for synchronous dispatch.
-    CALL_CAPTURE.with(|c| *c.borrow_mut() = Some(None));
+    // Enable reply capture for synchronous dispatch: push a fresh slot.
+    CALL_CAPTURE.with(|c| c.borrow_mut().push(None));
     let dispatch_err = ep.handle_call(&cast_input).err();
-    // Read captured reply and exit capture mode regardless of outcome.
-    let reply = CALL_CAPTURE.with(|c| c.borrow_mut().take().and_then(|v| v));
+    // Pop this frame's slot to get the captured reply (regardless of outcome).
+    let reply = CALL_CAPTURE.with(|c| c.borrow_mut().pop().and_then(|v| v));
 
     if let Some(e) = dispatch_err {
         let mut out = Vec::new();
