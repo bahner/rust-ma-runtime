@@ -186,12 +186,12 @@ runtime:
   #             `acl` references a named ACL from `acls:` above (empty = deny-all).
   entities:
     # Root orchestrator — the single entry point for entity creation.
-    # Built from plugins/root (Rust/wasm32-unknown-unknown).
-    # Rebuild: make -C plugins build && make -C plugins/root ipfs
+    # Built from ma-python/root.
+    # Rebuild: make -C ../ma-python/root ipfs
     root:
       kind: /ma/root/0.0.1
       behaviour:
-        /: bafkreihy352kaialtlivfhqvxnrhbacwxhrjjo3auxcb2u3nalru6ze7dm
+        /: bafybeiejlgxuwikjwrht6xexwcjsfdctntpiat7emujcq346e64jckj3bi
       acl: open
 
     # Counter — atomic integer with :get/:set/:inc/:dec/:reset verbs.
@@ -236,14 +236,14 @@ runtime:
     avatar:
       kind: /ma/avatar/0.0.1
       behaviour:
-        /: bafybeie6j4rk2nbrdu7yph2vrmraitaacemfbntw4bbbn2vcjoqgd6shhq
+        /: bafybeidbou2lmbbfwwxpckmjaiv2pjjshvfdff2vnh7kmdotgda5lyr3h4
       acl: open
 
     # Clearing house — placement authority for the runtime world.
     house:
       kind: /ma/house/0.0.1
       behaviour:
-        /: bafybeif52nzzwszcytxuhf25xo7hgvq6dlkqxlywwozexuegy65wh6tyqq
+        /: bafybeifj3og5725cswnaitlh53wp3c2ode6auwltlkiwn6udcnpqy7y6lu
       acl: open
 
     # The common room.
