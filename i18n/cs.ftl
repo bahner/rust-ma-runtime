@@ -62,18 +62,11 @@ runtime-claimed = Runtime registrován.
 refuse-delete-root = Důrazně odmítám smazat požadovaný kořenový prvek
 no-root-acl = Žádný kořenový ACL není nakonfigurován — runtime funguje bez řízení přístupu
 acl-owners-access = Volajícímu byl udělen přístup jako členovi skupiny +owners
-namespace-not-found = Jmenný prostor nenalezen
-no-ns-gate-acl = Pro tento jmenný prostor není nakonfigurován gate ACL
 runtime-claim-persisted = Vlastník zapsán do konfigurace.
 runtime-already-claimed = Runtime je již registrován.
 
 
 # Namespace creation (:create)
-namespace-created = Jmenný prostor byl vytvořen
-namespace-already-exists = Jmenný prostor již existuje
-namespace-name-reserved = Název jmenného prostoru je vyhrazen
-namespace-create-denied = Vytvoření jmenného prostoru: přístup odepřen
-namespace-create-usage = Použití: :create <název>
 crud-message-received = Přijata zpráva CRUD
 crud-acl-updated = Kořenový transportní ACL aktualizován
 

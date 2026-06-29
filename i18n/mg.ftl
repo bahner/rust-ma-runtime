@@ -62,18 +62,11 @@ runtime-claimed = Voasoratra ny runtime.
 refuse-delete-root = Mandà mafy ny mamafa ny singa fototra ilaina
 no-root-acl = Tsy voapetraka ny ACL fototra — miasa ny runtime tsy misy fitarihan'ny fidirana
 acl-owners-access = Nomena alalana ny mpiantso amin'ny maha-mpikambana +owners azy
-namespace-not-found = Tsy hita ny namespace
-no-ns-gate-acl = Tsy voapetraka ny ACL vavahady ho an'ity namespace ity
 runtime-claim-persisted = Voasoratra tao amin'ny fanakianana ny tompon'andraikitra.
 runtime-already-claimed = Efa voasoratra ny runtime.
 
 
 # Namespace creation (:create)
-namespace-created = Namespace noforonina
-namespace-already-exists = Efa misy ny namespace
-namespace-name-reserved = Ny anarana namespace voatokana
-namespace-create-denied = Famoronana namespace: toherana ny fidirana
-namespace-create-usage = Fampiasana: :create <anarana>
 crud-message-received = Voaraisina ny hafatra CRUD
 crud-acl-updated = Navao ny ACL fitaterana fototra
 

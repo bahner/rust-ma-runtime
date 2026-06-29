@@ -3,8 +3,9 @@ use ciborium::Value as CborValue;
 use tracing::warn;
 
 use super::helpers::{
-    is_cidv1, load_manifest, send_crud_data_dag_cbor, send_crud_data_yaml, send_crud_i18n_error,
-    send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, send_crud_ok_path, with_manifest_crud,
+    load_manifest, send_crud_data_dag_cbor, send_crud_data_yaml, send_crud_i18n_error,
+    send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, send_crud_ok_path, strip_brackets,
+    with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -187,7 +188,7 @@ fn cbor_to_yaml(val: &CborValue) -> serde_yaml::Value {
     }
 }
 
-// ── Config namespace ───────────────────────────────────────────────────────────
+// ── Config handler ───────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
 pub(super) async fn handle_config_ns(
@@ -263,8 +264,8 @@ pub(super) async fn handle_config_ns(
                     }
                 }
             };
-            if let serde_yaml::Value::String(ref cid) = val {
-                if is_cidv1(cid) {
+            if let serde_yaml::Value::String(ref s) = val {
+                if let Some(cid) = strip_brackets(s) {
                     return send_crud_data_dag_cbor(message, reply_type, ctx, cid).await;
                 }
             }
@@ -384,7 +385,7 @@ pub(super) async fn handle_config_ns(
             // so clients can follow the link. For inline values (sequences,
             // strings, numbers) just confirm the path was updated.
             let is_cid_value = matches!(&yaml_val,
-                serde_yaml::Value::String(s) if is_cidv1(s));
+                serde_yaml::Value::String(s) if strip_brackets(s).is_some());
             if is_cid_value {
                 send_crud_ok_cid(message, reply_type, ctx, &new_root).await
             } else {

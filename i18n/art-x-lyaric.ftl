@@ -64,18 +64,11 @@ runtime-claimed = Runtime claim in Iration.
 refuse-delete-root = Steadfastly refuse fi remove required root element
 no-root-acl = No root ACL — runtime a work without Babylon control
 acl-owners-access = Calla grantid access as memba of +owners
-namespace-not-found = Namespace nuh find
-no-ns-gate-acl = No gate ACL fi dis namespace
 runtime-claim-persisted = Owner write to config in Zion.
 runtime-already-claimed = Runtime already claim.
 
 
 # Namespace creation (:create)
-namespace-created = Namespace born inna dis livity
-namespace-already-exists = Namespace already deh inna dis realm
-namespace-name-reserved = Dat namespace name is irie an reserved
-namespace-create-denied = Namespace creation: Babylon nah allow dis
-namespace-create-usage = Riddim: :create <name>
 crud-message-received = CRUD message come inna Zion
 crud-acl-updated = Root transport ACL rise up new
 

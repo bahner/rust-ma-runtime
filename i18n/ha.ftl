@@ -62,18 +62,11 @@ runtime-claimed = An yi rajistar runtime.
 refuse-delete-root = Ina ƙin a gaba ɗaya share abin da ake bukata na asali
 no-root-acl = Ba a saita ACL na asali ba — runtime yana aiki ba tare da sarrafa shiga ba
 acl-owners-access = An ba mai kiran damar shiga a matsayin memba na +owners
-namespace-not-found = Ba a sami namespace ba
-no-ns-gate-acl = Ba a saita ACL na kofar shiga don wannan namespace ba
 runtime-claim-persisted = An rubuta mai shi zuwa saiti.
 runtime-already-claimed = An riga an yi rajistar runtime.
 
 
 # Namespace creation (:create)
-namespace-created = Sunan sarari ya kasance
-namespace-already-exists = Sunan sarari ya riga ya kasance
-namespace-name-reserved = Sunan sarari an ware shi
-namespace-create-denied = Ƙirƙirar sarari: an hana samun dama
-namespace-create-usage = Amfani: :create <suna>
 crud-message-received = An karɓi saƙon CRUD
 crud-acl-updated = An sabunta ACL na jigilar tushe
 

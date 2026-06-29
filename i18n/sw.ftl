@@ -62,18 +62,11 @@ runtime-claimed = Runtime imesajiliwa.
 refuse-delete-root = Ninakataa kabisa kufuta kipengele cha msingi kinachohitajika
 no-root-acl = ACL ya msingi haijasanidiwa — runtime inafanya kazi bila udhibiti wa upatikanaji
 acl-owners-access = Mpigaji simu amepewa ruhusa kama mwanachama wa +owners
-namespace-not-found = Nafasijalina haikupatikana
-no-ns-gate-acl = ACL ya lango haijasanidiwa kwa nafasijalina hii
 runtime-claim-persisted = Mmiliki ameandikwa kwenye usanidi.
 runtime-already-claimed = Runtime tayari imesajiliwa.
 
 
 # Namespace creation (:create)
-namespace-created = Nafasi ya jina imeundwa
-namespace-already-exists = Nafasi ya jina tayari ipo
-namespace-name-reserved = Jina la nafasi ya jina limetengwa
-namespace-create-denied = Uundaji wa nafasi ya jina: ufikiaji umekataliwa
-namespace-create-usage = Matumizi: :create <jina>
 crud-message-received = Ujumbe wa CRUD umepokelewa
 crud-acl-updated = ACL ya usafirishaji mzizi imesasishwa
 

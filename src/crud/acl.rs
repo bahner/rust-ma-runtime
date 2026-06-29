@@ -5,8 +5,8 @@ use tracing::info;
 use crate::entity::IpldLink;
 
 use super::helpers::{
-    acl_cache_update, is_cidv1, load_manifest, send_crud_i18n_error, send_crud_ok_cid,
-    send_crud_reply_cbor, with_manifest_crud,
+    acl_cache_update, load_manifest, send_crud_i18n_error, send_crud_ok_cid, send_crud_reply_cbor,
+    strip_brackets, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -54,12 +54,14 @@ pub(super) async fn handle_root_acls(
             send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(link.cid.clone())).await
         }
         // Set a named ACL by CID.
-        ([acl_name], Some(""), [CborValue::Text(cid)]) => {
-            if !is_cidv1(cid) {
-                return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await;
-            }
+        ([acl_name], Some(""), [CborValue::Text(raw)]) => {
+            let cid = match strip_brackets(raw) {
+                Some(c) => c.to_string(),
+                None => {
+                    return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await
+                }
+            };
             let acl_name = acl_name.clone();
-            let cid = cid.clone();
             let new_root = with_manifest_crud(ctx, |m| {
                 m.acls.insert(acl_name.clone(), IpldLink::new(&cid));
                 Ok(())
@@ -102,11 +104,13 @@ pub(super) async fn handle_root_acl(
                 .unwrap_or_default();
             send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(cid)).await
         }
-        (Some(""), [CborValue::Text(cid_str)]) => {
-            if !is_cidv1(cid_str) {
-                return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await;
-            }
-            let cid = cid_str.clone();
+        (Some(""), [CborValue::Text(raw)]) => {
+            let cid = match strip_brackets(raw) {
+                Some(c) => c.to_string(),
+                None => {
+                    return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await
+                }
+            };
             let acl_map = crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &cid)
                 .await
                 .with_context(|| format!("loading root ACL from {cid}"))?;

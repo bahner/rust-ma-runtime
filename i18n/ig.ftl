@@ -62,18 +62,11 @@ runtime-claimed = Derewo runtime.
 refuse-delete-root = Ọ dịghị maka ihichapụ ihe ndabere dị mkpa n'ikwuọ ókè
 no-root-acl = ACL ndabere na-atọgbue — runtime na-arụ ọrụ na-enweghị njikwa nnweta
 acl-owners-access = E nyere onye na-akpọ ohere dị ka onye otu +owners
-namespace-not-found = Enweghị aha oghere
-no-ns-gate-acl = ACL ọnụ ụzọ na-atọgbue maka aha oghere a
 runtime-claim-persisted = Odeere nwe onye na nhazi.
 runtime-already-claimed = Ederewo runtime tupu ugbu a.
 
 
 # Namespace creation (:create)
-namespace-created = Ọ haziri namespace
-namespace-already-exists = Namespace adịlarị
-namespace-name-reserved = Aha namespace echekwara
-namespace-create-denied = Ịmepụta namespace: ọ jụrụ nnabata
-namespace-create-usage = Ojiji: :create <aha>
 crud-message-received = Enwetara ozi CRUD
 crud-acl-updated = ACL nkwurita isi emegharịrị
 

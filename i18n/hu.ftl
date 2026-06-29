@@ -62,18 +62,11 @@ runtime-claimed = A runtime regisztrálva.
 refuse-delete-root = Határozottan megtagadom a szükséges gyökérelem törlését
 no-root-acl = Nincs gyökér-ACL konfigurálva — a runtime hozzáférés-vezérlés nélkül működik
 acl-owners-access = A hívónak hozzáférést kaptott +owners tagjaként
-namespace-not-found = A névtér nem található
-no-ns-gate-acl = Ehhez a névtérhez nincs gate-ACL konfigurálva
 runtime-claim-persisted = A tulajdonos beírva a konfigurációba.
 runtime-already-claimed = A runtime már regisztrálva van.
 
 
 # Namespace creation (:create)
-namespace-created = Névtér létrehozva
-namespace-already-exists = A névtér már létezik
-namespace-name-reserved = A névtér neve foglalt
-namespace-create-denied = Névtér létrehozás: hozzáférés megtagadva
-namespace-create-usage = Használat: :create <név>
 crud-message-received = CRUD üzenet érkezett
 crud-acl-updated = Gyökér-átviteli ACL frissítve
 

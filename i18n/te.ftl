@@ -62,18 +62,11 @@ runtime-claimed = Runtime నమోదు చేయబడింది.
 refuse-delete-root = అవసరమైన రూట్ మూలకాన్ని తొలగించడానికి దృఢంగా నిరాకరిస్తోంది
 no-root-acl = రూట్ ACL కాన్ఫిగర్ చేయబడలేదు — runtime యాక్సెస్ నియంత్రణ లేకుండా నడుస్తోంది
 acl-owners-access = కాలర్‌కు +owners సభ్యుడిగా యాక్సెస్ మంజూరు చేయబడింది
-namespace-not-found = namespace కనుగొనబడలేదు
-no-ns-gate-acl = ఈ namespace కు గేట్ ACL కాన్ఫిగర్ చేయబడలేదు
 runtime-claim-persisted = యజమాని కాన్ఫిగరేషన్‌లో వ్రాయబడ్డారు.
 runtime-already-claimed = Runtime ఇప్పటికే నమోదు చేయబడింది.
 
 
 # Namespace creation (:create)
-namespace-created = namespace సృష్టించబడింది
-namespace-already-exists = namespace ఇప్పటికే ఉంది
-namespace-name-reserved = namespace పేరు రిజర్వు చేయబడింది
-namespace-create-denied = namespace సృష్టి: యాక్సెస్ నిరాకరించబడింది
-namespace-create-usage = వాడకం: :create <పేరు>
 crud-message-received = CRUD సందేశం అందుకోబడింది
 crud-acl-updated = రూట్ ట్రాన్స్‌పోర్ట్ ACL నవీకరించబడింది
 

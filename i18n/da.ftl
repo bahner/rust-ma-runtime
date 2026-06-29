@@ -62,18 +62,11 @@ runtime-claimed = Runtime registreret.
 refuse-delete-root = Nægter bestemt at slette et påkrævet rodelement
 no-root-acl = Ingen rod-ACL konfigureret — runtime kører uden adgangskontrol
 acl-owners-access = Den kaldende part fik adgang som medlem af +owners
-namespace-not-found = Navnerum ikke fundet
-no-ns-gate-acl = Ingen gate-ACL konfigureret for dette navnerum
 runtime-claim-persisted = Ejer skrevet til konfiguration.
 runtime-already-claimed = Runtime er allerede registreret.
 
 
 # Namespace creation (:create)
-namespace-created = Navnerum oprettet
-namespace-already-exists = Navnerum eksisterer allerede
-namespace-name-reserved = Navnerumsnavn er reserveret
-namespace-create-denied = Navnerum oprettelse: adgang nægtet
-namespace-create-usage = Brug: :create <navn>
 crud-message-received = CRUD-besked modtaget
 crud-acl-updated = Root-transport-ACL opdateret
 

@@ -62,18 +62,11 @@ runtime-claimed = Runtime ayaa diiwaangeliyay.
 refuse-delete-root = Waxaan si xooggan u diiday in la tirtiro curiyaha xidiga ee loo baahan yahay
 no-root-acl = ACL-ka xidiga lama habayn — runtime wuxuu ku shaqeynayaa la'aanta xukumida gelitaanka
 acl-owners-access = Wicitaanaha waxa la siiyey gelitaan ahaan xubin +owners
-namespace-not-found = Magaca-goobta lama helin
-no-ns-gate-acl = ACL-ka iridda lama habayn magaca-goobtan
 runtime-claim-persisted = Milkiilaha ayaa habaynta lagu qoray.
 runtime-already-claimed = Runtime horaan ayaa la diiwaangeliyay.
 
 
 # Namespace creation (:create)
-namespace-created = Magaca-goobta la abuuray
-namespace-already-exists = Magaca-goobta horeba jira
-namespace-name-reserved = Magaca magaca-goobta waa la kaydiyay
-namespace-create-denied = Abuurista magaca-goobta: gelitaanka waa la diiday
-namespace-create-usage = Isticmaalka: :create <magac>
 crud-message-received = Fariin CRUD la helay
 crud-acl-updated = ACL gaadhsiinta xidiga waa la cusboonaysiiyay
 

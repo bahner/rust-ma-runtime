@@ -62,18 +62,11 @@ runtime-claimed = Runtime 已註冊。
 refuse-delete-root = 堅決拒絕刪除所需根元素
 no-root-acl = 未設定根 ACL — runtime 在無存取控制的情況下執行
 acl-owners-access = 呼叫方以 +owners 成員身份獲得存取權限
-namespace-not-found = 未找到命名空間
-no-ns-gate-acl = 此命名空間未設定閘道 ACL
 runtime-claim-persisted = 擁有者已寫入設定。
 runtime-already-claimed = Runtime 已註冊。
 
 
 # Namespace creation (:create)
-namespace-created = 命名空間已建立
-namespace-already-exists = 命名空間已存在
-namespace-name-reserved = 命名空間名稱已被保留
-namespace-create-denied = 建立命名空間：存取被拒絕
-namespace-create-usage = 用法：:create <名稱>
 crud-message-received = 收到 CRUD 訊息
 crud-acl-updated = 根傳輸 ACL 已更新
 

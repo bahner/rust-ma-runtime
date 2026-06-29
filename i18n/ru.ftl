@@ -62,18 +62,11 @@ runtime-claimed = Runtime зарегистрирован.
 refuse-delete-root = Категорически отказываюсь удалять обязательный корневой элемент
 no-root-acl = Корневой ACL не настроен — runtime работает без контроля доступа
 acl-owners-access = Вызывающему предоставлен доступ как члену группы +owners
-namespace-not-found = Пространство имён не найдено
-no-ns-gate-acl = ACL шлюза не настроен для этого пространства имён
 runtime-claim-persisted = Владелец записан в конфигурацию.
 runtime-already-claimed = Runtime уже зарегистрирован.
 
 
 # Namespace creation (:create)
-namespace-created = Пространство имён создано
-namespace-already-exists = Пространство имён уже существует
-namespace-name-reserved = Имя пространства имён зарезервировано
-namespace-create-denied = Создание пространства имён: доступ запрещён
-namespace-create-usage = Использование: :create <имя>
 crud-message-received = Получено CRUD-сообщение
 crud-acl-updated = Корневой транспортный ACL обновлён
 

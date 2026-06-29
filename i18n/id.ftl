@@ -62,18 +62,11 @@ runtime-claimed = Runtime terdaftar.
 refuse-delete-root = Menolak keras untuk menghapus elemen root yang diperlukan
 no-root-acl = ACL root tidak dikonfigurasi — runtime berjalan tanpa kontrol akses
 acl-owners-access = Pemanggil diberi akses sebagai anggota +owners
-namespace-not-found = Namespace tidak ditemukan
-no-ns-gate-acl = ACL gate tidak dikonfigurasi untuk namespace ini
 runtime-claim-persisted = Pemilik ditulis ke konfigurasi.
 runtime-already-claimed = Runtime sudah terdaftar.
 
 
 # Namespace creation (:create)
-namespace-created = Ruang nama dibuat
-namespace-already-exists = Ruang nama sudah ada
-namespace-name-reserved = Nama ruang nama sudah dipesan
-namespace-create-denied = Pembuatan namespace: akses ditolak
-namespace-create-usage = Penggunaan: :create <nama>
 crud-message-received = Pesan CRUD diterima
 crud-acl-updated = ACL transport root diperbarui
 

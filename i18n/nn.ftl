@@ -64,18 +64,11 @@ runtime-claimed = Runtime registrert.
 refuse-delete-root = Nektar bestemt å slette påkravd rotelement
 no-root-acl = Ingen rot-ACL er konfigurert — køyretida opererer utan tilgangskontroll
 acl-owners-access = Innringar fekk tilgang som medlem av +owners
-namespace-not-found = Namnerommet vart ikkje funne
-no-ns-gate-acl = Ingen port-ACL er konfigurert for dette namnerommet
 runtime-claim-persisted = Eigar skrive til konfigurasjon.
 runtime-already-claimed = Runtime er allereie registrert.
 
 
 # Namespace creation (:create)
-namespace-created = Namnerom oppretta
-namespace-already-exists = Namnerommet eksisterer allereie
-namespace-name-reserved = Reservert namneromnamn
-namespace-create-denied = Namnerom oppretting: tilgang nekta
-namespace-create-usage = Bruk: :create <namn>
 
 # CRUD validation errors
 blob-value-ipfs-path = blob-verdien må vera ein IPFS-sti (/ipfs/, /ipns/ eller /ipld/)

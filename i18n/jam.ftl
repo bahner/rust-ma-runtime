@@ -62,18 +62,11 @@ runtime-claimed = Runtime claim.
 refuse-delete-root = Steadfastly refuse fi delete required root element
 no-root-acl = No root ACL configure — runtime a work without access control
 acl-owners-access = Di calla get access as memba a +owners
-namespace-not-found = Namespace nuh find
-no-ns-gate-acl = No gate ACL configure fi dis namespace
 runtime-claim-persisted = Owner write to config.
 runtime-already-claimed = Runtime already claim.
 
 
 # Namespace creation (:create)
-namespace-created = Namespace mek
-namespace-already-exists = Namespace deh deh already
-namespace-name-reserved = Namespace name taken already
-namespace-create-denied = Namespace create: access deny
-namespace-create-usage = How fi use: :create <name>
 crud-message-received = CRUD mesij receive
 crud-acl-updated = Root transport ACL update
 

@@ -9,11 +9,11 @@
 //!
 //! All replies use `application/x-ma-crud-reply`.
 
+mod acl;
 mod config;
 mod entities;
 mod helpers;
 mod kinds;
-mod namespaces;
 
 use std::sync::Arc;
 
@@ -41,8 +41,8 @@ pub struct CrudHandlerCtx<'a> {
     pub entity_registry: EntityRegistry,
     pub kind_registry: KindRegistry,
     pub shared_config: Arc<RwLock<ma_core::Config>>,
-    /// Namespace ACL cache — maps `"<ns>.acl"` and `"<ns>.acls.<name>"` to their
-    /// `AclMap`s for zero-overhead lookup at call time.
+    /// Named ACL cache — maps `"acls.<name>"` to its `AclMap` for
+    /// zero-overhead lookup at call time.
     pub acl_cache: AclCache,
     /// Shared root transport ACL — owner may update at runtime via `:acl: <cid>`.
     pub root_acl: SharedAcl,
@@ -112,8 +112,8 @@ async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx<'_
         }
         "kinds" => kinds::handle_kinds_ns(message, &rest, tail, args, reply_type, ctx).await,
         "config" => config::handle_config_ns(message, &rest, tail, args, reply_type, ctx).await,
-        "acl" => namespaces::handle_root_acl(message, tail, args, reply_type, ctx).await,
-        "acls" => namespaces::handle_root_acls(message, &rest, tail, args, reply_type, ctx).await,
+        "acl" => acl::handle_root_acl(message, tail, args, reply_type, ctx).await,
+        "acls" => acl::handle_root_acls(message, &rest, tail, args, reply_type, ctx).await,
         // Unknown first segment: treat the full path as a config key path.
         // e.g. :owners → config["owners"], :foo.owners → config["foo"]["owners"]
         _ => {

@@ -62,18 +62,11 @@ runtime-claimed = Runtime registrerad.
 refuse-delete-root = Vägrar bestämt att ta bort ett obligatoriskt rotelement
 no-root-acl = Ingen rot-ACL konfigurerad — runtime körs utan åtkomstkontroll
 acl-owners-access = Anroparen beviljades åtkomst som medlem i +owners
-namespace-not-found = Namnrymd ej hittad
-no-ns-gate-acl = Ingen gate-ACL konfigurerad för denna namnrymd
 runtime-claim-persisted = Ägare skriven till konfiguration.
 runtime-already-claimed = Runtime är redan registrerad.
 
 
 # Namespace creation (:create)
-namespace-created = Namnrymd skapad
-namespace-already-exists = Namnrymd finns redan
-namespace-name-reserved = Namnrymdsnamnet är reserverat
-namespace-create-denied = Skapa namnrymd: åtkomst nekad
-namespace-create-usage = Användning: :create <namn>
 crud-message-received = CRUD-meddelande mottaget
 crud-acl-updated = Root-transport-ACL uppdaterad
 

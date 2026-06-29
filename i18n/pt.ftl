@@ -62,18 +62,11 @@ runtime-claimed = Runtime registado.
 refuse-delete-root = Recuso-me firmemente a eliminar um elemento raiz necessário
 no-root-acl = Nenhuma ACL raiz configurada — o runtime opera sem controlo de acesso
 acl-owners-access = O chamador obteve acesso como membro de +owners
-namespace-not-found = Espaço de nomes não encontrado
-no-ns-gate-acl = Nenhuma ACL de porta configurada para este espaço de nomes
 runtime-claim-persisted = Proprietário escrito na configuração.
 runtime-already-claimed = Runtime já registado.
 
 
 # Namespace creation (:create)
-namespace-created = Espaço de nomes criado
-namespace-already-exists = Espaço de nomes já existe
-namespace-name-reserved = Nome de espaço de nomes reservado
-namespace-create-denied = Criação de espaço de nomes: acesso negado
-namespace-create-usage = Uso: :create <nome>
 crud-message-received = Mensagem CRUD recebida
 crud-acl-updated = ACL de transporte raiz atualizada
 

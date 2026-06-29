@@ -4,12 +4,12 @@ use ciborium::Value as CborValue;
 use crate::entity::{IpldLink, KindNode};
 
 use super::helpers::{
-    is_cidv1, load_manifest, send_crud_i18n_error, send_crud_ok, send_crud_ok_cid,
-    send_crud_reply_cbor, with_manifest_crud,
+    load_manifest, send_crud_i18n_error, send_crud_ok, send_crud_ok_cid, send_crud_reply_cbor,
+    strip_brackets, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
-// ── Kinds namespace ────────────────────────────────────────────────────────────
+// ── Kinds handler ────────────────────────────────────────────────────────────
 
 /// Handle `:kinds` CRUD operations.
 ///
@@ -48,13 +48,15 @@ pub(super) async fn handle_kinds_ns(
         (Some(""), [CborValue::Array(items)]) => {
             let items = items.clone();
             match items.as_slice() {
-                [CborValue::Text(protocol), CborValue::Text(cid_str)] => {
-                    if !is_cidv1(cid_str) {
-                        return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required")
-                            .await;
-                    }
+                [CborValue::Text(protocol), CborValue::Text(raw)] => {
+                    let cid = match strip_brackets(raw) {
+                        Some(c) => c.to_string(),
+                        None => {
+                            return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required")
+                                .await
+                        }
+                    };
                     let protocol = protocol.clone();
-                    let cid = cid_str.clone();
                     let new_root = with_manifest_crud(ctx, |m| {
                         m.kinds.insert_protocol(&protocol, IpldLink::new(&cid));
                         Ok(())

@@ -62,18 +62,11 @@ runtime-claimed = Runtime galmeeffame.
 refuse-delete-root = Iddoo jalqabaa barbaachisaa haquu cimsinaan didduu
 no-root-acl = ACL jalqabaa hin qindaa'ne — runtime to'annoo seensaa malee hojjachaa jira
 acl-owners-access = Waamamtaan mirga +owners miseensa ta'uun argateera
-namespace-not-found = Maqaa iddoo hin argamne
-no-ns-gate-acl = Maqaa iddoo kanaaf ACL balbala hin qindaa'ne
 runtime-claim-persisted = Abbayyaan qindaa'ina irratti barreeffame.
 runtime-already-claimed = Runtime dursee galmeeffameera.
 
 
 # Namespace creation (:create)
-namespace-created = Namespace uumamee
-namespace-already-exists = Namespace dursaa jira
-namespace-name-reserved = Maqaa namespace kabirfame
-namespace-create-denied = Namespace uumuu: seenuu dhorkaame
-namespace-create-usage = Itti-fayyadama: :create <maqaa>
 crud-message-received = Ergaa CRUD fudhatame
 crud-acl-updated = ACL geejjibaa bu'uuraa haaromfame
 

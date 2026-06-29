@@ -226,7 +226,7 @@ async fn main() -> Result<()> {
 
     // Convert endpoint to Arc so it can be shared across tokio::spawn tasks.
     // All service() registrations are complete at this point.
-    let endpoint: Arc<dyn ma_core::MaEndpoint> = Arc::from(endpoint);
+    let mut endpoint: Arc<dyn ma_core::MaEndpoint> = Arc::from(endpoint);
 
     // ── Own DID document (ma extension uses protocol + runtime link) ─────────
     // root_cid priority: --root-cid CLI > --bootstrap generated CID > IPNS resolution
@@ -883,10 +883,18 @@ async fn main() -> Result<()> {
     }
 
     info!("{}", i18n::t("closing-endpoint"));
-    // Arc<dyn MaEndpoint> cannot call close() (&mut self) directly.
-    // Dropping the Arc signals shutdown; spawned reply tasks will complete or
-    // be cleaned up when the process exits.
-    drop(endpoint);
+    // Wait up to 10 s for in-flight delivery tasks that hold Arc clones to
+    // release them, then unwrap to get &mut and call close() gracefully.
+    let close_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while Arc::strong_count(&endpoint) > 1 && tokio::time::Instant::now() < close_deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    match Arc::get_mut(&mut endpoint) {
+        Some(ep) => ep.close().await,
+        None => {
+            warn!("endpoint still held by in-flight tasks after 10 s; dropping without graceful close");
+        }
+    }
     info!("{}", i18n::t("shutdown-complete"));
     Ok(())
 }

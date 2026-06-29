@@ -62,18 +62,11 @@ runtime-claimed = Runtime पंजीकृत हुआ।
 refuse-delete-root = आवश्यक रूट तत्व को हटाने से दृढ़तापूर्वक इनकार
 no-root-acl = रूट ACL कॉन्फ़िगर नहीं है — runtime बिना एक्सेस नियंत्रण के चल रहा है
 acl-owners-access = कॉलर को +owners के सदस्य के रूप में पहुँच दी गई
-namespace-not-found = नेमस्पेस नहीं मिला
-no-ns-gate-acl = इस नेमस्पेस के लिए गेट ACL कॉन्फ़िगर नहीं है
 runtime-claim-persisted = स्वामी कॉन्फ़िगरेशन में लिखा गया।
 runtime-already-claimed = Runtime पहले से पंजीकृत है।
 
 
 # Namespace creation (:create)
-namespace-created = नेमस्पेस बनाया गया
-namespace-already-exists = नेमस्पेस पहले से मौजूद है
-namespace-name-reserved = नेमस्पेस का नाम आरक्षित है
-namespace-create-denied = नेमस्पेस बनाना: पहुंच अस्वीकृत
-namespace-create-usage = उपयोग: :create <नाम>
 crud-message-received = CRUD संदेश प्राप्त
 crud-acl-updated = रूट ट्रान्सपोर्ट ACL अपडेट हुआ
 

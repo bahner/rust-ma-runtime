@@ -62,18 +62,11 @@ runtime-claimed = Runtime registriert.
 refuse-delete-root = Weigere mich strikt, ein erforderliches Wurzelelement zu löschen
 no-root-acl = Keine Root-ACL konfiguriert — Runtime läuft ohne Zugangskontrolle
 acl-owners-access = Aufrufer erhielt Zugriff als Mitglied von +owners
-namespace-not-found = Namensraum nicht gefunden
-no-ns-gate-acl = Keine Gate-ACL für diesen Namensraum konfiguriert
 runtime-claim-persisted = Eigentümer in Konfiguration geschrieben.
 runtime-already-claimed = Runtime wurde bereits registriert.
 
 
 # Namespace creation (:create)
-namespace-created = Namensraum erstellt
-namespace-already-exists = Namensraum existiert bereits
-namespace-name-reserved = Namensraumname ist reserviert
-namespace-create-denied = Namensraum erstellen: Zugriff verweigert
-namespace-create-usage = Verwendung: :create <Name>
 crud-message-received = CRUD-Nachricht empfangen
 crud-acl-updated = Root-Transport-ACL aktualisiert
 

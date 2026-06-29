@@ -62,18 +62,11 @@ runtime-claimed = Runtime skráð.
 refuse-delete-root = Neitari ákveðið at strika kravd rótareindir
 no-root-acl = Ongin rót-ACL stilltur — runtime keyrir uttan atgongustýring
 acl-owners-access = Kallarin fekk atgongd sum limur av +owners
-namespace-not-found = Navnarúm ikki funnið
-no-ns-gate-acl = Ongin gate-ACL stilltur fyri hetta navnarúmið
 runtime-claim-persisted = Eigari skrivað til stillingar.
 runtime-already-claimed = Runtime er longu skráð.
 
 
 # Namespace creation (:create)
-namespace-created = Navnaróm stovnað
-namespace-already-exists = Navnaróm er longu til
-namespace-name-reserved = Navnarómsnavnið er frátekt
-namespace-create-denied = Stovnan navnaróm: atgongd nektað
-namespace-create-usage = Nýtsla: :create <navn>
 crud-message-received = CRUD-boð móttikið
 crud-acl-updated = Root-transport-ACL uppfært
 

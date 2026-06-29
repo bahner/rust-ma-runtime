@@ -7,7 +7,7 @@ use crate::entity::{EntityNode, IpldLink};
 
 use super::helpers::{
     load_manifest, register_entity_plugin, send_crud_data_cbor, send_crud_data_dag_cbor,
-    send_crud_i18n_error, send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid,
+    send_crud_i18n_error, send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, strip_brackets,
     with_manifest_crud,
 };
 use super::CrudHandlerCtx;
@@ -30,7 +30,7 @@ async fn check_entity_management_cap(
         })
 }
 
-// ── Entities namespace ─────────────────────────────────────────────────────────
+// ── Entities handler ─────────────────────────────────────────────────────────
 
 pub(super) async fn handle_entities_ns(
     message: &ma_core::Message,
@@ -91,7 +91,7 @@ async fn handle_single_entity(
             info!(name = %name, cid = %new_root, "{}", crate::i18n::t("entity-deleted"));
             send_crud_ok(message, reply_type, ctx).await
         }
-        (Some(""), [CborValue::Text(path)]) => {
+        (Some(""), [CborValue::Text(raw)]) => {
             // Upsert entity — caller needs the entity's `kind` as a capability in root ACL.
             // The kind is read from the EntityNode itself; no separate state required.
             let name = name.as_str();
@@ -108,7 +108,13 @@ async fn handle_single_entity(
                 )
                 .await;
             }
-            let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, path)
+            let path = match strip_brackets(raw) {
+                Some(c) => c.to_string(),
+                None => {
+                    return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await
+                }
+            };
+            let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, &path)
                 .await
                 .with_context(|| format!("resolving path {path}"))?;
             let cid = cid.as_str();

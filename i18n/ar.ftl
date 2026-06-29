@@ -62,18 +62,11 @@ runtime-claimed = تم تسجيل runtime.
 refuse-delete-root = أرفض رفضًا قاطعًا حذف عنصر الجذر المطلوب
 no-root-acl = لم يتم تكوين ACL الجذر — يعمل runtime بدون التحكم في الوصول
 acl-owners-access = مُنح المتصل وصولاً بوصفه عضواً في +owners
-namespace-not-found = لم يتم العثور على مساحة الاسم
-no-ns-gate-acl = لم يتم تكوين ACL للبوابة لهذه مساحة الاسم
 runtime-claim-persisted = تمت كتابة المالك في التكوين.
 runtime-already-claimed = تم تسجيل runtime مسبقًا.
 
 
 # Namespace creation (:create)
-namespace-created = تم إنشاء مساحة الاسم
-namespace-already-exists = مساحة الاسم موجودة بالفعل
-namespace-name-reserved = اسم مساحة الاسم محجوز
-namespace-create-denied = إنشاء مساحة الاسم: تم رفض الوصول
-namespace-create-usage = الاستخدام: :create <الاسم>
 crud-message-received = تم استقبال رسالة CRUD
 crud-acl-updated = تم تحديث ACL نقل الجذر
 

@@ -62,22 +62,10 @@ runtime-claimed = Runtime ተመዝግቧል።
 refuse-delete-root = አስፈላጊ ሥር ንጥረ-ነገርን ለመሰረዝ በጥብቅ ፈቃደኛ አይደለሁም
 no-root-acl = ሥር ACL አልተዋቀረም — runtime ያለ ተደራሽነት ቁጥጥር እየሰራ ነው
 acl-owners-access = ደዋዩ እንደ +owners አባል መዳረሻ ተሰጥቷል
-namespace-not-found = namespace አልተገኘም
-no-ns-gate-acl = ለዚህ namespace የጌት ACL አልተዋቀረም
 runtime-claim-persisted = ባለቤቱ ወደ ቅንብር ተፅፏል።
 runtime-already-claimed = Runtime ቀደም ሲል ተመዝግቧል።
-namespace-created = ናምስፔስ ተፈጥሯል
-namespace-already-exists = ናምስፔሱ አስቀድሞ አለ
-namespace-name-reserved = የናምስፔስ ስም የተያዘ ነው
-namespace-create-denied = ናምስፔስ መፍጠር፦ ፍቃድ ተከልክሏል
-namespace-create-usage = አጠቃቀም: :create <ስም>
 
 # Namespace creation (:create)
-namespace-created = ናምስፔስ ተፈጥሯል
-namespace-already-exists = ናምስፔሱ አስቀድሞ አለ
-namespace-name-reserved = የናምስፔስ ስም የተያዘ ነው
-namespace-create-denied = ናምስፔስ መፍጠር፦ ፍቃድ ተከልክሏል
-namespace-create-usage = አጠቃቀም: :create <ስም>
 crud-message-received = CRUD መልዕክት ተቀብሏል
 crud-acl-updated = Root transport ACL ታደሰ
 

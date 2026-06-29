@@ -62,18 +62,11 @@ runtime-claimed = Runtime नोंदवले.
 refuse-delete-root = आवश्यक मूळ घटक हटवण्यास ठामपणे नकार
 no-root-acl = मूळ ACL कॉन्फिगर केलेले नाही — runtime प्रवेश नियंत्रणाशिवाय चालत आहे
 acl-owners-access = कॉलरला +owners चा सदस्य म्हणून प्रवेश दिला गेला
-namespace-not-found = नेमस्पेस सापडले नाही
-no-ns-gate-acl = या नेमस्पेससाठी गेट ACL कॉन्फिगर नाही
 runtime-claim-persisted = मालक कॉन्फिगरेशनमध्ये लिहिला.
 runtime-already-claimed = Runtime आधीच नोंदवले आहे.
 
 
 # Namespace creation (:create)
-namespace-created = नेमस्पेस तयार केले
-namespace-already-exists = नेमस्पेस आधीच अस्तित्वात आहे
-namespace-name-reserved = नेमस्पेसचे नाव राखीव आहे
-namespace-create-denied = नेमस्पेस तयार करणे: प्रवेश नाकारला
-namespace-create-usage = वापर: :create <नाव>
 crud-message-received = CRUD संदेश प्राप्त झाला
 crud-acl-updated = रूट ट्रान्सपोर्ट ACL अपडेट केले
 

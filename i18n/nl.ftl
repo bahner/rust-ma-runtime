@@ -62,18 +62,11 @@ runtime-claimed = Runtime geregistreerd.
 refuse-delete-root = Weiger beslist een vereist rootelement te verwijderen
 no-root-acl = Geen root-ACL geconfigureerd — runtime werkt zonder toegangsbeheer
 acl-owners-access = Beller heeft toegang gekregen als lid van +owners
-namespace-not-found = Namespace niet gevonden
-no-ns-gate-acl = Geen gate-ACL geconfigureerd voor deze namespace
 runtime-claim-persisted = Eigenaar geschreven naar configuratie.
 runtime-already-claimed = Runtime is al geregistreerd.
 
 
 # Namespace creation (:create)
-namespace-created = Naamruimte aangemaakt
-namespace-already-exists = Naamruimte bestaat al
-namespace-name-reserved = Naamruimtenaam is gereserveerd
-namespace-create-denied = Naamruimte aanmaken: toegang geweigerd
-namespace-create-usage = Gebruik: :create <naam>
 crud-message-received = CRUD-bericht ontvangen
 crud-acl-updated = Root-transport-ACL bijgewerkt
 

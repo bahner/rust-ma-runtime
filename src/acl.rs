@@ -24,12 +24,7 @@ pub const OWNERS_PRINCIPAL: &str = "+owners";
 
 /// In-memory cache of named ACLs.
 ///
-/// Key conventions:
-/// | Key | Meaning |
-/// |-----|---------|
-/// | `"<ns>.acl"` | Namespace gate `AclMap` |
-/// | `"<ns>.acls.<name>"` | Namespace verb-ACL library entry |
-/// | `"acls.<name>"` | Root verb-ACL library entry |
+/// Key convention: `"acls.<name>"` → named ACL `AclMap`.
 pub type AclCache = Arc<RwLock<HashMap<String, AclMap>>>;
 
 /// Create a new empty [`AclCache`].

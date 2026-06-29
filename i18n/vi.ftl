@@ -62,18 +62,11 @@ runtime-claimed = Runtime đã được đăng ký.
 refuse-delete-root = Kiên quyết từ chối xóa phần tử root cần thiết
 no-root-acl = ACL root chưa được cấu hình — runtime đang chạy mà không có kiểm soát truy cập
 acl-owners-access = Người gọi được cấp quyền truy cập với tư cách thành viên +owners
-namespace-not-found = Không tìm thấy namespace
-no-ns-gate-acl = ACL cổng chưa được cấu hình cho namespace này
 runtime-claim-persisted = Chủ sở hữu đã được ghi vào cấu hình.
 runtime-already-claimed = Runtime đã được đăng ký rồi.
 
 
 # Namespace creation (:create)
-namespace-created = Namespace đã được tạo
-namespace-already-exists = Namespace đã tồn tại
-namespace-name-reserved = Tên namespace đã được đặt trước
-namespace-create-denied = Tạo namespace: từ chối truy cập
-namespace-create-usage = Cách dùng: :create <tên>
 crud-message-received = Nhận được tin nhắn CRUD
 crud-acl-updated = Đã cập nhật ACL vận chuyển gốc
 

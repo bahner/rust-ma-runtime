@@ -21,7 +21,7 @@ pub(super) fn parse_path(path: &str) -> Result<(&str, Vec<String>)> {
         .ok_or_else(|| anyhow!("CRUD path must start with '.' — got: {path}"))?;
     let (ns, rest_str) = body.split_once('.').unwrap_or((body, ""));
     if ns.is_empty() {
-        return Err(anyhow!("CRUD path has no namespace: {path}"));
+        return Err(anyhow!("CRUD path has no handler segment: {path}"));
     }
     let segs: Vec<String> = rest_str
         .split('.')
@@ -82,12 +82,12 @@ pub(super) fn decode_crud_payload(content: &[u8]) -> Result<CrudOp> {
     }
 }
 
-/// Return `true` if `s` is a bare `CIDv1` (multibase base32-lowercase, prefix `b`).
+/// Return the inner CID string if `s` is bracketed as `<cid>`, else `None`.
 ///
-/// `CIDv1` strings start with `b` (base32 lowercase multibase prefix) and are
-/// self-describing via the embedded multicodec.  `CIDv0` (`Qm…`) is rejected.
-pub(super) fn is_cidv1(s: &str) -> bool {
-    s.starts_with('b') && s.len() > 10
+/// Explicit `<brackets>` are required wherever a CID is expected — bare CID
+/// strings are treated as plain text and never auto-detected.
+pub(super) fn strip_brackets(s: &str) -> Option<&str> {
+    s.strip_prefix('<')?.strip_suffix('>')
 }
 
 // ── Manifest helpers ───────────────────────────────────────────────────────────

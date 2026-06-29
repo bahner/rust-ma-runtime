@@ -62,18 +62,11 @@ runtime-claimed = Runtime이 등록되었습니다.
 refuse-delete-root = 필요한 루트 요소 삭제를 단호히 거부합니다
 no-root-acl = 루트 ACL이 구성되지 않았습니다 — runtime이 접근 제어 없이 실행 중입니다
 acl-owners-access = 호출자가 +owners 구성원으로 접근 허가됨
-namespace-not-found = 네임스페이스를 찾을 수 없습니다
-no-ns-gate-acl = 이 네임스페이스에 게이트 ACL이 구성되지 않았습니다
 runtime-claim-persisted = 소유자가 설정에 기록되었습니다.
 runtime-already-claimed = Runtime이 이미 등록되어 있습니다.
 
 
 # Namespace creation (:create)
-namespace-created = 네임스페이스가 생성되었습니다
-namespace-already-exists = 네임스페이스가 이미 존재합니다
-namespace-name-reserved = 네임스페이스 이름이 예약되어 있습니다
-namespace-create-denied = 네임스페이스 생성: 접근 거부됨
-namespace-create-usage = 사용법: :create <이름>
 crud-message-received = CRUD 메시지 수신됨
 crud-acl-updated = 루트 전송 ACL 업데이트됨
 

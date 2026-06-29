@@ -62,18 +62,11 @@ runtime-claimed = Runtime reklamadu.
 refuse-delete-root = Resuzandu firmimenti eliminá elementu raiz obrigatóriu
 no-root-acl = Nenhun ACL raiz konfiguradu — runtime ta funcionandu sen kontrolu di asesu
 acl-owners-access = Chamador ten aksesu kumu membro di +owners
-namespace-not-found = Spasu di nomi ka atxadu
-no-ns-gate-acl = Nenhun ACL di portason konfiguradu pa esi spasu di nomi
 runtime-claim-persisted = Proprietáriu skrividu na konfigurason.
 runtime-already-claimed = Runtime ja reklamadu.
 
 
 # Namespace creation (:create)
-namespace-created = Namespace kriadu
-namespace-already-exists = Namespace ja ta la
-namespace-name-reserved = Nomi di namespace ta reservadu
-namespace-create-denied = Kriason di namespace: azesu ngadu
-namespace-create-usage = Uzu: :create <nomi>
 crud-message-received = Mensajen CRUD resibidu
 crud-acl-updated = ACL di transporte raiz atualizada
 

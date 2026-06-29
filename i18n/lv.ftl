@@ -62,18 +62,11 @@ runtime-claimed = Runtime reģistrēts.
 refuse-delete-root = Kategoriski atsakos dzēst nepieciešamo saknes elementu
 no-root-acl = Saknes ACL nav konfigurēts — runtime darbojas bez piekļuves kontroles
 acl-owners-access = Zvanītājam piešķirta piekļuve kā +owners dalībniekam
-namespace-not-found = Nosaukumvieta nav atrasta
-no-ns-gate-acl = Šai nosaukumvietai nav konfigurēts gate-ACL
 runtime-claim-persisted = Īpašnieks ierakstīts konfigurācijā.
 runtime-already-claimed = Runtime jau ir reģistrēts.
 
 
 # Namespace creation (:create)
-namespace-created = Nosaukumvieta izveidota
-namespace-already-exists = Nosaukumvieta jau pastāv
-namespace-name-reserved = Nosaukumvietas nosaukums ir rezervēts
-namespace-create-denied = Nosaukumvietas izveide: piekļuve liegta
-namespace-create-usage = Lietošana: :create <nosaukums>
 crud-message-received = Saņemts CRUD ziņojums
 crud-acl-updated = Saknes transporta ACL atjaunināts
 

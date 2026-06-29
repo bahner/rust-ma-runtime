@@ -124,13 +124,6 @@ const MESSAGE_IDS: &[&str] = &[
     // Client-facing CRUD / RPC error replies
     "refuse-delete-root",
     "no-root-acl",
-    "namespace-not-found",
-    "no-ns-gate-acl",
-    "namespace-created",
-    "namespace-already-exists",
-    "namespace-name-reserved",
-    "namespace-create-denied",
-    "namespace-create-usage",
     "rpc-not-text-atom",
     "rpc-unknown-verb",
     // Client-facing CRUD validation errors
