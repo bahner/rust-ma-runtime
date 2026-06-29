@@ -1,7 +1,7 @@
 protocol: /ma/root/0.0.1
 attributes:
   stateful: false
-  wasi: false
+  wasi: true
 api:
   - init
   - handle_cast

@@ -63,6 +63,8 @@ runtime:
     # ── Standard library kinds ────────────────────────────────────────────────
     # Root orchestrator — the only kind allowed to call ma_create_entity.
     /ma/root/0.0.1:
+      attributes:
+        wasi: true
       api:
         - init
         - handle_cast
@@ -195,7 +197,7 @@ runtime:
     root:
       kind: /ma/root/0.0.1
       behaviour:
-        /: bafybeihms53tqvf5aawpslx3h2c72y2guitsk6qph7cyialjka2dc2nnqe
+        /: bafybeic2opv5s2mmkkl25ekgp6ulun4erc63ocqp4tsilsjhl5wr5pfnvm
       acl: open
 
     # Counter — atomic integer with :get/:set/:inc/:dec/:reset verbs.
@@ -240,14 +242,14 @@ runtime:
     avatar:
       kind: /ma/avatar/0.0.1
       behaviour:
-        /: bafybeib3ljkgq34i5isujlrmac2vppyffwqsuybrs57aabm7x7d2p5xzd4
+        /: bafybeidttvnnz4twcyvv4o4bqohjxscnp2yfsagjwtmqcwfpfszg3dg6qy
       acl: open
 
     # Clearing house — placement authority for the runtime world.
     house:
       kind: /ma/house/0.0.1
       behaviour:
-        /: bafybeidjxj2d3sgr5bqxx265ynarjll7hw6qwbyah5ug35o3tiwze4ba4y
+        /: bafybeib3bfzxff4ykyru6iksr5obt3boxsfo6zzhi76sb5x7nd5w63ee4u
       acl: open
 
     # The common room.
@@ -255,5 +257,5 @@ runtime:
     room:
       kind: /ma/room/0.0.1
       behaviour:
-        /: bafybeiavhgs6zdpg3wscwopltimnh6pfhwsoc7izjnewxqefewlqfuhxga
+        /: bafybeiewmwsvzmxnfz7327ja4llidr4d5ghmnyptq7r6ovbqh2rw2zaybm
       acl: open
