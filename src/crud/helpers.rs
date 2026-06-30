@@ -33,51 +33,46 @@ pub(super) fn parse_path(path: &str) -> Result<(&str, Vec<String>)> {
 
 /// Decoded CRUD operation from a single incoming message payload.
 pub(super) enum CrudOp {
-    /// `[":get", ":path"]`
+    /// `[".path"]`
     Get(String),
-    /// `[":path", value]` — value is a CBOR scalar or IPFS path text
+    /// `[".path", value]` — value is a CBOR scalar or `<cid>` IPFS reference
     Set(String, CborValue),
-    /// `[":delete", ":path"]`
+    /// `[".path", ""]` — empty string value means delete
     Delete(String),
 }
 
 /// Decode a `application/x-ma-crud` payload.
 ///
-/// Payload must be a two-element CBOR array:
-/// - `[":get", ":path"]` → GET
-/// - `[":delete", ":path"]` → DELETE
-/// - `[":path", value]` → SET
+/// - `[".path"]`          → GET
+/// - `[".path", ""]`      → DELETE (empty string = delete)
+/// - `[".path", value]`   → SET (value is a CBOR scalar or `<cid>` IPFS reference)
 pub(super) fn decode_crud_payload(content: &[u8]) -> Result<CrudOp> {
     let val: CborValue =
         ciborium::de::from_reader(content).context("invalid CBOR in CRUD payload")?;
     let CborValue::Array(items) = val else {
-        return Err(anyhow!("CRUD payload must be a 2-element CBOR array"));
+        return Err(anyhow!("CRUD payload must be a CBOR array"));
     };
-    if items.len() != 2 {
-        return Err(anyhow!(
-            "CRUD payload must be a 2-element CBOR array, got {}",
-            items.len()
-        ));
-    }
-    let mut it = items.into_iter();
-    let first = it.next().expect("len==2");
-    let second = it.next().expect("len==2");
-    match first {
-        CborValue::Text(verb) if verb == ":get" => {
-            let CborValue::Text(path) = second else {
+    match items.len() {
+        1 => {
+            let CborValue::Text(path) = items.into_iter().next().unwrap() else {
                 return Err(anyhow!("CRUD get: path must be a text string"));
             };
             Ok(CrudOp::Get(path))
         }
-        CborValue::Text(verb) if verb == ":delete" => {
-            let CborValue::Text(path) = second else {
-                return Err(anyhow!("CRUD delete: path must be a text string"));
+        2 => {
+            let mut it = items.into_iter();
+            let first = it.next().unwrap();
+            let second = it.next().unwrap();
+            let CborValue::Text(path) = first else {
+                return Err(anyhow!("CRUD payload: path must be a text string"));
             };
-            Ok(CrudOp::Delete(path))
+            match second {
+                CborValue::Text(s) if s.is_empty() => Ok(CrudOp::Delete(path)),
+                value => Ok(CrudOp::Set(path, value)),
+            }
         }
-        CborValue::Text(path) => Ok(CrudOp::Set(path, second)),
-        _ => Err(anyhow!(
-            "CRUD payload: first element must be a text path or verb"
+        n => Err(anyhow!(
+            "CRUD payload must be a 1 or 2-element CBOR array, got {n}"
         )),
     }
 }
