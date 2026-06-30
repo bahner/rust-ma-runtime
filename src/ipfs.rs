@@ -10,6 +10,7 @@ use reqwest::multipart;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
@@ -446,7 +447,8 @@ fn rpc_endpoint_from_doc(doc: &Document) -> Option<String> {
 }
 
 /// Open an RPC outbox for `sender`.  Prefers a cached document (avoids IPNS
-/// re-resolution); falls back to the resolver if the cache misses.
+/// re-resolution); falls back to the resolver if the cache misses or if the
+/// cached endpoint is stale (connect times out or errors).
 async fn open_rpc_outbox_for_sender(
     ctx: &IpfsHandlerCtx<'_>,
     sender: &Did,
@@ -455,11 +457,23 @@ async fn open_rpc_outbox_for_sender(
 
     if let Some(ref doc) = cached_doc {
         if let Some(eid) = rpc_endpoint_from_doc(doc) {
-            return ctx
-                .endpoint
-                .connect_outbox(doc, &eid, &sender.base_id(), RPC_PROTOCOL_ID)
-                .await
-                .map_err(anyhow::Error::from);
+            // Use a short deadline so a stale cached endpoint ID does not block
+            // the handler indefinitely.
+            match tokio::time::timeout(
+                Duration::from_secs(5),
+                ctx.endpoint
+                    .connect_outbox(doc, &eid, &sender.base_id(), RPC_PROTOCOL_ID),
+            )
+            .await
+            {
+                Ok(Ok(outbox)) => return Ok(outbox),
+                Ok(Err(e)) => {
+                    warn!(error = %e, from = %sender.base_id(), "cached outbox connect failed, falling back to IPNS");
+                }
+                Err(_elapsed) => {
+                    warn!(from = %sender.base_id(), "cached outbox connect timed out, falling back to IPNS");
+                }
+            }
         }
     }
 
