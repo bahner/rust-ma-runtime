@@ -41,6 +41,7 @@ root-list-entities = #root: список сущностей
 root-delete-entity = #root: удалить сущность
 root-entity-updated = Манифест runtime обновлён
 entity-created = Сущность создана
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Сущность удалена
 entity-states-saving = Сохранение состояний сущностей в IPFS
 entity-state-saving = Сохранение состояния сущности

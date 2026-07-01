@@ -41,6 +41,7 @@ root-list-entities = #root: list enheder
 root-delete-entity = #root: slet enhed
 root-entity-updated = Runtime-manifest opdateret
 entity-created = Enhed oprettet
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Enhed slettet
 entity-states-saving = Gemmer enhedstilstande til IPFS
 entity-state-saving = Gemmer enhedstilstand

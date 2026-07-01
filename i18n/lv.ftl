@@ -41,6 +41,7 @@ root-list-entities = #root: entitāšu saraksts
 root-delete-entity = #root: dzēst entitāti
 root-entity-updated = Runtime manifests atjaunināts
 entity-created = Entitāte izveidota
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Entitāte dzēsta
 entity-states-saving = Saglabā entitāšu stāvokļus IPFS
 entity-state-saving = Saglabā entitātes stāvokli

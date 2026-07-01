@@ -1,13 +1,14 @@
 use anyhow::{anyhow, Context, Result};
 use ciborium::Value as CborValue;
+use std::sync::Arc;
 use tracing::info;
 
 use crate::acl::check_full;
 use crate::entity::{EntityNode, IpldLink};
 
 use super::helpers::{
-    load_manifest, register_entity_plugin, send_crud_data_cbor, send_crud_data_dag_cbor,
-    send_crud_i18n_error, send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, strip_brackets,
+    load_manifest, send_crud_data_cbor, send_crud_data_dag_cbor, send_crud_i18n_error,
+    send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, spawn_entity_reload, strip_brackets,
     with_manifest_crud,
 };
 use super::CrudHandlerCtx;
@@ -131,7 +132,17 @@ async fn handle_single_entity(
                 Ok(())
             })
             .await?;
-            register_entity_plugin(ctx, name, &entity_node).await;
+            spawn_entity_reload(
+                name.to_string(),
+                entity_node,
+                ctx.kind_registry.clone(),
+                ctx.stats.clone(),
+                Arc::from(ctx.kubo_rpc_url),
+                Arc::from(ctx.our_did),
+                ctx.envelope_tx.clone(),
+                ctx.entity_registry.clone(),
+                ctx.avatar_key,
+            );
             info!(name = %name, cid = %cid, "{}", crate::i18n::t("entity-created"));
             send_crud_ok_cid(message, reply_type, ctx, cid).await
         }

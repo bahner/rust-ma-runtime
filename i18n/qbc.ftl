@@ -43,6 +43,7 @@ root-list-entities = #root: kowl huunde
 root-delete-entity = #root: na-du huunde
 root-entity-updated = runtime manifest haaɗtaare
 entity-created = huunde mek finyish
+entity-reloaded = Entity plugin reloaded
 entity-deleted = huunde na-du finyish
 entity-states-saving = hol huunde ɗeɗɗe im IPFS
 entity-state-saving = hol huunde ɗeɗɗe

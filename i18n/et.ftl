@@ -41,6 +41,7 @@ root-list-entities = #root: olemite loend
 root-delete-entity = #root: kustuta olem
 root-entity-updated = Runtime manifest uuendatud
 entity-created = Olem loodud
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Olem kustutatud
 entity-states-saving = Olemite olekute salvestamine IPFS-i
 entity-state-saving = Olemi oleku salvestamine

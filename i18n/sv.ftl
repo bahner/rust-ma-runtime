@@ -41,6 +41,7 @@ root-list-entities = #root: lista entiteter
 root-delete-entity = #root: ta bort entitet
 root-entity-updated = Runtime-manifest uppdaterat
 entity-created = Entitet skapad
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Entitet borttagen
 entity-states-saving = Sparar entitetstillstånd till IPFS
 entity-state-saving = Sparar entitetstillstånd

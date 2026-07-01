@@ -141,70 +141,92 @@ pub(super) async fn acl_cache_update(ctx: &CrudHandlerCtx<'_>, cache_key: &str, 
     }
 }
 
-/// Load a plugin from `entity_node` and insert it into the entity registry
-/// (replacing any existing version).
-pub(super) async fn register_entity_plugin(
-    ctx: &CrudHandlerCtx<'_>,
-    name: &str,
-    entity_node: &EntityNode,
+/// Spawn an independent task that loads a plugin from `entity_node` and inserts
+/// it into the entity registry (replacing any existing version).
+///
+/// Returns immediately — the reload happens asynchronously so the CRUD event
+/// loop is never blocked by WASM fetching, instantiation, or `init()`.
+pub(super) fn spawn_entity_reload(
+    name: String,
+    entity_node: EntityNode,
+    kind_registry: crate::entity::KindRegistry,
+    stats: crate::status::SharedStats,
+    kubo_rpc_url: Arc<str>,
+    our_did: Arc<str>,
+    envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, crate::entity::SendEnvelope)>,
+    entity_registry: crate::plugin::EntityRegistry,
+    avatar_key: [u8; 32],
 ) {
-    // Look up the KindNode from the registry first.
-    let kind_node: Arc<KindNode> = {
-        let registry = ctx.kind_registry.read().await;
-        if let Some(k) = registry.get(&entity_node.kind).cloned() {
-            k
-        } else {
-            // Fall back: fetch from IPFS via the manifest.
-            let manifest = match load_manifest(ctx).await {
-                Ok(m) => m,
-                Err(e) => {
-                    warn!(name = %name, kind = %entity_node.kind, error = %e, "failed to load manifest for kind lookup");
-                    return;
-                }
-            };
-            let kind_link = if let Some(l) = manifest.kinds.get_protocol(&entity_node.kind) {
-                l.clone()
+    tokio::spawn(async move {
+        // Look up the KindNode from the kind registry.
+        let kind_node: Arc<KindNode> = {
+            let registry = kind_registry.read().await;
+            if let Some(k) = registry.get(&entity_node.kind).cloned() {
+                k
             } else {
-                warn!(name = %name, kind = %entity_node.kind, "kind not in manifest; cannot load entity");
-                return;
-            };
-            match crate::kubo::dag_get::<KindNode>(ctx.kubo_rpc_url, &kind_link.cid).await {
-                Ok(k) => Arc::new(k),
-                Err(e) => {
-                    warn!(name = %name, kind = %entity_node.kind, error = %e, "failed to fetch kind node; cannot load entity");
-                    return;
+                // Fall back: fetch from IPFS via the manifest.
+                drop(registry);
+                let root_cid = match stats.read().await.root_cid.clone() {
+                    Some(c) => c,
+                    None => {
+                        warn!(name = %name, kind = %entity_node.kind, "no root CID available; cannot reload entity");
+                        return;
+                    }
+                };
+                let manifest: crate::entity::RuntimeManifest =
+                    match crate::kubo::dag_get(&kubo_rpc_url, &root_cid).await {
+                        Ok(m) => m,
+                        Err(e) => {
+                            warn!(name = %name, kind = %entity_node.kind, error = %e, "failed to load manifest for kind lookup");
+                            return;
+                        }
+                    };
+                let kind_link = match manifest.kinds.get_protocol(&entity_node.kind) {
+                    Some(l) => l.clone(),
+                    None => {
+                        warn!(name = %name, kind = %entity_node.kind, "kind not in manifest; cannot reload entity");
+                        return;
+                    }
+                };
+                match crate::kubo::dag_get::<KindNode>(&kubo_rpc_url, &kind_link.cid).await {
+                    Ok(k) => Arc::new(k),
+                    Err(e) => {
+                        warn!(name = %name, kind = %entity_node.kind, error = %e, "failed to fetch kind node; cannot reload entity");
+                        return;
+                    }
                 }
             }
-        }
-    };
+        };
 
-    match crate::plugin::EntityPlugin::load(
-        name.to_string(),
-        entity_node,
-        &kind_node,
-        ctx.our_did,
-        ctx.kubo_rpc_url,
-        ctx.envelope_tx.clone(),
-        ctx.entity_registry.clone(),
-        ctx.avatar_key,
-    )
-    .await
-    {
-        Ok((ep, _lifecycle)) => {
-            ctx.entity_registry
-                .write()
-                .await
-                .insert(name.to_string(), Arc::new(ep));
+        match crate::plugin::EntityPlugin::load(
+            name.clone(),
+            &entity_node,
+            &kind_node,
+            &our_did,
+            &kubo_rpc_url,
+            envelope_tx,
+            entity_registry.clone(),
+            avatar_key,
+        )
+        .await
+        {
+            Ok((ep, _lifecycle)) => {
+                entity_registry
+                    .write()
+                    .await
+                    .insert(name.clone(), Arc::new(ep));
+                info!(name = %name, "{}", crate::i18n::t("entity-reloaded"));
+            }
+            Err(e) => {
+                warn!(
+                    name = %name,
+                    error = %e,
+                    "{}",
+                    crate::i18n::t("entity-load-failed")
+                );
+            }
         }
-        Err(e) => {
-            warn!(
-                name = %name,
-                error = %e,
-                "{}",
-                crate::i18n::t("entity-load-failed")
-            );
-        }
-    }
+    });
 }
 
 async fn update_stats_entities(ctx: &CrudHandlerCtx<'_>) {

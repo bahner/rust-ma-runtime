@@ -41,6 +41,7 @@ root-list-entities = #root: நிறுவன பட்டியல்
 root-delete-entity = #root: நிறுவனம் நீக்கு
 root-entity-updated = Runtime manifest புதுப்பிக்கப்பட்டது
 entity-created = நிறுவனம் உருவாக்கப்பட்டது
+entity-reloaded = Entity plugin reloaded
 entity-deleted = நிறுவனம் நீக்கப்பட்டது
 entity-states-saving = IPFS-ல் நிறுவன நிலைகள் சேமிக்கப்படுகின்றன
 entity-state-saving = நிறுவன நிலை சேமிக்கப்படுகிறது

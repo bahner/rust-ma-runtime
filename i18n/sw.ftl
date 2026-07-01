@@ -41,6 +41,7 @@ root-list-entities = #root: orodha ya huluki
 root-delete-entity = #root: futa huluki
 root-entity-updated = Manifesto ya runtime imesasishwa
 entity-created = Huluki imeundwa
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Huluki imefutwa
 entity-states-saving = Inahifadhi hali za huluki kwenye IPFS
 entity-state-saving = Inahifadhi hali ya huluki

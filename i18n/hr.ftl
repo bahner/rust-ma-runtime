@@ -41,6 +41,7 @@ root-list-entities = #root: popis entiteta
 root-delete-entity = #root: obriši entitet
 root-entity-updated = Runtime manifest ažuriran
 entity-created = Entitet stvoren
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Entitet obrisan
 entity-states-saving = Spremanje stanja entiteta u IPFS
 entity-state-saving = Spremanje stanja entiteta

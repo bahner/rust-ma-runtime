@@ -43,6 +43,7 @@ root-list-entities = #root: list entity dem
 root-delete-entity = #root: remove entity
 root-entity-updated = Runtime manifest update
 entity-created = Entity manifest
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Entity remove
 entity-states-saving = Saving entity states to IPFS
 entity-state-saving = Saving entity state

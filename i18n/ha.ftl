@@ -41,6 +41,7 @@ root-list-entities = #root: jerin abubuwa
 root-delete-entity = #root: share abu
 root-entity-updated = Bayanan runtime sun sabunta
 entity-created = An ƙirƙiri abu
+entity-reloaded = Entity plugin reloaded
 entity-deleted = An share abu
 entity-states-saving = Ana ajiye yanayin abubuwa zuwa IPFS
 entity-state-saving = Ana ajiye yanayin abu

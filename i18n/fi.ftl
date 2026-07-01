@@ -41,6 +41,7 @@ root-list-entities = #root: entiteettien luettelo
 root-delete-entity = #root: poista entiteetti
 root-entity-updated = Runtime-manifesti päivitetty
 entity-created = Entiteetti luotu
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Entiteetti poistettu
 entity-states-saving = Tallennetaan entiteettien tiloja IPFS:ään
 entity-state-saving = Tallennetaan entiteetin tilaa

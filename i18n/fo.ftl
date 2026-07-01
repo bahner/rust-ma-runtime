@@ -41,6 +41,7 @@ root-list-entities = #root: lista eindir
 root-delete-entity = #root: strika eindir
 root-entity-updated = Runtime-manifest dagfest
 entity-created = Eindir stovnað
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Eindir strikað
 entity-states-saving = Goymi eindarstøður til IPFS
 entity-state-saving = Goymi eindarstøðu

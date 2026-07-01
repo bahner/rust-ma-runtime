@@ -41,6 +41,7 @@ root-list-entities = #root: uhlu lwe-entity
 root-delete-entity = #root: susa i-entity
 root-entity-updated = I-manifest ye-runtime ibuyekeziwe
 entity-created = I-entity idalwe
+entity-reloaded = Entity plugin reloaded
 entity-deleted = I-entity isuswe
 entity-states-saving = Ilondoloza izimo ze-entity ku-IPFS
 entity-state-saving = Ilondoloza isimo se-entity

@@ -41,6 +41,7 @@ root-list-entities = #root: listează entitățile
 root-delete-entity = #root: șterge entitate
 root-entity-updated = Manifest runtime actualizat
 entity-created = Entitate creată
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Entitate ștearsă
 entity-states-saving = Salvare stări entități în IPFS
 entity-state-saving = Salvare stare entitate

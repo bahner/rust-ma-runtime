@@ -41,6 +41,7 @@ root-list-entities = #root: এন্টিটি তালিকা
 root-delete-entity = #root: এন্টিটি মুছুন
 root-entity-updated = Runtime ম্যানিফেস্ট আপডেট হয়েছে
 entity-created = এন্টিটি তৈরি হয়েছে
+entity-reloaded = Entity plugin reloaded
 entity-deleted = এন্টিটি মুছে গেছে
 entity-states-saving = IPFS-এ এন্টিটি অবস্থা সংরক্ষণ হচ্ছে
 entity-state-saving = এন্টিটি অবস্থা সংরক্ষণ হচ্ছে

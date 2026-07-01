@@ -41,6 +41,7 @@ root-list-entities = #root: ሀ/ሰዎች ዝርዝር
 root-delete-entity = #root: ሀ/ሰ ሰርዝ
 root-entity-updated = Runtime ማኒፌስቶ ዘምኗል
 entity-created = ሀ/ሰ ተፈጥሯል
+entity-reloaded = Entity plugin reloaded
 entity-deleted = ሀ/ሰ ተሰርዟል
 entity-states-saving = ሀ/ሰ ሁኔታዎች ወደ IPFS እየተቀመጡ ነው
 entity-state-saving = ሀ/ሰ ሁኔታ እየተቀመጠ ነው

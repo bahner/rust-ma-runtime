@@ -41,6 +41,7 @@ root-list-entities = #root: lista encji
 root-delete-entity = #root: usuń encję
 root-entity-updated = Manifest runtime zaktualizowany
 entity-created = Encja utworzona
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Encja usunięta
 entity-states-saving = Zapisywanie stanów encji do IPFS
 entity-state-saving = Zapisywanie stanu encji

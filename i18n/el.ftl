@@ -41,6 +41,7 @@ root-list-entities = #root: λίστα οντοτήτων
 root-delete-entity = #root: διαγραφή οντότητας
 root-entity-updated = Ενημερώθηκε το manifest runtime
 entity-created = Δημιουργήθηκε οντότητα
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Διαγράφηκε οντότητα
 entity-states-saving = Αποθήκευση καταστάσεων οντοτήτων στο IPFS
 entity-state-saving = Αποθήκευση κατάστασης οντότητας

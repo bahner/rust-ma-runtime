@@ -41,6 +41,7 @@ root-list-entities = #root: liiska shayada
 root-delete-entity = #root: tirtir shay
 root-entity-updated = Bayaanka runtime ayaa la cusboonaysiiyay
 entity-created = Shayga ayaa la sameeyay
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Shayga ayaa la tirtiray
 entity-states-saving = Xaaladaha shayada IPFS ayaa lagu kaydiyaa
 entity-state-saving = Xaaladda shayga ayaa la kaydiyaa

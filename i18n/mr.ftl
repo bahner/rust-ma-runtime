@@ -41,6 +41,7 @@ root-list-entities = #root: एंटिटी यादी
 root-delete-entity = #root: एंटिटी हटवा
 root-entity-updated = Runtime मेनिफेस्ट अपडेट झाले
 entity-created = एंटिटी तयार झाली
+entity-reloaded = Entity plugin reloaded
 entity-deleted = एंटिटी हटवली
 entity-states-saving = IPFS वर एंटिटी स्थिती जतन होत आहेत
 entity-state-saving = एंटिटी स्थिती जतन होत आहे

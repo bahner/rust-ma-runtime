@@ -41,6 +41,7 @@ root-list-entities = #root: 엔티티 목록
 root-delete-entity = #root: 엔티티 삭제
 root-entity-updated = Runtime 매니페스트가 업데이트되었습니다
 entity-created = 엔티티가 생성되었습니다
+entity-reloaded = Entity plugin reloaded
 entity-deleted = 엔티티가 삭제되었습니다
 entity-states-saving = 엔티티 상태를 IPFS에 저장하는 중
 entity-state-saving = 엔티티 상태를 저장하는 중

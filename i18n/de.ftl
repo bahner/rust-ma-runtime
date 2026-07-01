@@ -41,6 +41,7 @@ root-list-entities = #root: Entitäten auflisten
 root-delete-entity = #root: Entität löschen
 root-entity-updated = Runtime-Manifest aktualisiert
 entity-created = Entität erstellt
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Entität gelöscht
 entity-states-saving = Entitätszustände werden auf IPFS gespeichert
 entity-state-saving = Entitätszustand wird gespeichert

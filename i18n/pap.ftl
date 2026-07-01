@@ -41,6 +41,7 @@ root-list-entities = #root: lista entidad
 root-delete-entity = #root: bora entidad
 root-entity-updated = Manifest di runtime a keda aktualisa
 entity-created = Entidad a keda kreá
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Entidad a keda borá
 entity-states-saving = Guardando estadonan di entidad na IPFS
 entity-state-saving = Guardando estado di entidad

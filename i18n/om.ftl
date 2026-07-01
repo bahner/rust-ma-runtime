@@ -41,6 +41,7 @@ root-list-entities = #root: tarreeffama dhaabbataa
 root-delete-entity = #root: dhaabbataa haqi
 root-entity-updated = Ibsituu runtime haaromfame
 entity-created = Dhaabbataan uumame
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Dhaabbataan haqame
 entity-states-saving = Haala dhaabbataa IPFS irratti kuufamaa jira
 entity-state-saving = Haala dhaabbataa kuufamaa jira

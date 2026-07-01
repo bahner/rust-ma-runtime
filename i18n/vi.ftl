@@ -41,6 +41,7 @@ root-list-entities = #root: danh sách thực thể
 root-delete-entity = #root: xóa thực thể
 root-entity-updated = Manifest runtime đã được cập nhật
 entity-created = Thực thể đã được tạo
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Thực thể đã bị xóa
 entity-states-saving = Đang lưu trạng thái thực thể vào IPFS
 entity-state-saving = Đang lưu trạng thái thực thể

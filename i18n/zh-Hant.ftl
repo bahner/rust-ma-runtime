@@ -41,6 +41,7 @@ root-list-entities = #root：列出實體
 root-delete-entity = #root：刪除實體
 root-entity-updated = Runtime 清單已更新
 entity-created = 實體已建立
+entity-reloaded = Entity plugin reloaded
 entity-deleted = 實體已刪除
 entity-states-saving = 正在將實體狀態儲存至 IPFS
 entity-state-saving = 正在儲存實體狀態

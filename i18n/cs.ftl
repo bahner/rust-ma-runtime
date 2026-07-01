@@ -41,6 +41,7 @@ root-list-entities = #root: seznam entit
 root-delete-entity = #root: smazat entitu
 root-entity-updated = Runtime manifest aktualizován
 entity-created = Entita vytvořena
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Entita smazána
 entity-states-saving = Ukládání stavů entit do IPFS
 entity-state-saving = Ukládání stavu entity

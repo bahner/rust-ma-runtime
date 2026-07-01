@@ -41,6 +41,7 @@ root-list-entities = #root: اینٹٹی فہرست
 root-delete-entity = #root: اینٹٹی حذف کریں
 root-entity-updated = Runtime مینی فیسٹ اپڈیٹ ہوا
 entity-created = اینٹٹی بنائی گئی
+entity-reloaded = Entity plugin reloaded
 entity-deleted = اینٹٹی حذف ہوئی
 entity-states-saving = IPFS پر اینٹٹی حالتیں محفوظ ہو رہی ہیں
 entity-state-saving = اینٹٹی حالت محفوظ ہو رہی ہے

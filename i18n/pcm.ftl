@@ -41,6 +41,7 @@ root-list-entities = #root: list entities
 root-delete-entity = #root: delete entity
 root-entity-updated = Runtime manifest don update
 entity-created = Entity don create
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Entity don delete
 entity-states-saving = E dey save entity states go IPFS
 entity-state-saving = E dey save entity state

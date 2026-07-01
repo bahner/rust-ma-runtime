@@ -41,6 +41,7 @@ root-list-entities = #root: àkójọ ẹ̀dá
 root-delete-entity = #root: pa ẹ̀dá rẹ́
 root-entity-updated = Àpólà runtime ti ṣe àtúnṣe
 entity-created = Ẹ̀dá ti ṣẹ̀dá
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Ẹ̀dá ti paarẹ́
 entity-states-saving = Ó ń fi ipò ẹ̀dá pamọ́ sí IPFS
 entity-state-saving = Ó ń fi ipò ẹ̀dá pamọ́

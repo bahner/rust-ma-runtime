@@ -43,6 +43,7 @@ root-list-entities = #root: list einingar
 root-delete-entity = #root: slett eining
 root-entity-updated = Runtime-manifest oppdatert
 entity-created = Eining oppretta
+entity-reloaded = Entity plugin reloaded
 entity-deleted = Eining sletta
 entity-states-saving = Lagrar einingstilstandar til IPFS
 entity-state-saving = Lagrar einingstilstand
