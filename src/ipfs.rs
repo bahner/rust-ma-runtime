@@ -523,15 +523,14 @@ async fn handle_did_document_publish(
 ) -> Result<()> {
     info!(from = %message.from, id = %message.id, "{}", i18n::t("did-publish-request-received"));
 
-    let (reply, sender, rpc_did_url) =
-        build_rpc_reply_message(ctx, &message.from, &message.id, &[])?;
-
     // Cache the document NOW — before the slow Kubo publish — so any concurrent
     // IPFS-store reply tasks can resolve this sender's endpoint immediately.
+    let sender_for_cache = ma_core::Did::try_from(message.from.as_str())
+        .with_context(|| format!("invalid sender DID: {}", message.from))?;
     ctx.doc_cache
         .lock()
         .await
-        .insert(sender.base_id(), v.document.clone());
+        .insert(sender_for_cache.base_id(), v.document.clone());
 
     let key = Zeroizing::new(v.ipns_secret_key.clone());
     let cid = ctx
@@ -543,6 +542,8 @@ async fn handle_did_document_publish(
     info!(did = %v.document_did.id(), cid = %cid, "{}", i18n::t("document-published"));
 
     let reply_bytes = encode_ok_cid_reply(&cid)?;
+    let (reply, sender, rpc_did_url) =
+        build_rpc_reply_message(ctx, &message.from, &message.id, &reply_bytes)?;
 
     // Spawn reply delivery so a slow or stale iroh connection never blocks
     // the main event loop (and therefore never prevents Ctrl-C from firing).
@@ -559,14 +560,15 @@ async fn handle_did_document_publish(
                 .await
                 {
                     Ok(Ok(mut outbox)) => {
-                        match tokio::time::timeout(
-                            Duration::from_secs(15),
-                            outbox.send(&reply),
-                        )
-                        .await
+                        match tokio::time::timeout(Duration::from_secs(15), outbox.send(&reply))
+                            .await
                         {
-                            Ok(Ok(())) => info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("did-publish-cid-reply-sent")),
-                            Ok(Err(e)) => warn!(error = %e, to = %rpc_did_url, "ipfs-publish reply send failed"),
+                            Ok(Ok(())) => {
+                                info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("did-publish-cid-reply-sent"))
+                            }
+                            Ok(Err(e)) => {
+                                warn!(error = %e, to = %rpc_did_url, "ipfs-publish reply send failed")
+                            }
                             Err(_) => warn!(to = %rpc_did_url, "ipfs-publish reply send timed out"),
                         }
                     }
@@ -626,8 +628,12 @@ async fn handle_ipfs_store(
         match open_rpc_outbox_for_sender(&endpoint, &resolver, &doc_cache, &sender).await {
             Ok(mut outbox) => {
                 match tokio::time::timeout(Duration::from_secs(15), outbox.send(&reply)).await {
-                    Ok(Ok(())) => info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("ipfs-store-cid-reply-sent")),
-                    Ok(Err(e)) => warn!(error = %e, to = %rpc_did_url, "ipfs-store reply send failed"),
+                    Ok(Ok(())) => {
+                        info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("ipfs-store-cid-reply-sent"))
+                    }
+                    Ok(Err(e)) => {
+                        warn!(error = %e, to = %rpc_did_url, "ipfs-store reply send failed")
+                    }
                     Err(_) => warn!(to = %rpc_did_url, "ipfs-store reply send timed out"),
                 }
             }

@@ -21,7 +21,7 @@ runtime:
   # Controls who may use the RPC, inbox, and IPFS services.
   # An absent acl: means the daemon falls back to --acl-file (or open access).
   owners:
-    - did:ma:k51qzi5uqu5dgqn5qgzrx81y9x2e5sesg5lqhiz6uvn8lep1k4l10k03ndubmt
+    - did:ma:k51qzi5uqu5dlgh2drt9od7f7fmfe1u6rf5j2s2acfp9olltfx51oqhnl048xm
   acls:
     open:
       "*": ["*"]

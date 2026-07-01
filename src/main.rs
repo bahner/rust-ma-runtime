@@ -660,24 +660,28 @@ async fn main() -> Result<()> {
                         s.rpc_requests += 1;
                     }
                     let acl_snapshot = acl.read().await.clone();
-                    if let Err(err) = rpc::handle_rpc_message(
-                        &message,
-                        &acl_snapshot,
-                        &rpc::RpcHandlerCtx {
-                            our_did: Arc::from(our_did.as_str()),
-                            signing_key: Arc::new(signing_key.clone()),
-                            endpoint: Arc::clone(&endpoint),
-                            kubo_rpc_url: Arc::from(kubo_url.as_str()),
-                            resolver: Arc::clone(&shared_resolver),
-                            entity_registry: entity_registry.clone(),
-                            kind_registry: kind_registry.clone(),
-                            envelope_tx: envelope_tx.clone(),
-                            stats: stats.clone(),
-                            acl_cache: acl_cache.clone(),
-                            avatar_key,
-                        },
+                    if let Err(err) = tokio::time::timeout(
+                        Duration::from_secs(30),
+                        rpc::handle_rpc_message(
+                            &message,
+                            &acl_snapshot,
+                            &rpc::RpcHandlerCtx {
+                                our_did: Arc::from(our_did.as_str()),
+                                signing_key: Arc::new(signing_key.clone()),
+                                endpoint: Arc::clone(&endpoint),
+                                kubo_rpc_url: Arc::from(kubo_url.as_str()),
+                                resolver: Arc::clone(&shared_resolver),
+                                entity_registry: entity_registry.clone(),
+                                kind_registry: kind_registry.clone(),
+                                envelope_tx: envelope_tx.clone(),
+                                stats: stats.clone(),
+                                acl_cache: acl_cache.clone(),
+                                avatar_key,
+                            },
+                        ),
                     )
                     .await
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("rpc handler timed out")))
                     {
                         warn!(error = %err, from = %message.from, "{}", i18n::t("rpc-message-rejected"));
                     }
@@ -892,7 +896,14 @@ async fn main() -> Result<()> {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     match Arc::get_mut(&mut endpoint) {
-        Some(ep) => ep.close().await,
+        Some(ep) => {
+            if tokio::time::timeout(Duration::from_secs(5), ep.close())
+                .await
+                .is_err()
+            {
+                warn!("endpoint close timed out after 5 s; forcing exit");
+            }
+        }
         None => {
             warn!("endpoint still held by in-flight tasks after 10 s; dropping without graceful close");
         }
