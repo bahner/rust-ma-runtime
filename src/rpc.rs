@@ -90,12 +90,13 @@ pub async fn handle_rpc_message(
     if let Some(fragment) = extract_fragment(&message.to, &ctx.our_did) {
         let ep = ctx.entity_registry.read().await.get(fragment).cloned();
         return if let Some(entity) = ep {
-            match handle_entity_plugin_message(message, term, &entity, ctx).await {
+            let fragment_for_log = entity.fragment.clone();
+            match handle_entity_plugin_message(message, term, entity, ctx).await {
                 Ok(()) => Ok(()),
                 Err(err) => {
                     let reason = err.to_string();
                     warn!(
-                        fragment = %entity.fragment,
+                        fragment = %fragment_for_log,
                         from = %message.from,
                         error = %reason,
                         "plugin dispatch rejected"
@@ -145,7 +146,7 @@ fn extract_fragment<'a>(to: &'a str, our_did: &str) -> Option<&'a str> {
 async fn handle_entity_plugin_message(
     message: &ma_core::Message,
     term: CborValue,
-    entity: &crate::plugin::EntityPlugin,
+    entity: Arc<crate::plugin::EntityPlugin>,
     ctx: &RpcHandlerCtx,
 ) -> Result<()> {
     info!(fragment = %entity.fragment, from = %message.from, "{}", crate::i18n::t("entity-dispatched"));
@@ -230,16 +231,21 @@ async fn handle_entity_plugin_message(
     };
 
     // If the plugin called `ma_set_state` during this dispatch, persist to IPFS.
+    // Spawned so the main event loop is not blocked by the IPFS round-trip.
     if let Some(state_bytes) = result.pending_state {
-        match ipfs_add(&ctx.kubo_rpc_url, state_bytes.clone()).await {
-            Ok(cid) => {
-                debug!(fragment = %entity.fragment, %cid, "plugin state saved via ma_set_state");
-                entity.mark_saved(state_bytes);
+        let entity_arc = Arc::clone(&entity);
+        let kubo_url = ctx.kubo_rpc_url.to_string();
+        tokio::spawn(async move {
+            match ipfs_add(&kubo_url, state_bytes.clone()).await {
+                Ok(cid) => {
+                    debug!(fragment = %entity_arc.fragment, %cid, "plugin state saved via ma_set_state");
+                    entity_arc.mark_saved(state_bytes);
+                }
+                Err(e) => {
+                    warn!(fragment = %entity_arc.fragment, error = %e, "failed to persist plugin state");
+                }
             }
-            Err(e) => {
-                warn!(fragment = %entity.fragment, error = %e, "failed to persist plugin state");
-            }
-        }
+        });
     }
 
     // Process entity creation requests queued by `ma_create_entity` host function.
@@ -283,24 +289,46 @@ async fn handle_entity_plugin_message(
                     .write()
                     .await
                     .insert(req.fragment.clone(), Arc::new(ep));
-                let root_cid = ctx.stats.read().await.root_cid.clone();
-                if let Some(ref old_cid) = root_cid {
-                    let mut running_node = entity_node.clone();
-                    running_node.lifecycle = Lifecycle::Running;
-                    if let Err(e) = persist_new_entity(
-                        &ctx.kubo_rpc_url,
-                        old_cid,
-                        &req.fragment,
-                        &running_node,
-                        &ctx.stats,
-                    )
-                    .await
-                    {
-                        warn!(fragment = %req.fragment, error = %e, "failed to persist new entity to manifest");
-                    }
-                }
                 info!(fragment = %req.fragment, kind = %req.kind_protocol,
                     parent = %req.parent, "entity created via ma_create_entity");
+                // Persist the updated manifest in the background so the main
+                // event loop is not blocked by the IPFS dag_get / dag_put.
+                // The entity is already live in the in-memory registry above.
+                //
+                // KNOWN RACE: if a single dispatch queues multiple create_requests
+                // AND the spawned persist tasks run concurrently, each reads the
+                // same old_cid as base and the last writer wins for stats.root_cid,
+                // causing all but the last entity to be absent from the IPFS
+                // manifest after a crash-restart.  In-memory state is always
+                // correct; only crash recovery is affected.
+                //
+                // If this manifests (missing entity after restart): run
+                // `cargo run -- --bootstrap bootstrap.example.yaml` to rebuild
+                // the manifest from scratch, or manually re-send the
+                // `:entities.<fragment>: <cid>` CRUD command for each missing
+                // entity.  A proper fix would serialise all manifest writes
+                // through a dedicated background task with an mpsc channel.
+                let root_cid = ctx.stats.read().await.root_cid.clone();
+                if let Some(old_cid) = root_cid {
+                    let mut running_node = entity_node.clone();
+                    running_node.lifecycle = Lifecycle::Running;
+                    let kubo_url = ctx.kubo_rpc_url.to_string();
+                    let fragment = req.fragment.clone();
+                    let stats = ctx.stats.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = persist_new_entity(
+                            &kubo_url,
+                            &old_cid,
+                            &fragment,
+                            &running_node,
+                            &stats,
+                        )
+                        .await
+                        {
+                            warn!(fragment = %fragment, error = %e, "failed to persist new entity to manifest");
+                        }
+                    });
+                }
             }
             Ok((_, Lifecycle::Error)) => {
                 // New entity — init() failed: send error back to parent plugin,

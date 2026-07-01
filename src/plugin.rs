@@ -48,6 +48,17 @@ thread_local! {
     static CALL_CAPTURE: RefCell<Vec<Option<Vec<u8>>>> = const { RefCell::new(Vec::new()) };
 }
 
+// ── ma_call cycle detection ───────────────────────────────────────────────────
+//
+// Tracks which entity fragments are currently executing on this thread.
+// Pushed in `dispatch_to` (Extism backend) before the plugin runs;
+// popped unconditionally on return.  `ma_call_fn` checks this before
+// dispatching to detect A→B→A (or longer) cycles and return :error
+// instead of deadlocking on the non-reentrant plugin Mutex.
+thread_local! {
+    static CALL_STACK: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
 // ── Native dispatch type ─────────────────────────────────────────────────────
 
 /// Type of the compiled-in Rust closure used by native entity plugins.
@@ -300,12 +311,23 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
     let caller_fragment = ctx.caller_fragment.clone();
     drop(ctx);
 
-    if req.to == caller_fragment {
+    // Reject direct self-calls and any indirect cycle (A→B→A, etc.).
+    // CALL_STACK records every fragment currently executing on this thread;
+    // a cycle would attempt to re-lock a std::sync::Mutex that is already
+    // held on this thread, causing a permanent hang.
+    let cycle_detected = CALL_STACK.with(|s| {
+        let stack = s.borrow();
+        stack.contains(&req.to) || req.to == caller_fragment
+    });
+    if cycle_detected {
         let mut out = Vec::new();
         ciborium::ser::into_writer(
             &ciborium::Value::Array(vec![
                 ciborium::Value::Text(":error".into()),
-                ciborium::Value::Text("ma_call: self-call not allowed".into()),
+                ciborium::Value::Text(format!(
+                    "ma_call: cycle detected — #{} is already in the call stack",
+                    req.to
+                )),
             ]),
             &mut out,
         )
@@ -737,6 +759,8 @@ impl EntityPlugin {
                 ciborium::ser::into_writer(input, &mut input_bytes)
                     .map_err(|e| anyhow!("failed to CBOR-encode CastInput: {e}"))?;
 
+                let fragment = self.fragment.clone();
+                CALL_STACK.with(|s| s.borrow_mut().push(fragment.clone()));
                 let output = tokio::task::block_in_place(|| {
                     let mut plugin = plugin
                         .lock()
@@ -744,7 +768,14 @@ impl EntityPlugin {
                     plugin
                         .call::<&[u8], Vec<u8>>(export, input_bytes.as_slice())
                         .map_err(|e| anyhow!("{export}() failed for '{}': {e}", self.fragment))
-                })?;
+                });
+                CALL_STACK.with(|s| {
+                    let mut stack = s.borrow_mut();
+                    if let Some(pos) = stack.iter().rposition(|f| f == &fragment) {
+                        stack.remove(pos);
+                    }
+                });
+                let output = output?;
 
                 let pending_state = state
                     .get()

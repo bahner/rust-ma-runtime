@@ -19,7 +19,10 @@ async fn check_entity_management_cap(
     ctx: &CrudHandlerCtx<'_>,
     caps: &[&str],
 ) -> Result<()> {
-    let acl = ctx.root_acl.read().await;
+    // Snapshot and drop the read guard before the async check_full call.
+    // Holding the guard across an await would block any concurrent write
+    // to root_acl (e.g. :acl: update) until the check completes.
+    let acl = ctx.root_acl.read().await.clone();
     check_full(&acl, &message.from, caps, |_| async { Ok(vec![]) })
         .await
         .with_context(|| {

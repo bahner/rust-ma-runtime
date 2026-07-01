@@ -659,9 +659,10 @@ async fn main() -> Result<()> {
                         let mut s = stats.write().await;
                         s.rpc_requests += 1;
                     }
+                    let acl_snapshot = acl.read().await.clone();
                     if let Err(err) = rpc::handle_rpc_message(
                         &message,
-                        &*acl.read().await,
+                        &acl_snapshot,
                         &rpc::RpcHandlerCtx {
                             our_did: Arc::from(our_did.as_str()),
                             signing_key: Arc::new(signing_key.clone()),
@@ -704,11 +705,12 @@ async fn main() -> Result<()> {
                             let mut s = stats.write().await;
                             s.ipfs_requests += 1;
                         }
+                        let acl_snapshot = acl.read().await.clone();
                         if let Err(err) = tokio::time::timeout(
                             Duration::from_mins(1),
                             ipfs::handle_ipfs_message(
                             &message,
-                            &*acl.read().await,
+                            &acl_snapshot,
                             &ipfs::IpfsHandlerCtx {
                                 our_did: &our_did,
                                 signing_key: &signing_key,
