@@ -523,6 +523,16 @@ async fn handle_did_document_publish(
 ) -> Result<()> {
     info!(from = %message.from, id = %message.id, "{}", i18n::t("did-publish-request-received"));
 
+    let (reply, sender, rpc_did_url) =
+        build_rpc_reply_message(ctx, &message.from, &message.id, &[])?;
+
+    // Cache the document NOW — before the slow Kubo publish — so any concurrent
+    // IPFS-store reply tasks can resolve this sender's endpoint immediately.
+    ctx.doc_cache
+        .lock()
+        .await
+        .insert(sender.base_id(), v.document.clone());
+
     let key = Zeroizing::new(v.ipns_secret_key.clone());
     let cid = ctx
         .publisher
@@ -533,14 +543,6 @@ async fn handle_did_document_publish(
     info!(did = %v.document_did.id(), cid = %cid, "{}", i18n::t("document-published"));
 
     let reply_bytes = encode_ok_cid_reply(&cid)?;
-    let (reply, sender, rpc_did_url) =
-        build_rpc_reply_message(ctx, &message.from, &message.id, &reply_bytes)?;
-
-    // Cache the document so subsequent Store requests from this sender skip IPNS.
-    ctx.doc_cache
-        .lock()
-        .await
-        .insert(sender.base_id(), v.document.clone());
 
     // Spawn reply delivery so a slow or stale iroh connection never blocks
     // the main event loop (and therefore never prevents Ctrl-C from firing).
