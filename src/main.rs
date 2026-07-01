@@ -714,7 +714,7 @@ async fn main() -> Result<()> {
                             &ipfs::IpfsHandlerCtx {
                                 our_did: &our_did,
                                 signing_key: &signing_key,
-                                endpoint: &*endpoint,
+                                endpoint: Arc::clone(&endpoint),
                                 kubo_rpc_url: &kubo_url,
                                 publisher: &ipfs.publisher,
                                 resolver: Arc::clone(&shared_resolver),

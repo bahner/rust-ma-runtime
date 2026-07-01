@@ -47,7 +47,8 @@ impl IpfsServiceState {
 pub struct IpfsHandlerCtx<'a> {
     pub our_did: &'a str,
     pub signing_key: &'a SigningKey,
-    pub endpoint: &'a dyn ma_core::MaEndpoint,
+    /// Arc so reply-delivery tasks can be spawned without blocking the event loop.
+    pub endpoint: Arc<dyn ma_core::MaEndpoint>,
     pub kubo_rpc_url: &'a str,
     pub publisher: &'a IpfsDidPublisher,
     pub resolver: Arc<IpfsGatewayResolver>,
@@ -449,11 +450,16 @@ fn rpc_endpoint_from_doc(doc: &Document) -> Option<String> {
 /// Open an RPC outbox for `sender`.  Prefers a cached document (avoids IPNS
 /// re-resolution); falls back to the resolver if the cache misses or if the
 /// cached endpoint is stale (connect times out or errors).
+///
+/// Takes individual Arc values so it can be called from spawned tasks without
+/// needing a reference to the short-lived `IpfsHandlerCtx`.
 async fn open_rpc_outbox_for_sender(
-    ctx: &IpfsHandlerCtx<'_>,
+    endpoint: &Arc<dyn ma_core::MaEndpoint>,
+    resolver: &Arc<IpfsGatewayResolver>,
+    doc_cache: &DocCache,
     sender: &Did,
 ) -> Result<ma_core::Outbox> {
-    let cached_doc = ctx.doc_cache.lock().await.get(&sender.base_id()).cloned();
+    let cached_doc = doc_cache.lock().await.get(&sender.base_id()).cloned();
 
     if let Some(ref doc) = cached_doc {
         if let Some(eid) = rpc_endpoint_from_doc(doc) {
@@ -461,8 +467,7 @@ async fn open_rpc_outbox_for_sender(
             // the handler indefinitely.
             match tokio::time::timeout(
                 Duration::from_secs(5),
-                ctx.endpoint
-                    .connect_outbox(doc, &eid, &sender.base_id(), RPC_PROTOCOL_ID),
+                endpoint.connect_outbox(doc, &eid, &sender.base_id(), RPC_PROTOCOL_ID),
             )
             .await
             {
@@ -481,8 +486,7 @@ async fn open_rpc_outbox_for_sender(
     // resolver does not block the handler indefinitely.
     tokio::time::timeout(
         Duration::from_secs(10),
-        ctx.endpoint
-            .outbox(ctx.resolver.as_ref(), &sender.base_id(), RPC_PROTOCOL_ID),
+        endpoint.outbox(resolver.as_ref(), &sender.base_id(), RPC_PROTOCOL_ID),
     )
     .await
     .map_err(|_| anyhow::anyhow!("IPNS outbox resolve timed out for {}", sender.base_id()))?
@@ -538,25 +542,40 @@ async fn handle_did_document_publish(
         .await
         .insert(sender.base_id(), v.document.clone());
 
-    // Send reply using the document we already have — no IPNS re-lookup needed.
+    // Spawn reply delivery so a slow or stale iroh connection never blocks
+    // the main event loop (and therefore never prevents Ctrl-C from firing).
     match rpc_endpoint_from_doc(&v.document) {
         Some(eid) => {
-            match ctx
-                .endpoint
-                .connect_outbox(&v.document, &eid, &sender.base_id(), RPC_PROTOCOL_ID)
+            let endpoint = Arc::clone(&ctx.endpoint);
+            let document = v.document.clone();
+            let sender_base = sender.base_id();
+            tokio::spawn(async move {
+                match tokio::time::timeout(
+                    Duration::from_secs(15),
+                    endpoint.connect_outbox(&document, &eid, &sender_base, RPC_PROTOCOL_ID),
+                )
                 .await
-            {
-                Ok(mut outbox) => {
-                    outbox
-                        .send(&reply)
+                {
+                    Ok(Ok(mut outbox)) => {
+                        match tokio::time::timeout(
+                            Duration::from_secs(15),
+                            outbox.send(&reply),
+                        )
                         .await
-                        .context("ipfs-publish reply send failed")?;
-                    info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("did-publish-cid-reply-sent"));
+                        {
+                            Ok(Ok(())) => info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("did-publish-cid-reply-sent")),
+                            Ok(Err(e)) => warn!(error = %e, to = %rpc_did_url, "ipfs-publish reply send failed"),
+                            Err(_) => warn!(to = %rpc_did_url, "ipfs-publish reply send timed out"),
+                        }
+                    }
+                    Ok(Err(err)) => {
+                        warn!(error = %err, to = %rpc_did_url, "{}", i18n::t("did-publish-resolve-failed"));
+                    }
+                    Err(_) => {
+                        warn!(to = %rpc_did_url, "ipfs-publish connect timed out");
+                    }
                 }
-                Err(err) => {
-                    warn!(error = %err, to = %rpc_did_url, "{}", i18n::t("did-publish-resolve-failed"));
-                }
-            }
+            });
         }
         None => {
             warn!(to = %rpc_did_url, "{}", i18n::t("did-publish-resolve-failed"));
@@ -596,18 +615,25 @@ async fn handle_ipfs_store(
     let (reply, sender, rpc_did_url) =
         build_rpc_reply_message(ctx, &orig_message.from, &orig_message.id, &reply_bytes)?;
 
-    match open_rpc_outbox_for_sender(ctx, &sender).await {
-        Ok(mut outbox) => {
-            outbox
-                .send(&reply)
-                .await
-                .context("ipfs-store reply send failed")?;
-            info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("ipfs-store-cid-reply-sent"));
+    // Spawn reply delivery so a slow or unreachable iroh connection never
+    // blocks the main event loop (and therefore never prevents Ctrl-C).
+    let endpoint = Arc::clone(&ctx.endpoint);
+    let resolver = Arc::clone(&ctx.resolver);
+    let doc_cache = Arc::clone(&ctx.doc_cache);
+    tokio::spawn(async move {
+        match open_rpc_outbox_for_sender(&endpoint, &resolver, &doc_cache, &sender).await {
+            Ok(mut outbox) => {
+                match tokio::time::timeout(Duration::from_secs(15), outbox.send(&reply)).await {
+                    Ok(Ok(())) => info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("ipfs-store-cid-reply-sent")),
+                    Ok(Err(e)) => warn!(error = %e, to = %rpc_did_url, "ipfs-store reply send failed"),
+                    Err(_) => warn!(to = %rpc_did_url, "ipfs-store reply send timed out"),
+                }
+            }
+            Err(err) => {
+                warn!(error = %err, to = %rpc_did_url, "{}", i18n::t("ipfs-store-resolve-failed"));
+            }
         }
-        Err(err) => {
-            warn!(error = %err, to = %rpc_did_url, "{}", i18n::t("ipfs-store-resolve-failed"));
-        }
-    }
+    });
 
     Ok(())
 }
