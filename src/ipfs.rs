@@ -477,10 +477,16 @@ async fn open_rpc_outbox_for_sender(
         }
     }
 
-    ctx.endpoint
-        .outbox(ctx.resolver.as_ref(), &sender.base_id(), RPC_PROTOCOL_ID)
-        .await
-        .map_err(anyhow::Error::from)
+    // IPNS fallback — also guarded by a timeout so a slow or unreachable
+    // resolver does not block the handler indefinitely.
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        ctx.endpoint
+            .outbox(ctx.resolver.as_ref(), &sender.base_id(), RPC_PROTOCOL_ID),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("IPNS outbox resolve timed out for {}", sender.base_id()))?
+    .map_err(anyhow::Error::from)
 }
 
 pub async fn handle_ipfs_message(
