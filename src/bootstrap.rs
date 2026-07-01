@@ -493,6 +493,10 @@ pub async fn save_all_entity_states(
     // Phase 2: persist each entity's state and lifecycle.
     // Stateless entities skip state saving but still get lifecycle: stopped.
     for (name, entity) in &snapshot {
+        // Native entities (e.g. #scheduler) are not stored in the manifest.
+        if entity.is_native() {
+            continue;
+        }
         let Some(entity_link) = manifest.entities.get(name).cloned() else {
             tracing::warn!(name = %name, "Entity in registry but not in manifest, skipping");
             continue;

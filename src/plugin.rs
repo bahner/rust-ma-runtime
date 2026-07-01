@@ -506,6 +506,13 @@ impl EntityPlugin {
         (ep, Lifecycle::Running)
     }
 
+    /// Returns `true` if this plugin is backed by a compiled-in Rust closure
+    /// (i.e. not an Extism/Wasm entity).  Native entities are not stored in
+    /// the IPFS manifest and must be skipped during manifest-bound operations.
+    pub fn is_native(&self) -> bool {
+        matches!(self.backend, EntityBackend::Native(_))
+    }
+
     /// Load a Wasm plugin from IPFS, initialise it with persisted state (or empty).
     ///
     /// Returns `(plugin, Lifecycle::Running)` on success.
