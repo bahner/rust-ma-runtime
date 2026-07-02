@@ -87,7 +87,7 @@ pub(super) fn strip_brackets(s: &str) -> Option<&str> {
 
 // ── Manifest helpers ───────────────────────────────────────────────────────────
 
-pub(super) async fn with_manifest_crud<F>(ctx: &CrudHandlerCtx<'_>, f: F) -> Result<String>
+pub(super) async fn with_manifest_crud<F>(ctx: &CrudHandlerCtx, f: F) -> Result<String>
 where
     F: FnOnce(&mut RuntimeManifest) -> Result<()>,
 {
@@ -98,7 +98,7 @@ where
     Ok(new_cid)
 }
 
-pub(super) async fn current_root_cid(ctx: &CrudHandlerCtx<'_>) -> Result<String> {
+pub(super) async fn current_root_cid(ctx: &CrudHandlerCtx) -> Result<String> {
     ctx.stats
         .read()
         .await
@@ -108,15 +108,15 @@ pub(super) async fn current_root_cid(ctx: &CrudHandlerCtx<'_>) -> Result<String>
 }
 
 /// Fetch and deserialise the current `RuntimeManifest` from IPFS.
-pub(super) async fn load_manifest(ctx: &CrudHandlerCtx<'_>) -> Result<RuntimeManifest> {
+pub(super) async fn load_manifest(ctx: &CrudHandlerCtx) -> Result<RuntimeManifest> {
     let root_cid = current_root_cid(ctx).await?;
-    crate::kubo::dag_get(ctx.kubo_rpc_url, &root_cid).await
+    crate::kubo::dag_get(&ctx.kubo_rpc_url, &root_cid).await
 }
 
 /// Load an ACL from `cid`, insert it into `acl_cache` under `cache_key`.
 /// Logs success or failure; non-fatal either way.
-pub(super) async fn acl_cache_update(ctx: &CrudHandlerCtx<'_>, cache_key: &str, cid: &str) {
-    match crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, cid).await {
+pub(super) async fn acl_cache_update(ctx: &CrudHandlerCtx, cache_key: &str, cid: &str) {
+    match crate::acl::load_acl_from_cid(&ctx.kubo_rpc_url, cid).await {
         Ok(acl_map) => {
             ctx.acl_cache
                 .write()
@@ -220,7 +220,7 @@ pub(super) fn spawn_entity_reload(
     });
 }
 
-async fn update_stats_entities(ctx: &CrudHandlerCtx<'_>) {
+async fn update_stats_entities(ctx: &CrudHandlerCtx) {
     let names: Vec<String> = ctx.entity_registry.read().await.keys().cloned().collect();
     ctx.stats.write().await.entity_names = names;
 }
@@ -246,7 +246,7 @@ pub(super) async fn caller_lang(from: &str, resolver: &IpfsGatewayResolver) -> S
 pub(super) async fn send_crud_i18n_error(
     incoming: &ma_core::Message,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
     key: &str,
 ) -> Result<()> {
     let lang = caller_lang(&incoming.from, ctx.resolver.as_ref()).await;
@@ -258,7 +258,7 @@ pub(super) async fn send_crud_i18n_error(
 pub(super) async fn send_crud_i18n_errorf(
     incoming: &ma_core::Message,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
     key: &str,
     args: &[(&str, &str)],
 ) -> Result<()> {
@@ -277,7 +277,7 @@ pub(super) async fn send_crud_i18n_errorf(
 pub(super) async fn send_crud_ok(
     incoming: &ma_core::Message,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
 ) -> Result<()> {
     let mut out = Vec::new();
     ciborium::ser::into_writer(&CborValue::Text(":ok".to_string()), &mut out)
@@ -288,7 +288,7 @@ pub(super) async fn send_crud_ok(
 pub(super) async fn send_crud_ok_path(
     incoming: &ma_core::Message,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
     path: &str,
 ) -> Result<()> {
     let mut out = Vec::new();
@@ -306,7 +306,7 @@ pub(super) async fn send_crud_ok_path(
 pub(super) async fn send_crud_ok_cid(
     incoming: &ma_core::Message,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
     cid: &str,
 ) -> Result<()> {
     let mut out = Vec::new();
@@ -324,7 +324,7 @@ pub(super) async fn send_crud_ok_cid(
 pub(super) async fn send_crud_error(
     incoming: &ma_core::Message,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
     reason: &str,
 ) -> Result<()> {
     let mut out = Vec::new();
@@ -342,7 +342,7 @@ pub(super) async fn send_crud_error(
 pub(super) async fn send_crud_reply_cbor<T: serde::Serialize + Sync>(
     incoming: &ma_core::Message,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
     value: &T,
 ) -> Result<()> {
     let mut out = Vec::new();
@@ -356,7 +356,7 @@ pub(super) async fn send_crud_reply_cbor<T: serde::Serialize + Sync>(
 pub(super) async fn send_crud_data_cbor<T: serde::Serialize + Sync>(
     incoming: &ma_core::Message,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
     value: &T,
 ) -> Result<()> {
     let mut out = Vec::new();
@@ -370,7 +370,7 @@ pub(super) async fn send_crud_data_cbor<T: serde::Serialize + Sync>(
 pub(super) async fn send_crud_data_yaml<T: serde::Serialize + Sync>(
     incoming: &ma_core::Message,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
     value: &T,
 ) -> Result<()> {
     let yaml_str = serde_yaml::to_string(value).context("encoding YAML reply")?;
@@ -386,7 +386,7 @@ pub(super) async fn send_crud_data_yaml<T: serde::Serialize + Sync>(
 pub(super) async fn send_crud_data_dag_cbor(
     incoming: &ma_core::Message,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
     cid: &str,
 ) -> Result<()> {
     let mut out = Vec::new();
@@ -398,7 +398,7 @@ pub(super) async fn send_crud_data_dag_cbor(
 pub(super) async fn send_crud_reply(
     incoming: &ma_core::Message,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
     content: &[u8],
 ) -> Result<()> {
     send_crud_reply_raw(incoming, reply_type, ctx, CONTENT_TYPE_TERM, content).await
@@ -407,7 +407,7 @@ pub(super) async fn send_crud_reply(
 async fn send_crud_reply_raw(
     incoming: &ma_core::Message,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
     content_type: &str,
     content: &[u8],
 ) -> Result<()> {
@@ -415,12 +415,12 @@ async fn send_crud_reply_raw(
         .with_context(|| format!("invalid sender DID: {}", incoming.from))?;
 
     let mut reply = ma_core::Message::new(
-        ctx.our_did,
+        ctx.our_did.as_ref(),
         &incoming.from,
         reply_type,
         content_type,
         content,
-        ctx.signing_key,
+        ctx.signing_key.as_ref(),
     )
     .context("failed to build CRUD reply")?;
     reply.reply_to = Some(incoming.id.clone());

@@ -29,7 +29,7 @@ pub(super) async fn handle_kinds_ns(
     tail: Option<&str>,
     args: Vec<CborValue>,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
 ) -> Result<()> {
     if !rest.is_empty() {
         return Err(anyhow!(
@@ -83,7 +83,7 @@ pub(super) async fn handle_kinds_ns(
             let manifest = load_manifest(ctx).await?;
             match manifest.kinds.get_protocol(protocol) {
                 Some(link) => {
-                    let kind: KindNode = crate::kubo::dag_get(ctx.kubo_rpc_url, &link.cid).await?;
+                    let kind: KindNode = crate::kubo::dag_get(&ctx.kubo_rpc_url, &link.cid).await?;
                     send_crud_reply_cbor(message, reply_type, ctx, &kind).await
                 }
                 None => send_crud_i18n_error(message, reply_type, ctx, "kind-not-found").await,

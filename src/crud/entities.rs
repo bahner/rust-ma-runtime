@@ -17,7 +17,7 @@ use super::CrudHandlerCtx;
 
 async fn check_entity_management_cap(
     message: &ma_core::Message,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
     caps: &[&str],
 ) -> Result<()> {
     // Snapshot and drop the read guard before the async check_full call.
@@ -42,7 +42,7 @@ pub(super) async fn handle_entities_ns(
     tail: Option<&str>,
     args: Vec<CborValue>,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
 ) -> Result<()> {
     match rest.len() {
         0 => match (tail, args.as_slice()) {
@@ -70,7 +70,7 @@ async fn handle_single_entity(
     tail: Option<&str>,
     args: Vec<CborValue>,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
 ) -> Result<()> {
     match (tail, args.as_slice()) {
         (None, []) => {
@@ -79,7 +79,7 @@ async fn handle_single_entity(
                 .entities
                 .get(name.as_str())
                 .ok_or_else(|| anyhow!("entity not found: {name}"))?;
-            let entity: EntityNode = crate::kubo::dag_get(ctx.kubo_rpc_url, &link.cid).await?;
+            let entity: EntityNode = crate::kubo::dag_get(&ctx.kubo_rpc_url, &link.cid).await?;
             send_crud_data_cbor(message, reply_type, ctx, &entity).await
         }
         (Some(""), []) => {
@@ -118,11 +118,11 @@ async fn handle_single_entity(
                     return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await
                 }
             };
-            let cid = crate::kubo::dag_resolve(ctx.kubo_rpc_url, &path)
+            let cid = crate::kubo::dag_resolve(&ctx.kubo_rpc_url, &path)
                 .await
                 .with_context(|| format!("resolving path {path}"))?;
             let cid = cid.as_str();
-            let entity_node: EntityNode = crate::kubo::dag_get(ctx.kubo_rpc_url, cid)
+            let entity_node: EntityNode = crate::kubo::dag_get(&ctx.kubo_rpc_url, cid)
                 .await
                 .with_context(|| format!("fetching entity node from {cid}"))?;
             // ACL gate: caller must hold the entity's kind protocol ID as a capability.
@@ -137,8 +137,8 @@ async fn handle_single_entity(
                 entity_node,
                 ctx.kind_registry.clone(),
                 ctx.stats.clone(),
-                Arc::from(ctx.kubo_rpc_url),
-                Arc::from(ctx.our_did),
+                Arc::clone(&ctx.kubo_rpc_url),
+                Arc::clone(&ctx.our_did),
                 ctx.envelope_tx.clone(),
                 ctx.entity_registry.clone(),
                 ctx.avatar_key,
@@ -152,23 +152,23 @@ async fn handle_single_entity(
 
 // ── Entity field helpers ───────────────────────────────────────────────────────
 
-pub(super) async fn fetch_entity_node(ctx: &CrudHandlerCtx<'_>, name: &str) -> Result<EntityNode> {
+pub(super) async fn fetch_entity_node(ctx: &CrudHandlerCtx, name: &str) -> Result<EntityNode> {
     let manifest = load_manifest(ctx).await?;
     let link = manifest
         .entities
         .get(name)
         .ok_or_else(|| anyhow!("entity not found: {name}"))?;
-    crate::kubo::dag_get(ctx.kubo_rpc_url, &link.cid)
+    crate::kubo::dag_get(&ctx.kubo_rpc_url, &link.cid)
         .await
         .with_context(|| format!("fetching entity {name} from {}", link.cid))
 }
 
 pub(super) async fn update_entity_node(
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
     name: &str,
     entity: &EntityNode,
 ) -> Result<String> {
-    let entity_cid = crate::kubo::dag_put(ctx.kubo_rpc_url, entity)
+    let entity_cid = crate::kubo::dag_put(&ctx.kubo_rpc_url, entity)
         .await
         .with_context(|| format!("publishing updated entity {name}"))?;
     with_manifest_crud(ctx, |m| {
@@ -187,7 +187,7 @@ async fn handle_entity_field(
     tail: Option<&str>,
     args: Vec<CborValue>,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
 ) -> Result<()> {
     let Some((field, sub_path)) = field_path.split_first() else {
         return Err(anyhow!("empty field path in entity.{name}"));
@@ -227,7 +227,7 @@ async fn handle_entity_acl_field(
     tail: Option<&str>,
     args: Vec<CborValue>,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
 ) -> Result<()> {
     if !sub_path.is_empty() {
         return Err(anyhow!(

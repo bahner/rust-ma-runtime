@@ -22,7 +22,7 @@ pub(super) async fn handle_root_acls(
     tail: Option<&str>,
     args: Vec<CborValue>,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
 ) -> Result<()> {
     match (rest, tail, args.as_slice()) {
         // List all named ACLs.
@@ -92,7 +92,7 @@ pub(super) async fn handle_root_acl(
     tail: Option<&str>,
     args: Vec<CborValue>,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
 ) -> Result<()> {
     match (tail, args.as_slice()) {
         (None, []) => {
@@ -111,7 +111,7 @@ pub(super) async fn handle_root_acl(
                     return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await
                 }
             };
-            let acl_map = crate::acl::load_acl_from_cid(ctx.kubo_rpc_url, &cid)
+            let acl_map = crate::acl::load_acl_from_cid(&ctx.kubo_rpc_url, &cid)
                 .await
                 .with_context(|| format!("loading root ACL from {cid}"))?;
             let new_root = with_manifest_crud(ctx, |m| {

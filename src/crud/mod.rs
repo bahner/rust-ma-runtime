@@ -31,11 +31,11 @@ pub use ma_core::CRUD_PROTOCOL_ID;
 
 // ── Handler context ────────────────────────────────────────────────────────────
 
-pub struct CrudHandlerCtx<'a> {
-    pub our_did: &'a str,
-    pub signing_key: &'a SigningKey,
-    pub endpoint: &'a dyn ma_core::MaEndpoint,
-    pub kubo_rpc_url: &'a str,
+pub struct CrudHandlerCtx {
+    pub our_did: Arc<str>,
+    pub signing_key: Arc<SigningKey>,
+    pub endpoint: Arc<dyn ma_core::MaEndpoint>,
+    pub kubo_rpc_url: Arc<str>,
     pub resolver: Arc<IpfsGatewayResolver>,
     pub stats: SharedStats,
     pub entity_registry: EntityRegistry,
@@ -59,7 +59,7 @@ pub struct CrudHandlerCtx<'a> {
 pub async fn handle_crud_message(
     message: &ma_core::Message,
     acl: &AclMap,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
 ) -> Result<()> {
     // ACL: require "crud" capability. Owners bypass this gate unconditionally
     // so they can never be locked out of ACL management.
@@ -70,7 +70,7 @@ pub async fn handle_crud_message(
     dispatch_management(message, ctx).await
 }
 
-async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx<'_>) -> Result<()> {
+async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx) -> Result<()> {
     if message.message_type != MESSAGE_TYPE_CRUD {
         return helpers::send_crud_i18n_errorf(
             message,

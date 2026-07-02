@@ -79,34 +79,33 @@ pub async fn run(
                         s.rpc_requests += 1;
                     }
                     let acl_snapshot = acl.read().await.clone();
-                    if let Err(err) = tokio::time::timeout(
-                        Duration::from_secs(30),
-                        rpc::handle_rpc_message(
-                            &message,
-                            &acl_snapshot,
-                            &rpc::RpcHandlerCtx {
-                                our_did: Arc::from(our_did.as_str()),
-                                signing_key: Arc::new(signing_key.clone()),
-                                endpoint: Arc::clone(&endpoint),
-                                kubo_rpc_url: Arc::from(kubo_url.as_str()),
-                                resolver: Arc::clone(&shared_resolver),
-                                entity_registry: entity_registry.clone(),
-                                kind_registry: kind_registry.clone(),
-                                envelope_tx: envelope_tx.clone(),
-                                stats: stats.clone(),
-                                acl_cache: acl_cache.clone(),
-                                avatar_key,
-                                manifest_writer: manifest_writer.clone(),
-                            },
-                        ),
-                    )
-                    .await
-                    .unwrap_or_else(|_| Err(anyhow::anyhow!("rpc handler timed out")))
-                    {
-                        warn!(error = %err, from = %message.from, "{}", i18n::t("rpc-message-rejected"));
-                    }
-                    message.content.zeroize();
-                    message.signature.zeroize();
+                    let ctx = rpc::RpcHandlerCtx {
+                        our_did: Arc::from(our_did.as_str()),
+                        signing_key: Arc::new(signing_key.clone()),
+                        endpoint: Arc::clone(&endpoint),
+                        kubo_rpc_url: Arc::from(kubo_url.as_str()),
+                        resolver: Arc::clone(&shared_resolver),
+                        entity_registry: entity_registry.clone(),
+                        kind_registry: kind_registry.clone(),
+                        envelope_tx: envelope_tx.clone(),
+                        stats: stats.clone(),
+                        acl_cache: acl_cache.clone(),
+                        avatar_key,
+                        manifest_writer: manifest_writer.clone(),
+                    };
+                    tokio::spawn(async move {
+                        if let Err(err) = tokio::time::timeout(
+                            Duration::from_secs(30),
+                            rpc::handle_rpc_message(&message, &acl_snapshot, &ctx),
+                        )
+                        .await
+                        .unwrap_or_else(|_| Err(anyhow::anyhow!("rpc handler timed out")))
+                        {
+                            warn!(error = %err, from = %message.from, "{}", i18n::t("rpc-message-rejected"));
+                        }
+                        message.content.zeroize();
+                        message.signature.zeroize();
+                    });
                 }
 
                 // Drain /ma/ipfs/0.0.1
@@ -171,35 +170,35 @@ pub async fn run(
                         // the same SharedAcl (e.g. :acl: edit-save), and holding
                         // a read guard across that await would deadlock.
                         let acl_snapshot = acl.read().await.clone();
-                        if let Err(err) = tokio::time::timeout(
-                            Duration::from_secs(30),
-                            crud::handle_crud_message(
-                            &message,
-                            &acl_snapshot,
-                            &crud::CrudHandlerCtx {
-                                our_did: &our_did,
-                                signing_key: &signing_key,
-                                endpoint: &*endpoint,
-                                kubo_rpc_url: &kubo_url,
-                                resolver: Arc::clone(&shared_resolver),
-                                stats: stats.clone(),
-                                entity_registry: entity_registry.clone(),
-                                kind_registry: kind_registry.clone(),
-                                shared_config: Arc::clone(&shared_config),
-                                acl_cache: acl_cache.clone(),
-                                root_acl: acl.clone(),
-                                envelope_tx: envelope_tx.clone(),
-                                avatar_key,
-                                manifest_writer: manifest_writer.clone(),
-                            },
-                        ))
-                        .await
-                        .unwrap_or_else(|_| Err(anyhow::anyhow!("crud handler timed out")))
-                        {
-                            warn!(error = %err, from = %message.from, "CRUD message rejected");
-                        }
-                        message.content.zeroize();
-                        message.signature.zeroize();
+                        let ctx = crud::CrudHandlerCtx {
+                            our_did: Arc::from(our_did.as_str()),
+                            signing_key: Arc::new(signing_key.clone()),
+                            endpoint: Arc::clone(&endpoint),
+                            kubo_rpc_url: Arc::from(kubo_url.as_str()),
+                            resolver: Arc::clone(&shared_resolver),
+                            stats: stats.clone(),
+                            entity_registry: entity_registry.clone(),
+                            kind_registry: kind_registry.clone(),
+                            shared_config: Arc::clone(&shared_config),
+                            acl_cache: acl_cache.clone(),
+                            root_acl: acl.clone(),
+                            envelope_tx: envelope_tx.clone(),
+                            avatar_key,
+                            manifest_writer: manifest_writer.clone(),
+                        };
+                        tokio::spawn(async move {
+                            if let Err(err) = tokio::time::timeout(
+                                Duration::from_secs(30),
+                                crud::handle_crud_message(&message, &acl_snapshot, &ctx),
+                            )
+                            .await
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("crud handler timed out")))
+                            {
+                                warn!(error = %err, from = %message.from, "CRUD message rejected");
+                            }
+                            message.content.zeroize();
+                            message.signature.zeroize();
+                        });
                     }
                 }
 

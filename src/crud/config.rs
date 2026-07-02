@@ -197,7 +197,7 @@ pub(super) async fn handle_config_ns(
     tail: Option<&str>,
     args: Vec<CborValue>,
     reply_type: &str,
-    ctx: &CrudHandlerCtx<'_>,
+    ctx: &CrudHandlerCtx,
 ) -> Result<()> {
     // No key segment — operate on config root.
     if rest.is_empty() {
@@ -367,7 +367,7 @@ pub(super) async fn handle_config_ns(
             // Language hot-swap: reload FTL messages immediately.
             if key == "i18n" {
                 if let serde_yaml::Value::String(ref lang) = yaml_val {
-                    crate::i18n::switch_lang(lang, ctx.kubo_rpc_url).await;
+                    crate::i18n::switch_lang(lang, &ctx.kubo_rpc_url).await;
                 }
             }
             // Owners hot-swap: manifest is the source of truth; ACL follows.

@@ -290,18 +290,17 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
         return Ok(out);
     };
 
-    let now_ns = std::time::SystemTime::now()
+    let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs()
-        .saturating_mul(1_000_000_000);
+        .as_secs();
 
     let msg = crate::entity::LocalMessage {
         id: format!("ma-call-{}-{}", caller_fragment, req.to),
         from: caller_did,
         to: format!("#{}", req.to),
-        created_at: now_ns,
-        expires: now_ns + 5_000_000_000,
+        created_at: now_secs,
+        expires: now_secs + 5,
         reply_to: None,
         content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
         content: req.content,

@@ -213,7 +213,7 @@ async fn handle_entity_plugin_message(
         id: message.id.clone(),
         from: message.from.clone(),
         to: message.to.clone(),
-        created_at: (message.created_at * 1_000_000_000.0) as u64,
+        created_at: message.created_at,
         expires: message.exp,
         reply_to: message.reply_to.clone(),
         content_type: message.content_type.clone(),

@@ -161,9 +161,9 @@ pub struct LocalMessage {
     pub id: String,
     pub from: String,
     pub to: String,
-    /// Unix nanoepoch.
+    /// Unix epoch seconds.
     pub created_at: u64,
-    /// Expiry as Unix nanoepoch.
+    /// Expiry as Unix epoch seconds (0 = never expires).
     pub expires: u64,
     pub reply_to: Option<String>,
     pub content_type: String,
@@ -217,17 +217,37 @@ pub struct CastInput {
     pub msg: LocalMessage,
 }
 
+/// Minimal message reference carried by `ma_reply` — the runtime only needs
+/// the sender DID and the original message ID for routing; full `LocalMessage`
+/// fields (u64 timestamps, content bytes) are not required and must NOT be
+/// encoded by plugins to avoid triggering CBOR encoding of large u64 values
+/// via `struct.pack` in Python WASM builds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MsgRef {
+    pub id: String,
+    pub from: String,
+}
+
+impl From<&LocalMessage> for MsgRef {
+    fn from(m: &LocalMessage) -> Self {
+        Self {
+            id: m.id.clone(),
+            from: m.from.clone(),
+        }
+    }
+}
+
 /// Input for the `ma_reply` host function.
 ///
-/// Plugin passes the original `LocalMessage` back alongside reply content;
-/// the runtime fills in `to` and `reply_to` automatically from `msg`.
-/// `content_type` is the MIME type of the reply body (e.g. `text/plain`,
-/// `application/cbor`).  The wire `message_type` is set automatically by the
-/// runtime based on `reply_to` being present.
+/// Plugin passes back only `id` and `from` from the original message;
+/// the runtime fills in `to` and `reply_to` automatically.
+/// `content_type` is the MIME type of the reply body.
+/// Serde ignores any extra fields — existing WASMs that send the full
+/// `LocalMessage` map continue to work without rebuilding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplyRequest {
-    /// The original incoming message — used to determine routing.
-    pub msg: LocalMessage,
+    /// Minimal reference to the original message — only `id` and `from` used.
+    pub msg: MsgRef,
     /// MIME type of the reply body.
     pub content_type: String,
     /// Serialised reply body bytes.

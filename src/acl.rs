@@ -195,13 +195,12 @@ pub async fn query_actor_group(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let now = now_secs.saturating_mul(1_000_000_000);
     let msg = crate::entity::LocalMessage {
         id: format!("acl-contains-{fragment}"),
         from: String::new(),
         to: format!("#{fragment}"),
-        created_at: now,
-        expires: now + 5_000_000_000, // 5 seconds
+        created_at: now_secs,
+        expires: now_secs + 5, // 5 seconds
         reply_to: None,
         content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
         content,

@@ -263,18 +263,15 @@ pub async fn dispatch_scheduled(
         tracing::trace!(fragment = %fragment, id = %id, "scheduled dispatch firing");
     }
 
-    let now_nanos = u64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos(),
-    )
-    .unwrap_or(u64::MAX);
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
 
     // Produce a stable message ID from the timestamp + fragment without
     // pulling in a uuid dep here — blake3 is already available.
     let mut hasher = blake3::Hasher::new();
-    hasher.update(&now_nanos.to_le_bytes());
+    hasher.update(&now_secs.to_le_bytes());
     hasher.update(fragment.as_bytes());
     let id = hasher.finalize().to_hex()[..16].to_string();
 
@@ -282,7 +279,7 @@ pub async fn dispatch_scheduled(
         id,
         from: format!("{}#scheduler", ctx.our_did),
         to: format!("{}#{}", ctx.our_did, fragment),
-        created_at: now_nanos,
+        created_at: now_secs,
         expires: 0,
         reply_to: None,
         content_type: CONTENT_TYPE_TERM.to_string(),
