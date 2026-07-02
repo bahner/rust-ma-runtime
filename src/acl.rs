@@ -205,7 +205,9 @@ pub async fn query_actor_group(
         content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
         content,
     };
-    let input = crate::entity::CastInput { msg };
+    let input = crate::entity::CastInput {
+        msg: crate::entity::PluginMsg::from(&msg),
+    };
     let result = ep.handle_call(&input).await?;
 
     // Parse reply: :ok true → caller is member; anything else → not member.

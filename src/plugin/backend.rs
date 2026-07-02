@@ -209,7 +209,19 @@ host_fn!(ma_avatar_id_fn(user_data: AvatarIdCtx; input: Vec<u8>) -> Vec<u8> {
     Ok(hex.into_bytes())
 });
 
-// ── ma_call host function ─────────────────────────────────────────────────────
+// ── ma_call host function ─────────────────────────────────────────────────────────────────────────
+
+/// Hard cap on any single Wasm export invocation (init / handle_cast /
+/// handle_call).  Enforced by extism via wasmtime epoch interruption — a
+/// plugin stuck in an infinite loop gets aborted and the worker thread
+/// survives, instead of being wedged forever.
+pub(super) const WASM_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Upper bound on how long `ma_call` waits for the target entity's reply.
+/// Slightly above [`WASM_CALL_TIMEOUT`] so the callee's own execution cap
+/// fires first; this bound only triggers when the callee's dispatch queue
+/// is severely backed up.
+const MA_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(35);
 
 // Context captured by the `ma_call` host function.
 struct CallCtx {
@@ -218,6 +230,9 @@ struct CallCtx {
     caller_did: String,
     /// Fragment of the calling entity — prevents self-calls.
     caller_fragment: String,
+    /// Tokio runtime handle — lets the (plain OS) worker thread run a
+    /// timed wait for the reply without ever parking a Tokio worker.
+    handle: tokio::runtime::Handle,
 }
 
 // Input sent by the plugin to `ma_call`.
@@ -250,6 +265,7 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
     let registry = ctx.registry.clone();
     let caller_did = ctx.caller_did.clone();
     let caller_fragment = ctx.caller_fragment.clone();
+    let handle = ctx.handle.clone();
     drop(ctx);
 
     // Build the call path leading to the target: everything already on the
@@ -305,7 +321,7 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
         content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
         content: req.content,
     };
-    let cast_input = CastInput { msg };
+    let cast_input = CastInput { msg: crate::entity::PluginMsg::from(&msg) };
 
     // Send a capturing dispatch to the target's worker thread and block this
     // thread until it replies.
@@ -333,9 +349,11 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
         return Ok(out);
     }
 
-    let dispatch_result = match reply_rx.blocking_recv() {
-        Ok(Ok(r)) => r,
-        Ok(Err(e)) => {
+    let dispatch_result = match handle.block_on(async {
+        tokio::time::timeout(MA_CALL_TIMEOUT, reply_rx).await
+    }) {
+        Ok(Ok(Ok(r))) => r,
+        Ok(Ok(Err(e))) => {
             let mut out = Vec::new();
             ciborium::ser::into_writer(
                 &ciborium::Value::Array(vec![
@@ -347,12 +365,28 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
             .map_err(|err| extism::Error::msg(format!("ma_call encode: {err}")))?;
             return Ok(out);
         }
-        Err(_) => {
+        Ok(Err(_)) => {
             let mut out = Vec::new();
             ciborium::ser::into_writer(
                 &ciborium::Value::Array(vec![
                     ciborium::Value::Text(":error".into()),
                     ciborium::Value::Text(format!("ma_call: no reply from #{}", req.to)),
+                ]),
+                &mut out,
+            )
+            .map_err(|err| extism::Error::msg(format!("ma_call encode: {err}")))?;
+            return Ok(out);
+        }
+        Err(_elapsed) => {
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &ciborium::Value::Array(vec![
+                    ciborium::Value::Text(":error".into()),
+                    ciborium::Value::Text(format!(
+                        "ma_call: timed out waiting for #{} after {}s",
+                        req.to,
+                        MA_CALL_TIMEOUT.as_secs()
+                    )),
                 ]),
                 &mut out,
             )
@@ -419,6 +453,9 @@ pub(super) struct WasmThreadCfg {
     pub(super) envelope_tx: UnboundedSender<(String, SendEnvelope)>,
     pub(super) entity_registry: EntityRegistry,
     pub(super) avatar_key: [u8; 32],
+    /// Tokio runtime handle, captured in `EntityPlugin::load` (async context).
+    /// Passed to `CallCtx` so `ma_call` can run timed waits from the worker thread.
+    pub(super) handle: tokio::runtime::Handle,
 }
 
 /// Handles retained by the worker thread to drain plugin side-effects after
@@ -452,6 +489,7 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
         registry: cfg.entity_registry.clone(),
         caller_did: format!("{}#{}", cfg.our_did, &cfg.fragment),
         caller_fragment: cfg.fragment.clone(),
+        handle: cfg.handle.clone(),
     });
     let avatar_id_ctx: UserData<AvatarIdCtx> = UserData::new(AvatarIdCtx {
         key: cfg.avatar_key,
@@ -518,7 +556,8 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
         .map(|(_, f)| f)
         .collect();
 
-    let manifest = Manifest::new([Wasm::data(cfg.wasm_bytes.clone())]);
+    let manifest =
+        Manifest::new([Wasm::data(cfg.wasm_bytes.clone())]).with_timeout(WASM_CALL_TIMEOUT);
     let plugin = Plugin::new(&manifest, host_fns, cfg.wasi)
         .map_err(|e| anyhow!("failed to create extism plugin for '{}': {e}", cfg.fragment))?;
 

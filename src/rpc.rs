@@ -11,7 +11,9 @@ use ma_core::{
 use tracing::{debug, info, warn};
 
 use crate::acl::{check_full, AclCache, AclMap, CAP_RPC};
-use crate::entity::{CastInput, IpldLink, Lifecycle, LocalMessage, PluginKind, SendEnvelope};
+use crate::entity::{
+    CastInput, IpldLink, Lifecycle, LocalMessage, PluginKind, PluginMsg, SendEnvelope,
+};
 use crate::plugin::EntityRegistry;
 use crate::status::SharedStats;
 
@@ -220,7 +222,9 @@ async fn handle_entity_plugin_message(
         content: content_bytes,
     };
 
-    let cast_input = CastInput { msg: local_msg };
+    let cast_input = CastInput {
+        msg: PluginMsg::from(&local_msg),
+    };
     let result = match entity.kind {
         PluginKind::Stateless => entity.handle_cast(&cast_input).await?,
         PluginKind::Stateful => entity.handle_call(&cast_input).await?,

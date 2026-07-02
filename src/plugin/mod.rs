@@ -281,6 +281,7 @@ impl EntityPlugin {
             envelope_tx,
             entity_registry,
             avatar_key,
+            handle: tokio::runtime::Handle::current(),
         };
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<EntityMsg>();
@@ -372,6 +373,106 @@ impl EntityPlugin {
             Ok(Some(cid))
         } else {
             Ok(None)
+        }
+    }
+}
+
+#[cfg(test)]
+mod wasm_repro {
+    //! Local reproduction harness for plugin WASM crashes.
+    //! Requires a local Kubo node with the plugin CID pinned.
+    //! Run: cargo test wasm_repro -- --ignored --nocapture
+
+    use std::collections::BTreeMap;
+
+    use crate::entity::{
+        CastInput, EntityNode, Evaluator, IpldLink, KindNode, Lifecycle, PluginMsg, SendEnvelope,
+    };
+
+    use super::{new_entity_registry, EntityPlugin};
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "requires local Kubo with the restaurant.wasm CID"]
+    async fn dispatch_restaurant_wasm() {
+        let cid = std::env::var("WASM_CID").unwrap_or_else(|_| {
+            "bafybeihz77pxaep345puckusx2h6lrkh4e3ecta42bfgoaa7oopcogf32e".into()
+        });
+        let kubo = "http://127.0.0.1:5001";
+
+        let mut attributes = BTreeMap::new();
+        attributes.insert("stateful".to_string(), serde_json::Value::Bool(true));
+        attributes.insert("wasi".to_string(), serde_json::Value::Bool(true));
+
+        let kind_node = KindNode {
+            protocol: "/ma/room/0.0.1".to_string(),
+            api: vec!["init".to_string(), "handle_call".to_string()],
+            host_functions: vec![
+                "ma_reply".to_string(),
+                "ma_set_state".to_string(),
+                "ma_send".to_string(),
+                "ma_call".to_string(),
+            ],
+            evaluator: Evaluator::Extism,
+            attributes,
+            allow: vec![],
+        };
+
+        let entity_node = EntityNode {
+            kind: "/ma/room/0.0.1".to_string(),
+            behaviour: Some(IpldLink::new(&cid)),
+            acl: "open".to_string(),
+            state: None,
+            parent: None,
+            label: Some("Test Room".to_string()),
+            lifecycle: Lifecycle::New,
+        };
+
+        let (envelope_tx, mut envelope_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(String, SendEnvelope)>();
+        let registry = new_entity_registry();
+
+        println!("Loading wasm from {cid} ...");
+        let (ep, lifecycle) = EntityPlugin::load(
+            "room",
+            &entity_node,
+            &kind_node,
+            "did:ma:testrunner",
+            kubo,
+            envelope_tx,
+            registry.clone(),
+            [7u8; 32],
+        )
+        .await
+        .expect("plugin load");
+        println!("Loaded. lifecycle = {lifecycle}");
+
+        for verb in [":menu", ":ping", ":look"] {
+            let mut content = Vec::new();
+            ciborium::ser::into_writer(&ciborium::Value::Text(verb.to_string()), &mut content)
+                .unwrap();
+
+            let msg = PluginMsg {
+                id: format!("test-{}", verb.trim_start_matches(':')),
+                from: "did:ma:k51qzi5uqu5dlgh2drt9od7f7fmfe1u6rf5j2s2acfp9olltfx51oqhnl048xm"
+                    .to_string(),
+                to: "did:ma:testrunner#room".to_string(),
+                reply_to: None,
+                content_type: "application/x-ma-term".to_string(),
+                content,
+            };
+
+            println!("\n=== dispatch {verb} ===");
+            match ep.handle_call(&CastInput { msg }).await {
+                Ok(result) => {
+                    println!("OK, output {} bytes", result.output.len());
+                    while let Ok((frag, env)) = envelope_rx.try_recv() {
+                        let val: ciborium::Value =
+                            ciborium::de::from_reader(env.content.as_slice()).unwrap();
+                        println!("  reply from #{frag} -> {val:?}");
+                    }
+                }
+                Err(e) => panic!("CRASH on {verb}: {e}"),
+            }
         }
     }
 }

@@ -206,15 +206,46 @@ pub struct EntityCtx {
     pub lifecycle: Lifecycle,
 }
 
+/// Plugin-facing message — the subset of `LocalMessage` that plugins
+/// actually use.  Excludes `created_at` and `expires` (epoch-second integers
+/// in the uint32 range) which trigger a broken `struct.unpack_from('>I',…)`
+/// code path in extism-py WASM builds and cause every `handle_call` to crash.
+/// Serde ignores unknown fields on deserialise, so existing WASMs that send
+/// the full `LocalMessage` map continue to work without rebuilding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginMsg {
+    pub id: String,
+    pub from: String,
+    pub to: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    pub content_type: String,
+    /// CBOR-encoded payload (verb atom or `[":verb", args…]` array).
+    #[serde(with = "serde_bytes")]
+    pub content: Vec<u8>,
+}
+
+impl From<&LocalMessage> for PluginMsg {
+    fn from(m: &LocalMessage) -> Self {
+        Self {
+            id: m.id.clone(),
+            from: m.from.clone(),
+            to: m.to.clone(),
+            reply_to: m.reply_to.clone(),
+            content_type: m.content_type.clone(),
+            content: m.content.clone(),
+        }
+    }
+}
+
 /// Input passed (CBOR-encoded) to both `handle_cast` (stateless) and
 /// `handle_call` (stateful) exports.
 ///
-/// State is **not** included here — stateful plugins own their state
-/// internally and receive it once via `init(state_bytes)`.  They persist it
-/// by calling the `ma_set_state` host function.
+/// Uses `PluginMsg` (no timestamps) so plugins never receive uint32 epoch
+/// values that crash cbor2's WASM decoder via `struct.unpack_from('>I',…)`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CastInput {
-    pub msg: LocalMessage,
+    pub msg: PluginMsg,
 }
 
 /// Minimal message reference carried by `ma_reply` — the runtime only needs

@@ -286,7 +286,9 @@ pub async fn dispatch_scheduled(
         content: content.to_vec(),
     };
 
-    let cast_input = CastInput { msg: local_msg };
+    let cast_input = CastInput {
+        msg: crate::entity::PluginMsg::from(&local_msg),
+    };
 
     let result = match plugin.kind {
         PluginKind::Stateless => plugin.handle_cast(&cast_input).await,
