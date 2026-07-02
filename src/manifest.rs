@@ -1,0 +1,201 @@
+//! Serialised manifest writer.
+//!
+//! Every runtime-phase mutation of the IPFS [`RuntimeManifest`] goes through a
+//! single [`ManifestWriter`].  It owns the authoritative root CID behind an
+//! async mutex, so the read-modify-write cycle (`dag_get` → mutate → `dag_put` →
+//! `pin_update`) is serialised.
+//!
+//! This eliminates the last-writer-wins race that occurred when concurrent CRUD
+//! sets and `ma_create_entity` calls each read the same old root CID and raced
+//! to publish — previously dropping all but the last entity from the manifest
+//! on a crash-restart.
+//!
+//! Startup (`bootstrap::load_entities`) and shutdown (`save_all_entity_states`)
+//! run outside the concurrent window and do not use the writer; they mutate the
+//! manifest directly.  The writer must therefore be spawned *after* startup has
+//! settled the initial root CID, and all concurrent mutations must go through it.
+
+use std::sync::Arc;
+
+use anyhow::Result;
+use tokio::sync::Mutex;
+use tracing::warn;
+
+use crate::entity::RuntimeManifest;
+use crate::status::SharedStats;
+
+/// Cloneable handle to the serialised manifest writer.
+#[derive(Clone)]
+pub struct ManifestWriter {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
+    /// Authoritative current root CID.  Held across the whole read-modify-write
+    /// so mutations never race on a stale base.
+    current: Mutex<String>,
+    kubo_url: String,
+    stats: SharedStats,
+}
+
+impl ManifestWriter {
+    /// Create a writer rooted at `initial_cid`.
+    pub fn new(initial_cid: String, kubo_url: String, stats: SharedStats) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                current: Mutex::new(initial_cid),
+                kubo_url,
+                stats,
+            }),
+        }
+    }
+
+    /// Apply `f` to the current manifest, publish it, swap the pin, and return
+    /// the new root CID.  Mutations are fully serialised: each observes the
+    /// result of the previous one.
+    ///
+    /// `f` runs synchronously between the fetch and the publish; if it returns
+    /// `Err`, nothing is published and the root CID is unchanged.
+    // The guard is held across the whole read-modify-write on purpose — that is
+    // exactly what serialises concurrent mutations.
+    #[allow(clippy::significant_drop_tightening)]
+    pub async fn mutate<F>(&self, f: F) -> Result<String>
+    where
+        F: FnOnce(&mut RuntimeManifest) -> Result<()>,
+    {
+        let inner = &self.inner;
+        let mut guard = inner.current.lock().await;
+        let old_cid = guard.clone();
+
+        let mut manifest: RuntimeManifest = crate::kubo::dag_get(&inner.kubo_url, &old_cid).await?;
+        f(&mut manifest)?;
+        let new_cid = crate::kubo::dag_put(&inner.kubo_url, &manifest).await?;
+        if let Err(e) = crate::kubo::pin_update(&inner.kubo_url, &old_cid, &new_cid).await {
+            warn!(old = %old_cid, new = %new_cid, error = %e, "manifest pin_update failed");
+        }
+
+        guard.clone_from(&new_cid);
+        {
+            let mut stats = inner.stats.write().await;
+            stats.root_cid = Some(new_cid.clone());
+            if !manifest.owners.is_empty() {
+                stats.owners.clone_from(&manifest.owners);
+            }
+        }
+        Ok(new_cid)
+    }
+}
+
+impl std::fmt::Debug for ManifestWriter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ManifestWriter").finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use tokio::sync::RwLock;
+
+    use super::ManifestWriter;
+    use crate::entity::{IpldLink, RuntimeManifest};
+    use crate::status::Stats;
+    use crate::testkubo::MockKubo;
+
+    /// Publish an empty manifest to the mock and return `(root_cid, stats)`.
+    async fn seed(kubo: &MockKubo) -> (String, Arc<RwLock<Stats>>) {
+        let initial = crate::kubo::dag_put(kubo.url(), &RuntimeManifest::default())
+            .await
+            .unwrap();
+        let stats = Arc::new(RwLock::new(Stats {
+            root_cid: Some(initial.clone()),
+            ..Default::default()
+        }));
+        (initial, stats)
+    }
+
+    // Directly reproduces the last-writer-wins race the writer was built to fix:
+    // 25 concurrent inserts must all survive.  Before serialisation each task
+    // read the same base CID and clobbered the others — the final manifest would
+    // hold a single entity.
+    #[tokio::test]
+    async fn concurrent_mutations_are_not_lost() {
+        let kubo = MockKubo::start().await;
+        let (initial, stats) = seed(&kubo).await;
+        let writer = ManifestWriter::new(initial, kubo.url().to_string(), stats.clone());
+
+        let mut handles = Vec::new();
+        for i in 0..25u32 {
+            let w = writer.clone();
+            handles.push(tokio::spawn(async move {
+                w.mutate(move |m| {
+                    m.entities.insert(format!("e{i}"), IpldLink::new("bafyx"));
+                    Ok(())
+                })
+                .await
+            }));
+        }
+        for h in handles {
+            h.await.unwrap().unwrap();
+        }
+
+        let final_cid = stats.read().await.root_cid.clone().unwrap();
+        let m: RuntimeManifest = crate::kubo::dag_get(kubo.url(), &final_cid).await.unwrap();
+        assert_eq!(m.entities.len(), 25, "every concurrent insert must survive");
+    }
+
+    #[tokio::test]
+    async fn sequential_mutations_chain() {
+        let kubo = MockKubo::start().await;
+        let (initial, stats) = seed(&kubo).await;
+        let writer = ManifestWriter::new(initial, kubo.url().to_string(), stats.clone());
+
+        for name in ["a", "b", "c"] {
+            let name = name.to_string();
+            writer
+                .mutate(move |m| {
+                    m.entities.insert(name, IpldLink::new("bafyx"));
+                    Ok(())
+                })
+                .await
+                .unwrap();
+        }
+
+        let cid = stats.read().await.root_cid.clone().unwrap();
+        let m: RuntimeManifest = crate::kubo::dag_get(kubo.url(), &cid).await.unwrap();
+        assert_eq!(m.entities.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn failed_mutation_does_not_advance_root() {
+        let kubo = MockKubo::start().await;
+        let (initial, stats) = seed(&kubo).await;
+        let writer = ManifestWriter::new(initial.clone(), kubo.url().to_string(), stats.clone());
+
+        let result = writer.mutate(|_m| Err(anyhow::anyhow!("boom"))).await;
+        assert!(result.is_err());
+        assert_eq!(
+            stats.read().await.root_cid.as_deref(),
+            Some(initial.as_str()),
+            "a failed mutation must not advance the root CID"
+        );
+    }
+
+    #[tokio::test]
+    async fn mutation_syncs_owners_to_stats() {
+        let kubo = MockKubo::start().await;
+        let (initial, stats) = seed(&kubo).await;
+        let writer = ManifestWriter::new(initial, kubo.url().to_string(), stats.clone());
+
+        writer
+            .mutate(|m| {
+                m.owners.push("did:ma:alice".to_string());
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(stats.read().await.owners, vec!["did:ma:alice".to_string()]);
+    }
+}

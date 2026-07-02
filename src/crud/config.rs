@@ -395,3 +395,53 @@ pub(super) async fn handle_config_ns(
         _ => Err(anyhow!("unknown config.{key} operation")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{cbor_to_yaml, is_protected_config_key_pub};
+    use ciborium::Value as CborValue;
+
+    #[test]
+    fn protects_secret_and_reserved_keys() {
+        assert!(is_protected_config_key_pub("slug"));
+        assert!(is_protected_config_key_pub("secret_bundle"));
+        assert!(is_protected_config_key_pub("secret_bundle_passphrase"));
+        assert!(is_protected_config_key_pub("config_path"));
+        assert!(is_protected_config_key_pub("secret_future_field"));
+    }
+
+    #[test]
+    fn allows_normal_keys() {
+        assert!(!is_protected_config_key_pub("kubo_rpc_url"));
+        assert!(!is_protected_config_key_pub("log_level"));
+        assert!(!is_protected_config_key_pub("owners"));
+    }
+
+    #[test]
+    fn cbor_scalars_map_to_yaml() {
+        assert_eq!(cbor_to_yaml(&CborValue::Bool(true)).as_bool(), Some(true));
+        assert_eq!(
+            cbor_to_yaml(&CborValue::Text("hi".into())).as_str(),
+            Some("hi")
+        );
+        assert_eq!(
+            cbor_to_yaml(&CborValue::Integer(42_i64.into())).as_u64(),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn cbor_sequence_dedups_preserving_order() {
+        let arr = CborValue::Array(vec![
+            CborValue::Text("a".into()),
+            CborValue::Text("b".into()),
+            CborValue::Text("a".into()),
+        ]);
+        let serde_yaml::Value::Sequence(items) = cbor_to_yaml(&arr) else {
+            panic!("expected a YAML sequence");
+        };
+        assert_eq!(items.len(), 2, "duplicates should be dropped");
+        assert_eq!(items[0].as_str(), Some("a"));
+        assert_eq!(items[1].as_str(), Some("b"));
+    }
+}

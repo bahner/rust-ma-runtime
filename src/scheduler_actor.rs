@@ -225,3 +225,116 @@ fn encode_verb_content(items: &[CborValue]) -> Result<Vec<u8>> {
         .map_err(|e| anyhow!("scheduler: CBOR encode verb: {e}"))?;
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{encode_verb_content, parse_schedule_request};
+    use crate::schedule::ScheduleRequest;
+    use ciborium::Value as CborValue;
+
+    fn text(s: &str) -> CborValue {
+        CborValue::Text(s.to_string())
+    }
+
+    fn int(n: i64) -> CborValue {
+        CborValue::Integer(n.into())
+    }
+
+    #[test]
+    fn parses_cron() {
+        let term = CborValue::Array(vec![
+            text(":cron"),
+            text("0 * * * * *"),
+            text("myentity"),
+            text(":tick"),
+        ]);
+        let p = parse_schedule_request(term, "from").unwrap();
+        assert_eq!(p.fragment, "myentity");
+        assert!(matches!(p.request, ScheduleRequest::Cron { spec, .. } if spec == "0 * * * * *"));
+    }
+
+    #[test]
+    fn parses_interval_duration_to_seconds() {
+        let term = CborValue::Array(vec![
+            text(":interval"),
+            text("30m"),
+            text("garden"),
+            text(":grow"),
+        ]);
+        let p = parse_schedule_request(term, "from").unwrap();
+        assert!(matches!(p.request, ScheduleRequest::Interval { secs, .. } if secs == 1_800));
+    }
+
+    #[test]
+    fn parses_at_timestamp() {
+        let term = CborValue::Array(vec![
+            text(":at"),
+            int(1_700_000_000_000),
+            text("e"),
+            text(":wake"),
+        ]);
+        let p = parse_schedule_request(term, "from").unwrap();
+        assert!(
+            matches!(p.request, ScheduleRequest::At { timestamp_ms, .. } if timestamp_ms == 1_700_000_000_000)
+        );
+    }
+
+    #[test]
+    fn parses_random_max_secs() {
+        let term = CborValue::Array(vec![
+            text(":random"),
+            int(300),
+            text("dog"),
+            text(":scratch"),
+        ]);
+        let p = parse_schedule_request(term, "from").unwrap();
+        assert!(matches!(p.request, ScheduleRequest::Random { max_secs, .. } if max_secs == 300));
+    }
+
+    #[test]
+    fn normalises_did_url_target_to_bare_fragment() {
+        let term = CborValue::Array(vec![
+            text(":cron"),
+            text("* * * * * *"),
+            text("did:ma:abc#myentity"),
+            text(":tick"),
+        ]);
+        let p = parse_schedule_request(term, "from").unwrap();
+        assert_eq!(p.fragment, "myentity");
+    }
+
+    #[test]
+    fn rejects_too_few_elements() {
+        let term = CborValue::Array(vec![text(":cron"), text("spec"), text("target")]);
+        assert!(parse_schedule_request(term, "from").is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_type() {
+        let term = CborValue::Array(vec![text(":weekly"), text("x"), text("t"), text(":v")]);
+        assert!(parse_schedule_request(term, "from").is_err());
+    }
+
+    #[test]
+    fn encode_verb_content_bare_verb_stays_atom() {
+        let items = vec![text(":x"), text("y"), text("t"), text(":grow")];
+        let content = encode_verb_content(&items).unwrap();
+        let decoded: CborValue = ciborium::de::from_reader(content.as_slice()).unwrap();
+        assert!(matches!(decoded, CborValue::Text(s) if s == ":grow"));
+    }
+
+    #[test]
+    fn encode_verb_content_wraps_extra_args_in_array() {
+        let items = vec![
+            text(":x"),
+            text("y"),
+            text("t"),
+            text(":grow"),
+            text("a"),
+            text("b"),
+        ];
+        let content = encode_verb_content(&items).unwrap();
+        let decoded: CborValue = ciborium::de::from_reader(content.as_slice()).unwrap();
+        assert!(matches!(decoded, CborValue::Array(a) if a.len() == 3));
+    }
+}

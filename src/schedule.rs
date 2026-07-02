@@ -316,3 +316,37 @@ pub async fn dispatch_scheduled(
         }
     }
 }
+
+#[cfg(test)]
+mod duration_tests {
+    use super::parse_duration;
+
+    #[test]
+    fn single_units() {
+        assert_eq!(parse_duration("90s").unwrap().as_secs(), 90);
+        assert_eq!(parse_duration("5m").unwrap().as_secs(), 300);
+        assert_eq!(parse_duration("2h").unwrap().as_secs(), 7_200);
+        assert_eq!(parse_duration("1d").unwrap().as_secs(), 86_400);
+    }
+
+    #[test]
+    fn combined_units() {
+        assert_eq!(parse_duration("1h30m").unwrap().as_secs(), 5_400);
+        assert_eq!(parse_duration("2d12h").unwrap().as_secs(), 216_000);
+    }
+
+    #[test]
+    fn rejects_zero() {
+        assert!(parse_duration("0s").is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_unit() {
+        assert!(parse_duration("5x").is_err());
+    }
+
+    #[test]
+    fn rejects_trailing_number() {
+        assert!(parse_duration("5").is_err());
+    }
+}

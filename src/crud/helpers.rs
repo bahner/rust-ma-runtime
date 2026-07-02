@@ -91,21 +91,10 @@ pub(super) async fn with_manifest_crud<F>(ctx: &CrudHandlerCtx<'_>, f: F) -> Res
 where
     F: FnOnce(&mut RuntimeManifest) -> Result<()>,
 {
-    let old_cid = current_root_cid(ctx).await?;
-    let mut manifest: RuntimeManifest = crate::kubo::dag_get(ctx.kubo_rpc_url, &old_cid).await?;
-    f(&mut manifest)?;
-    let new_cid = crate::kubo::dag_put(ctx.kubo_rpc_url, &manifest).await?;
-    if let Err(e) = crate::kubo::pin_update(ctx.kubo_rpc_url, &old_cid, &new_cid).await {
-        warn!(old = %old_cid, new = %new_cid, error = %e, "CRUD pin_update failed");
-    }
+    // All manifest mutations are serialised through the writer, which owns the
+    // authoritative root CID — no read-modify-write race on a stale base.
+    let new_cid = ctx.manifest_writer.mutate(f).await?;
     update_stats_entities(ctx).await;
-    {
-        let mut stats = ctx.stats.write().await;
-        stats.root_cid = Some(new_cid.clone());
-        if !manifest.owners.is_empty() {
-            stats.owners.clone_from(&manifest.owners);
-        }
-    }
     Ok(new_cid)
 }
 
@@ -167,27 +156,28 @@ pub(super) fn spawn_entity_reload(
             } else {
                 // Fall back: fetch from IPFS via the manifest.
                 drop(registry);
-                let root_cid = match stats.read().await.root_cid.clone() {
-                    Some(c) => c,
-                    None => {
-                        warn!(name = %name, kind = %entity_node.kind, "no root CID available; cannot reload entity");
+                let root_cid = stats.read().await.root_cid.clone();
+                let Some(root_cid) = root_cid else {
+                    warn!(name = %name, kind = %entity_node.kind, "no root CID available; cannot reload entity");
+                    return;
+                };
+                let manifest: crate::entity::RuntimeManifest = match crate::kubo::dag_get(
+                    &kubo_rpc_url,
+                    &root_cid,
+                )
+                .await
+                {
+                    Ok(m) => m,
+                    Err(e) => {
+                        warn!(name = %name, kind = %entity_node.kind, error = %e, "failed to load manifest for kind lookup");
                         return;
                     }
                 };
-                let manifest: crate::entity::RuntimeManifest =
-                    match crate::kubo::dag_get(&kubo_rpc_url, &root_cid).await {
-                        Ok(m) => m,
-                        Err(e) => {
-                            warn!(name = %name, kind = %entity_node.kind, error = %e, "failed to load manifest for kind lookup");
-                            return;
-                        }
-                    };
-                let kind_link = match manifest.kinds.get_protocol(&entity_node.kind) {
-                    Some(l) => l.clone(),
-                    None => {
-                        warn!(name = %name, kind = %entity_node.kind, "kind not in manifest; cannot reload entity");
-                        return;
-                    }
+                let kind_link = if let Some(l) = manifest.kinds.get_protocol(&entity_node.kind) {
+                    l.clone()
+                } else {
+                    warn!(name = %name, kind = %entity_node.kind, "kind not in manifest; cannot reload entity");
+                    return;
                 };
                 match crate::kubo::dag_get::<KindNode>(&kubo_rpc_url, &kind_link.cid).await {
                     Ok(k) => Arc::new(k),
@@ -456,4 +446,105 @@ async fn send_crud_reply_raw(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_crud_payload, parse_path, strip_brackets, CrudOp};
+    use ciborium::Value as CborValue;
+
+    fn cbor(v: &CborValue) -> Vec<u8> {
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(v, &mut buf).unwrap();
+        buf
+    }
+
+    #[test]
+    fn parse_path_splits_namespace_and_segments() {
+        let (ns, segs) = parse_path(".entities.rms.acl").unwrap();
+        assert_eq!(ns, "entities");
+        assert_eq!(segs, vec!["rms", "acl"]);
+    }
+
+    #[test]
+    fn parse_path_bare_namespace_has_no_segments() {
+        let (ns, segs) = parse_path(".entities").unwrap();
+        assert_eq!(ns, "entities");
+        assert!(segs.is_empty());
+    }
+
+    #[test]
+    fn parse_path_requires_leading_dot() {
+        assert!(parse_path("entities.rms").is_err());
+    }
+
+    #[test]
+    fn parse_path_rejects_empty_namespace() {
+        assert!(parse_path("..rms").is_err());
+    }
+
+    #[test]
+    fn parse_path_ignores_double_and_trailing_dots() {
+        let (ns, segs) = parse_path(".entities..rms.").unwrap();
+        assert_eq!(ns, "entities");
+        assert_eq!(segs, vec!["rms"]);
+    }
+
+    #[test]
+    fn decode_crud_get_on_single_element() {
+        let payload = cbor(&CborValue::Array(vec![CborValue::Text(".entities".into())]));
+        assert!(
+            matches!(decode_crud_payload(&payload).unwrap(), CrudOp::Get(p) if p == ".entities")
+        );
+    }
+
+    #[test]
+    fn decode_crud_delete_on_empty_string() {
+        let payload = cbor(&CborValue::Array(vec![
+            CborValue::Text(".entities.rms".into()),
+            CborValue::Text(String::new()),
+        ]));
+        assert!(
+            matches!(decode_crud_payload(&payload).unwrap(), CrudOp::Delete(p) if p == ".entities.rms")
+        );
+    }
+
+    #[test]
+    fn decode_crud_set_on_value() {
+        let payload = cbor(&CborValue::Array(vec![
+            CborValue::Text(".config.k".into()),
+            CborValue::Text("v".into()),
+        ]));
+        assert!(
+            matches!(decode_crud_payload(&payload).unwrap(), CrudOp::Set(p, _) if p == ".config.k")
+        );
+    }
+
+    #[test]
+    fn decode_crud_rejects_non_array() {
+        let payload = cbor(&CborValue::Text("nope".into()));
+        assert!(decode_crud_payload(&payload).is_err());
+    }
+
+    #[test]
+    fn decode_crud_rejects_wrong_arity() {
+        let payload = cbor(&CborValue::Array(vec![
+            CborValue::Text("a".into()),
+            CborValue::Text("b".into()),
+            CborValue::Text("c".into()),
+        ]));
+        assert!(decode_crud_payload(&payload).is_err());
+    }
+
+    #[test]
+    fn strip_brackets_extracts_inner() {
+        assert_eq!(strip_brackets("<bafy123>"), Some("bafy123"));
+    }
+
+    #[test]
+    fn strip_brackets_rejects_bare_and_partial() {
+        assert_eq!(strip_brackets("bafy123"), None);
+        assert_eq!(strip_brackets("<bafy123"), None);
+        assert_eq!(strip_brackets("bafy123>"), None);
+    }
 }

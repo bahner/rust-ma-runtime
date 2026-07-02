@@ -11,9 +11,7 @@ use ma_core::{
 use tracing::{debug, info, warn};
 
 use crate::acl::{check_full, AclCache, AclMap, CAP_RPC};
-use crate::entity::{
-    CastInput, IpldLink, Lifecycle, LocalMessage, PluginKind, RuntimeManifest, SendEnvelope,
-};
+use crate::entity::{CastInput, IpldLink, Lifecycle, LocalMessage, PluginKind, SendEnvelope};
 use crate::plugin::EntityRegistry;
 use crate::status::SharedStats;
 
@@ -33,27 +31,25 @@ pub struct RpcHandlerCtx {
     pub stats: SharedStats,
     pub acl_cache: AclCache,
     pub avatar_key: [u8; 32],
+    pub manifest_writer: crate::manifest::ManifestWriter,
 }
 
 // ── Entity creation helper ─────────────────────────────────────────────────────
 
 async fn persist_new_entity(
+    manifest_writer: &crate::manifest::ManifestWriter,
     kubo_url: &str,
-    old_root_cid: &str,
     fragment: &str,
     entity_node: &crate::entity::EntityNode,
-    stats: &SharedStats,
 ) -> Result<()> {
-    let mut manifest: RuntimeManifest = crate::kubo::dag_get(kubo_url, old_root_cid).await?;
     let entity_cid = crate::kubo::dag_put(kubo_url, entity_node).await?;
-    manifest
-        .entities
-        .insert(fragment.to_string(), IpldLink::new(&entity_cid));
-    let new_root_cid = crate::kubo::dag_put(kubo_url, &manifest).await?;
-    if let Err(e) = crate::kubo::pin_update(kubo_url, old_root_cid, &new_root_cid).await {
-        warn!(old = %old_root_cid, new = %new_root_cid, error = %e, "persist_new_entity: pin_update failed");
-    }
-    stats.write().await.root_cid = Some(new_root_cid);
+    let fragment = fragment.to_string();
+    manifest_writer
+        .mutate(move |m| {
+            m.entities.insert(fragment, IpldLink::new(&entity_cid));
+            Ok(())
+        })
+        .await?;
     Ok(())
 }
 
@@ -292,43 +288,22 @@ async fn handle_entity_plugin_message(
                 info!(fragment = %req.fragment, kind = %req.kind_protocol,
                     parent = %req.parent, "entity created via ma_create_entity");
                 // Persist the updated manifest in the background so the main
-                // event loop is not blocked by the IPFS dag_get / dag_put.
-                // The entity is already live in the in-memory registry above.
-                //
-                // KNOWN RACE: if a single dispatch queues multiple create_requests
-                // AND the spawned persist tasks run concurrently, each reads the
-                // same old_cid as base and the last writer wins for stats.root_cid,
-                // causing all but the last entity to be absent from the IPFS
-                // manifest after a crash-restart.  In-memory state is always
-                // correct; only crash recovery is affected.
-                //
-                // If this manifests (missing entity after restart): run
-                // `cargo run -- --bootstrap bootstrap.example.yaml` to rebuild
-                // the manifest from scratch, or manually re-send the
-                // `:entities.<fragment>: <cid>` CRUD command for each missing
-                // entity.  A proper fix would serialise all manifest writes
-                // through a dedicated background task with an mpsc channel.
-                let root_cid = ctx.stats.read().await.root_cid.clone();
-                if let Some(old_cid) = root_cid {
-                    let mut running_node = entity_node.clone();
-                    running_node.lifecycle = Lifecycle::Running;
-                    let kubo_url = ctx.kubo_rpc_url.to_string();
-                    let fragment = req.fragment.clone();
-                    let stats = ctx.stats.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = persist_new_entity(
-                            &kubo_url,
-                            &old_cid,
-                            &fragment,
-                            &running_node,
-                            &stats,
-                        )
-                        .await
-                        {
-                            warn!(fragment = %fragment, error = %e, "failed to persist new entity to manifest");
-                        }
-                    });
-                }
+                // event loop is not blocked by the IPFS dag_put.  The entity is
+                // already live in the in-memory registry above.  The manifest
+                // writer serialises this against all other manifest mutations,
+                // so concurrent creates can no longer clobber each other.
+                let mut running_node = entity_node.clone();
+                running_node.lifecycle = Lifecycle::Running;
+                let kubo_url = ctx.kubo_rpc_url.to_string();
+                let fragment = req.fragment.clone();
+                let writer = ctx.manifest_writer.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        persist_new_entity(&writer, &kubo_url, &fragment, &running_node).await
+                    {
+                        warn!(fragment = %fragment, error = %e, "failed to persist new entity to manifest");
+                    }
+                });
             }
             Ok((_, Lifecycle::Error)) => {
                 // New entity — init() failed: send error back to parent plugin,
@@ -500,4 +475,27 @@ fn send_rpc_error_reply(
     )
     .context("failed to encode RPC error reply")?;
     send_rpc_reply(incoming, ctx, &payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_fragment;
+
+    #[test]
+    fn strips_matching_did_prefix() {
+        assert_eq!(
+            extract_fragment("did:ma:abc#rms", "did:ma:abc"),
+            Some("rms")
+        );
+    }
+
+    #[test]
+    fn none_for_different_did() {
+        assert_eq!(extract_fragment("did:ma:xyz#rms", "did:ma:abc"), None);
+    }
+
+    #[test]
+    fn none_without_fragment() {
+        assert_eq!(extract_fragment("did:ma:abc", "did:ma:abc"), None);
+    }
 }

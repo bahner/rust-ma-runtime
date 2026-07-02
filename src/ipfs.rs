@@ -564,10 +564,10 @@ async fn handle_did_document_publish(
                             .await
                         {
                             Ok(Ok(())) => {
-                                info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("did-publish-cid-reply-sent"))
+                                info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("did-publish-cid-reply-sent"));
                             }
                             Ok(Err(e)) => {
-                                warn!(error = %e, to = %rpc_did_url, "ipfs-publish reply send failed")
+                                warn!(error = %e, to = %rpc_did_url, "ipfs-publish reply send failed");
                             }
                             Err(_) => warn!(to = %rpc_did_url, "ipfs-publish reply send timed out"),
                         }
@@ -629,10 +629,10 @@ async fn handle_ipfs_store(
             Ok(mut outbox) => {
                 match tokio::time::timeout(Duration::from_secs(15), outbox.send(&reply)).await {
                     Ok(Ok(())) => {
-                        info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("ipfs-store-cid-reply-sent"))
+                        info!(to = %rpc_did_url, cid = %cid, "{}", i18n::t("ipfs-store-cid-reply-sent"));
                     }
                     Ok(Err(e)) => {
-                        warn!(error = %e, to = %rpc_did_url, "ipfs-store reply send failed")
+                        warn!(error = %e, to = %rpc_did_url, "ipfs-store reply send failed");
                     }
                     Err(_) => warn!(to = %rpc_did_url, "ipfs-store reply send timed out"),
                 }

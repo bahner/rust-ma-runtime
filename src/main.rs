@@ -2,29 +2,35 @@ mod acl;
 mod bootstrap;
 mod crud;
 mod entity;
+mod eventloop;
 mod i18n;
 mod ipfs;
 mod kubo;
+mod manifest;
 mod plugin;
+mod republish;
 mod rpc;
 mod schedule;
 mod scheduler_actor;
+mod startup;
 mod status;
+
+#[cfg(test)]
+mod testkubo;
 
 use anyhow::{anyhow, Context, Result};
 use cid::Cid;
 use clap::Parser;
-use ma_core::config::{Config, MaArgs, SecretBundle};
+use ma_core::config::{Config, MaArgs};
 use ma_core::ipfs::IpfsDidPublisher;
-use ma_core::{
-    ipns_from_secret, Did, Ipld, IPFS_PROTOCOL_ID, MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY,
-};
+use ma_core::{ipns_from_secret, Ipld, IPFS_PROTOCOL_ID};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
-use zeroize::Zeroize;
+
+use startup::{get_u64_setting, load_secret_bundle, runtime_manifest_config};
 
 const MA_DEFAULT_SLUG: &str = "ma";
 
@@ -218,7 +224,7 @@ async fn main() -> Result<()> {
         .get("crud_service")
         .and_then(serde_yaml::value::Value::as_bool)
         .unwrap_or(true);
-    let mut crud_messages = if crud_enabled {
+    let crud_messages = if crud_enabled {
         Some(endpoint.service(crud::CRUD_PROTOCOL_ID))
     } else {
         None
@@ -226,7 +232,7 @@ async fn main() -> Result<()> {
 
     // Convert endpoint to Arc so it can be shared across tokio::spawn tasks.
     // All service() registrations are complete at this point.
-    let mut endpoint: Arc<dyn ma_core::MaEndpoint> = Arc::from(endpoint);
+    let endpoint: Arc<dyn ma_core::MaEndpoint> = Arc::from(endpoint);
 
     // ── Own DID document (ma extension uses protocol + runtime link) ─────────
     // root_cid priority: --root-cid CLI > --bootstrap generated CID > IPNS resolution
@@ -275,7 +281,7 @@ async fn main() -> Result<()> {
     // moved into the publish closure and zeroized.  This key is stable across
     // restarts (deterministic from the IPNS key) and never leaves the process.
     let avatar_key: [u8; 32] =
-        blake3::derive_key("ma avatar-id v1", &secrets.ipns_secret_key.to_vec());
+        blake3::derive_key("ma avatar-id v1", secrets.ipns_secret_key.as_ref());
 
     let ipns_key = secrets.ipns_secret_key.to_vec();
     let kubo_url_clone = config.kubo_rpc_url.clone();
@@ -348,7 +354,7 @@ async fn main() -> Result<()> {
     .await;
 
     // ── Optional IPFS publisher service ───────────────────────────────────────
-    let mut ipfs_state = if ipfs_publisher_enabled {
+    let ipfs_state = if ipfs_publisher_enabled {
         let messages = ipfs_messages.expect("ipfs inbox exists when publisher is enabled");
         info!("IPFS publisher service enabled");
         Some(ipfs::IpfsServiceState::new(messages, publisher))
@@ -360,7 +366,7 @@ async fn main() -> Result<()> {
     // ── Load entity plugins from IPFS ──────────────────────────────────────────
     // Channel for envelopes produced by entity plugins via ma_send/ma_reply.
     // Plugins send fire-and-forget; the main event loop drains and delivers.
-    let (envelope_tx, mut envelope_rx) =
+    let (envelope_tx, envelope_rx) =
         tokio::sync::mpsc::unbounded_channel::<(String, entity::SendEnvelope)>();
     let entity_registry = plugin::new_entity_registry();
     let kind_registry = entity::new_kind_registry();
@@ -499,121 +505,33 @@ async fn main() -> Result<()> {
 
     status::spawn_status_server(stats.clone(), acl.clone(), cli.status_bind);
 
-    // Periodisk DID-republisering fra in-memory runtime-head.
-    // Publiserer umiddelbart ved CID-endring; ellers maks én gang per dag (cache-oppvarming).
+    // Serialised manifest writer — all runtime-phase manifest mutations (CRUD
+    // sets, ma_create_entity) go through this to avoid last-writer-wins races.
+    let manifest_writer = manifest::ManifestWriter::new(
+        root_cid.clone().unwrap_or_default(),
+        config.kubo_rpc_url.clone(),
+        stats.clone(),
+    );
+
+    // Periodic DID-document republishing from the in-memory runtime head.
     let did_publish_cache_warm_secs =
         get_u64_setting(&config, "did_publish_cache_warm_secs", 86_400);
-    let refresh_kubo_url = config.kubo_rpc_url.clone();
-    let refresh_ma_base = ma_base.clone();
-    let refresh_runtime_ipns_key = runtime_ipns_key;
-    let refresh_bundle_path = config.effective_secret_bundle()?;
     let refresh_passphrase = config
         .secret_bundle_passphrase
         .clone()
         .ok_or_else(|| anyhow!("secret_bundle_passphrase is required for periodic DID publish"))?;
-    let refresh_stats = stats.clone();
-    tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_secs(did_publish_interval_secs));
-        let mut last_published_cid: Option<String> = None;
-        let mut last_published_at = std::time::Instant::now()
-            .checked_sub(Duration::from_secs(did_publish_cache_warm_secs))
-            .unwrap_or_else(std::time::Instant::now);
-        loop {
-            ticker.tick().await;
-            let Some(latest_root_cid) = refresh_stats.read().await.root_cid.clone() else {
-                continue;
-            };
-            let cid_changed = last_published_cid.as_deref() != Some(latest_root_cid.as_str());
-            let cache_warm_elapsed =
-                last_published_at.elapsed() >= Duration::from_secs(did_publish_cache_warm_secs);
-            if !cid_changed && !cache_warm_elapsed {
-                continue;
-            }
-            let runtime_cid = match Cid::try_from(latest_root_cid.as_str()) {
-                Ok(c) => c,
-                Err(err) => {
-                    warn!(cid = %latest_root_cid, error = %err, "invalid root_cid for periodic DID publish");
-                    continue;
-                }
-            };
-            let bundle = match SecretBundle::load(&refresh_bundle_path, &refresh_passphrase) {
-                Ok(b) => b,
-                Err(err) => {
-                    error!(error = %format!("{err:#}"), "periodic DID load secret bundle failed");
-                    continue;
-                }
-            };
-            let ma = refresh_ma_base
-                .clone()
-                .extra("runtime", Ipld::Link(runtime_cid));
-            let document = match bundle.build_document(ma) {
-                Ok(doc) => doc,
-                Err(err) => {
-                    error!(error = %format!("{err:#}"), "periodic DID build failed");
-                    continue;
-                }
-            };
-            let doc_cbor = match document.encode() {
-                Ok(bytes) => bytes,
-                Err(err) => {
-                    error!(error = %format!("{err:#}"), "periodic DID encode failed");
-                    continue;
-                }
-            };
-            let ipns_key = bundle.ipns_secret_key.to_vec();
-            let publish = tokio::time::timeout(
-                Duration::from_secs(did_publish_timeout_secs),
-                ipfs::do_publish_own_document(
-                    refresh_kubo_url.clone(),
-                    doc_cbor,
-                    ipns_key,
-                    did_publish_lifetime_hours,
-                ),
-            )
-            .await;
-            let mut did_ok = false;
-            match publish {
-                Ok(Ok(())) => {
-                    info!(runtime_cid = %latest_root_cid, cid_changed, "periodic DID publish succeeded");
-                    did_ok = true;
-                }
-                Ok(Err(err)) => {
-                    error!(runtime_cid = %latest_root_cid, error = %format!("{err:#}"), "periodic DID publish failed");
-                }
-                Err(_) => error!(runtime_cid = %latest_root_cid, "periodic DID publish timed out"),
-            }
-
-            let ipns_ok = match tokio::time::timeout(
-                Duration::from_secs(did_publish_timeout_secs),
-                ipfs::publish_runtime_root_cid(
-                    &refresh_kubo_url,
-                    &refresh_runtime_ipns_key,
-                    &latest_root_cid,
-                    did_publish_lifetime_hours,
-                ),
-            )
-            .await
-            {
-                Ok(Ok(_)) => {
-                    info!(runtime_cid = %latest_root_cid, cid_changed, "periodic runtime_ipns publish succeeded");
-                    true
-                }
-                Ok(Err(err)) => {
-                    error!(runtime_cid = %latest_root_cid, error = %format!("{err:#}"), "periodic runtime_ipns publish failed");
-                    false
-                }
-                Err(_) => {
-                    error!(runtime_cid = %latest_root_cid, "periodic runtime_ipns publish timed out");
-                    false
-                }
-            };
-
-            if did_ok && ipns_ok {
-                last_published_cid = Some(latest_root_cid);
-                last_published_at = std::time::Instant::now();
-            }
-        }
-    });
+    republish::spawn_periodic_did_publish(
+        stats.clone(),
+        config.kubo_rpc_url.clone(),
+        ma_base.clone(),
+        runtime_ipns_key,
+        config.effective_secret_bundle()?,
+        refresh_passphrase,
+        did_publish_interval_secs,
+        did_publish_cache_warm_secs,
+        did_publish_timeout_secs,
+        did_publish_lifetime_hours,
+    );
 
     info!(
         did = %our_did,
@@ -630,378 +548,29 @@ async fn main() -> Result<()> {
     let shared_config: std::sync::Arc<tokio::sync::RwLock<Config>> =
         std::sync::Arc::new(tokio::sync::RwLock::new(config));
 
-    // ── Main event loop ────────────────────────────────────────────────────────
-    let mut ticker = tokio::time::interval(Duration::from_millis(cli.poll_ms));
-    let ctrl_c = tokio::signal::ctrl_c();
-    tokio::pin!(ctrl_c);
-
-    loop {
-        tokio::select! {
-            _ = ticker.tick() => {
-                let now = status::now_unix_secs();
-                let kubo_url = shared_config.read().await.kubo_rpc_url.clone();
-
-                // Drain /ma/rpc/0.0.1
-                while let Some(mut message) = rpc_messages.pop(now) {
-                    debug!(
-                        node = %message.from,
-                        protocol = rpc::RPC_PROTOCOL_ID,
-                        "{}", i18n::t("node-connected")
-                    );
-                    info!(
-                        from = %message.from,
-                        to = %message.to,
-                        id = %message.id,
-                        message_type = %message.message_type,
-                        "{}", i18n::t("rpc-message-received")
-                    );
-                    {
-                        let mut s = stats.write().await;
-                        s.rpc_requests += 1;
-                    }
-                    let acl_snapshot = acl.read().await.clone();
-                    if let Err(err) = tokio::time::timeout(
-                        Duration::from_secs(30),
-                        rpc::handle_rpc_message(
-                            &message,
-                            &acl_snapshot,
-                            &rpc::RpcHandlerCtx {
-                                our_did: Arc::from(our_did.as_str()),
-                                signing_key: Arc::new(signing_key.clone()),
-                                endpoint: Arc::clone(&endpoint),
-                                kubo_rpc_url: Arc::from(kubo_url.as_str()),
-                                resolver: Arc::clone(&shared_resolver),
-                                entity_registry: entity_registry.clone(),
-                                kind_registry: kind_registry.clone(),
-                                envelope_tx: envelope_tx.clone(),
-                                stats: stats.clone(),
-                                acl_cache: acl_cache.clone(),
-                                avatar_key,
-                            },
-                        ),
-                    )
-                    .await
-                    .unwrap_or_else(|_| Err(anyhow::anyhow!("rpc handler timed out")))
-                    {
-                        warn!(error = %err, from = %message.from, "{}", i18n::t("rpc-message-rejected"));
-                    }
-                    message.content.zeroize();
-                    message.signature.zeroize();
-                }
-
-                // Drain /ma/ipfs/0.0.1
-                if let Some(ref mut ipfs) = ipfs_state {
-                    while let Some(mut message) = ipfs.messages.pop(now) {
-                        debug!(
-                            node = %message.from,
-                            protocol = IPFS_PROTOCOL_ID,
-                            "{}", i18n::t("node-connected")
-                        );
-                        debug!(
-                            from = %message.from,
-                            to = %message.to,
-                            id = %message.id,
-                            message_type = %message.message_type,
-                            content_len = message.content.len(),
-                            "{}", i18n::t("received-encrypted-ma-msg")
-                        );
-                        {
-                            let mut s = stats.write().await;
-                            s.ipfs_requests += 1;
-                        }
-                        let acl_snapshot = acl.read().await.clone();
-                        if let Err(err) = tokio::time::timeout(
-                            Duration::from_mins(1),
-                            ipfs::handle_ipfs_message(
-                            &message,
-                            &acl_snapshot,
-                            &ipfs::IpfsHandlerCtx {
-                                our_did: &our_did,
-                                signing_key: &signing_key,
-                                endpoint: Arc::clone(&endpoint),
-                                kubo_rpc_url: &kubo_url,
-                                publisher: &ipfs.publisher,
-                                resolver: Arc::clone(&shared_resolver),
-                                doc_cache: Arc::clone(&ipfs.doc_cache),
-                            },
-                            &mut ipfs.replay_guard,
-                        ))
-                        .await
-                        .unwrap_or_else(|_| Err(anyhow::anyhow!("ipfs handler timed out")))
-                        {
-                            warn!(error = %err, from = %message.from, "{}", i18n::t("ipfs-message-rejected"));
-                        }
-                        message.content.zeroize();
-                        message.signature.zeroize();
-                    }
-                }
-
-                // Drain /ma/crud/0.0.1
-                if let Some(ref mut crud_inbox) = crud_messages {
-                    while let Some(mut message) = crud_inbox.pop(now) {
-                        info!(
-                            from = %message.from,
-                            to = %message.to,
-                            id = %message.id,
-                            message_type = %message.message_type,
-                            "{}", i18n::t("crud-message-received")
-                        );
-                        // Snapshot the ACL and drop the read guard *before* the
-                        // await. handle_crud_message may acquire a write lock on
-                        // the same SharedAcl (e.g. :acl: edit-save), and holding
-                        // a read guard across that await would deadlock.
-                        let acl_snapshot = acl.read().await.clone();
-                        if let Err(err) = tokio::time::timeout(
-                            Duration::from_secs(30),
-                            crud::handle_crud_message(
-                            &message,
-                            &acl_snapshot,
-                            &crud::CrudHandlerCtx {
-                                our_did: &our_did,
-                                signing_key: &signing_key,
-                                endpoint: &*endpoint,
-                                kubo_rpc_url: &kubo_url,
-                                resolver: Arc::clone(&shared_resolver),
-                                stats: stats.clone(),
-                                entity_registry: entity_registry.clone(),
-                                kind_registry: kind_registry.clone(),
-                                shared_config: Arc::clone(&shared_config),
-                                acl_cache: acl_cache.clone(),
-                                root_acl: acl.clone(),
-                                envelope_tx: envelope_tx.clone(),
-                                avatar_key,
-                            },
-                        ))
-                        .await
-                        .unwrap_or_else(|_| Err(anyhow::anyhow!("crud handler timed out")))
-                        {
-                            warn!(error = %err, from = %message.from, "CRUD message rejected");
-                        }
-                        message.content.zeroize();
-                        message.signature.zeroize();
-                    }
-                }
-
-                // Drain plugin outbox — envelopes sent fire-and-forget by ma_send/ma_reply.
-                while let Ok((fragment, env)) = envelope_rx.try_recv() {
-                    let msg_type = if env.reply_to.is_some() {
-                        MESSAGE_TYPE_RPC_REPLY
-                    } else {
-                        MESSAGE_TYPE_RPC
-                    };
-                    let sender_did_url = format!("{our_did}#{fragment}");
-                    let recipient = match Did::try_from(env.to.as_str()) {
-                        Ok(d) => d,
-                        Err(e) => {
-                            warn!(fragment = %fragment, to = %env.to, error = %e, "plugin envelope: invalid recipient DID; skipped");
-                            continue;
-                        }
-                    };
-                    let mut msg = match ma_core::Message::new(
-                        &sender_did_url,
-                        &env.to,
-                        msg_type,
-                        &env.content_type,
-                        &env.content,
-                        &signing_key,
-                    ) {
-                        Ok(m) => m,
-                        Err(e) => {
-                            warn!(fragment = %fragment, error = %e, "plugin envelope: failed to build message; skipped");
-                            continue;
-                        }
-                    };
-                    msg.reply_to = env.reply_to;
-                    // Spawn each delivery independently so one unreachable peer
-                    // cannot block others. Cap the outbox-open at 5 seconds.
-                    let ep   = Arc::clone(&endpoint);
-                    let res  = Arc::clone(&shared_resolver);
-                    let base = recipient.base_id().to_string();
-                    tokio::spawn(async move {
-                        match tokio::time::timeout(
-                            Duration::from_secs(5),
-                            ep.outbox(res.as_ref(), &base, rpc::RPC_PROTOCOL_ID),
-                        )
-                        .await
-                        {
-                            Ok(Ok(mut outbox)) => {
-                                if let Err(e) = outbox.send(&msg).await {
-                                    warn!(fragment = %fragment, to = %env.to, error = %e, "plugin envelope delivery failed");
-                                }
-                            }
-                            Ok(Err(e)) => warn!(fragment = %fragment, to = %env.to, error = %e, "plugin envelope: outbox open failed"),
-                            Err(_)     => warn!(fragment = %fragment, to = %env.to, "plugin envelope: outbox connect timed out (5 s)"),
-                        }
-                    });
-                }
-            }
-            signal = &mut ctrl_c => {
-                if let Err(err) = signal {
-                    error!(error = %err, "{}", i18n::t("ctrlc-handler-failed"));
-                }
-                eprintln!();
-                eprintln!("{}", i18n::t("shutdown-requested"));
-                info!("{}", i18n::t("shutdown-requested"));
-                let kubo_url = shared_config.read().await.kubo_rpc_url.clone();
-
-                // ── Persist entity states before exit ─────────────────────────
-                let active_root_cid = stats.read().await.root_cid.clone();
-                if let Some(ref rc) = active_root_cid {
-                    let count = entity_registry.read().await.len();
-                    if count > 0 {
-                        info!(count = %count, "{}", i18n::t("entity-states-saving"));
-                        match bootstrap::save_all_entity_states(
-                            rc,
-                            &kubo_url,
-                            &entity_registry,
-                        )
-                        .await
-                        {
-                            Ok(new_cid) => {
-                                stats.write().await.root_cid = Some(new_cid.clone());
-                                info!(cid = %new_cid, "{}", i18n::t("entity-states-saved"));
-                            }
-                            Err(e) => warn!(error = %e, "Failed to save entity states"),
-                        }
-                    }
-
-                    let latest_root_cid = stats.read().await.root_cid.clone().unwrap_or_else(|| rc.clone());
-                    match tokio::time::timeout(
-                        Duration::from_secs(did_publish_timeout_secs),
-                        ipfs::publish_runtime_root_cid(
-                            &kubo_url,
-                            &runtime_ipns_key,
-                            &latest_root_cid,
-                            did_publish_lifetime_hours,
-                        ),
-                    )
-                    .await
-                    {
-                        Ok(Ok(_)) => info!(runtime_cid = %latest_root_cid, "shutdown runtime_ipns publish succeeded"),
-                        Ok(Err(err)) => error!(runtime_cid = %latest_root_cid, error = %format!("{err:#}"), "shutdown runtime_ipns publish failed"),
-                        Err(_) => error!(runtime_cid = %latest_root_cid, "shutdown runtime_ipns publish timed out"),
-                    }
-                }
-
-                break;
-            }
-        }
-    }
-
-    info!("{}", i18n::t("closing-endpoint"));
-    // Wait up to 10 s for in-flight delivery tasks that hold Arc clones to
-    // release them, then unwrap to get &mut and call close() gracefully.
-    let close_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while Arc::strong_count(&endpoint) > 1 && tokio::time::Instant::now() < close_deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    match Arc::get_mut(&mut endpoint) {
-        Some(ep) => {
-            if tokio::time::timeout(Duration::from_secs(5), ep.close())
-                .await
-                .is_err()
-            {
-                warn!("endpoint close timed out after 5 s; forcing exit");
-            }
-        }
-        None => {
-            warn!("endpoint still held by in-flight tasks after 10 s; dropping without graceful close");
-        }
-    }
-    info!("{}", i18n::t("shutdown-complete"));
-    Ok(())
-}
-
-fn load_secret_bundle(config: &Config) -> Result<SecretBundle> {
-    let passphrase = config
-        .secret_bundle_passphrase
-        .as_deref()
-        .ok_or_else(|| anyhow!("secret_bundle_passphrase is required (env or config)"))?;
-    let bundle_path = config.effective_secret_bundle()?;
-    SecretBundle::load(&bundle_path, passphrase).with_context(|| {
-        format!(
-            "failed to load secret bundle from {}",
-            bundle_path.display()
-        )
-    })
-}
-
-fn get_u64_setting(config: &Config, key: &str, default: u64) -> u64 {
-    config
-        .extra
-        .get(key)
-        .and_then(serde_yaml::Value::as_u64)
-        .unwrap_or(default)
-}
-
-fn runtime_manifest_config(
-    config: &Config,
-) -> std::collections::BTreeMap<String, serde_yaml::Value> {
-    let mut out = std::collections::BTreeMap::new();
-
-    out.insert(
-        "did_resolver_positive_ttl_secs".to_string(),
-        serde_yaml::Value::from(get_u64_setting(
-            config,
-            "did_resolver_positive_ttl_secs",
-            60,
-        )),
-    );
-    out.insert(
-        "did_resolver_negative_ttl_secs".to_string(),
-        serde_yaml::Value::from(get_u64_setting(
-            config,
-            "did_resolver_negative_ttl_secs",
-            10,
-        )),
-    );
-    out.insert(
-        "did_document_publishing_interval_secs".to_string(),
-        serde_yaml::Value::from(get_u64_setting(
-            config,
-            "did_document_publishing_interval_secs",
-            300,
-        )),
-    );
-    out.insert(
-        "did_document_publishing_timeout_secs".to_string(),
-        serde_yaml::Value::from(get_u64_setting(
-            config,
-            "did_document_publishing_timeout_secs",
-            120,
-        )),
-    );
-    out.insert(
-        "did_document_publishing_lifetime_hours".to_string(),
-        serde_yaml::Value::from(get_u64_setting(
-            config,
-            "did_document_publishing_lifetime_hours",
-            8760,
-        )),
-    );
-    out.insert(
-        "ipns_publish_lifetime_hours".to_string(),
-        serde_yaml::Value::from(get_u64_setting(config, "ipns_publish_lifetime_hours", 8760)),
-    );
-    out.insert(
-        "ipns_publish_resolve".to_string(),
-        serde_yaml::Value::from(
-            config
-                .extra
-                .get("ipns_publish_resolve")
-                .and_then(serde_yaml::Value::as_bool)
-                .unwrap_or(false),
-        ),
-    );
-    out.insert(
-        "ipns_publish_allow_offline".to_string(),
-        serde_yaml::Value::from(
-            config
-                .extra
-                .get("ipns_publish_allow_offline")
-                .and_then(serde_yaml::Value::as_bool)
-                .unwrap_or(true),
-        ),
-    );
-    out
+    // ── Main event loop + graceful shutdown ─────────────────────────────────────
+    eventloop::run(
+        endpoint,
+        rpc_messages,
+        crud_messages,
+        ipfs_state,
+        envelope_tx,
+        envelope_rx,
+        shared_config,
+        shared_resolver,
+        stats,
+        acl,
+        acl_cache,
+        entity_registry,
+        kind_registry,
+        manifest_writer,
+        our_did,
+        signing_key,
+        avatar_key,
+        runtime_ipns_key,
+        did_publish_timeout_secs,
+        did_publish_lifetime_hours,
+        cli.poll_ms,
+    )
+    .await
 }

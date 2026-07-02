@@ -1,0 +1,99 @@
+//! In-process mock of the Kubo HTTP DAG API for integration tests.
+//!
+//! Stores DAG nodes content-addressed (blake3 of the JSON body) and serves the
+//! `dag/put`, `dag/get`, `dag/resolve`, and `pin/*` endpoints that
+//! [`crate::kubo`] talks to — enough to drive the manifest writer and other
+//! IPFS-backed flows without a real Kubo daemon.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use axum::{
+    body::Bytes,
+    extract::{RawQuery, State},
+    routing::post,
+    Router,
+};
+use tokio::sync::Mutex;
+
+#[derive(Clone, Default)]
+struct Store(Arc<Mutex<HashMap<String, Vec<u8>>>>);
+
+/// A running in-process mock Kubo.  Pass [`MockKubo::url`] wherever a
+/// `kubo_rpc_url` is expected.
+pub struct MockKubo {
+    url: String,
+}
+
+impl MockKubo {
+    /// Bind an ephemeral port and start serving the mock DAG API.
+    pub async fn start() -> Self {
+        let store = Store::default();
+        let app = Router::new()
+            .route("/api/v0/dag/put", post(dag_put))
+            .route("/api/v0/dag/get", post(dag_get))
+            .route("/api/v0/dag/resolve", post(dag_resolve))
+            .route("/api/v0/pin/update", post(pin_ok))
+            .route("/api/v0/pin/add", post(pin_ok))
+            .with_state(store);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        Self {
+            url: format!("http://{addr}"),
+        }
+    }
+
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+}
+
+/// Content-address a node body.  Deterministic and CID-shaped, but not a real
+/// multihash — the mock only ever uses it as an opaque key.
+fn fake_cid(bytes: &[u8]) -> String {
+    format!("bafyrei{}", blake3::hash(bytes).to_hex())
+}
+
+/// Extract the JSON object from a multipart body: the span from the first `{`
+/// to the last `}`.  Multipart boundaries and part headers contain no braces,
+/// so this reliably isolates the serialised node for our controlled payloads.
+fn extract_json(body: &[u8]) -> Vec<u8> {
+    match (
+        body.iter().position(|&b| b == b'{'),
+        body.iter().rposition(|&b| b == b'}'),
+    ) {
+        (Some(s), Some(e)) if e >= s => body[s..=e].to_vec(),
+        _ => Vec::new(),
+    }
+}
+
+fn query_arg(raw: Option<String>, key: &str) -> Option<String> {
+    raw?.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        (k == key).then(|| v.to_string())
+    })
+}
+
+async fn dag_put(State(store): State<Store>, body: Bytes) -> String {
+    let json = extract_json(&body);
+    let cid = fake_cid(&json);
+    store.0.lock().await.insert(cid.clone(), json);
+    format!("{{\"Cid\":{{\"/\":\"{cid}\"}}}}")
+}
+
+async fn dag_get(State(store): State<Store>, RawQuery(q): RawQuery) -> Vec<u8> {
+    let cid = query_arg(q, "arg").unwrap_or_default();
+    store.0.lock().await.get(&cid).cloned().unwrap_or_default()
+}
+
+async fn dag_resolve(RawQuery(q): RawQuery) -> String {
+    let arg = query_arg(q, "arg").unwrap_or_default();
+    format!("{{\"Cid\":{{\"/\":\"{arg}\"}}}}")
+}
+
+async fn pin_ok() -> &'static str {
+    ""
+}

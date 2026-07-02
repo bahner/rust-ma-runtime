@@ -19,6 +19,7 @@ lint:
 
 test:
 	$(CARGO) clippy $(CLIPPY_STRICT)
+	$(CARGO) test --all-features
 
 # Publish all i18n/*.ftl files to IPFS and write the resulting CIDs to
 # src/i18n.yaml.  Requires `ipfs` (Kubo) and `jq` to be available.
