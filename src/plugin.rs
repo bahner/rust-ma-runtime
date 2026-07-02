@@ -15,13 +15,16 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use anyhow::{anyhow, Context, Result};
 use extism::{host_fn, Function, Manifest, Plugin, UserData, Wasm, PTR};
 use ma_core::{cat_bytes, ipfs_add};
-use tokio::sync::{mpsc::UnboundedSender, RwLock};
+use tokio::sync::{
+    mpsc::{UnboundedReceiver, UnboundedSender},
+    oneshot, RwLock,
+};
 use tracing::{debug, warn};
 
 use crate::entity::{
@@ -29,34 +32,62 @@ use crate::entity::{
     PluginKind, ReplyRequest, SendEnvelope,
 };
 
-// ── ma_call reply capture ─────────────────────────────────────────────────────
+// ── Actor thread model ────────────────────────────────────────────────────────
 //
-// Python plugins return results via the `ma_reply` host function (outbox),
-// not as the Wasm export return value.  When `ma_call_fn` dispatches
-// synchronously to another entity, we intercept the first `ma_reply` and
-// capture its content bytes instead of enqueuing to the outbox.
+// Every entity runs on its own dedicated OS thread that exclusively owns its
+// Wasm `Plugin` (or native closure).  Dispatch is message-passing: callers send
+// an [`EntityMsg`] on the entity's channel and receive the result on a oneshot.
 //
-// A stack is used so that nested `ma_call` invocations (e.g. room → house →
-// avatar) each have their own capture slot and do not clobber each other.
-//
-// Stack entry states:
-//   None          — this frame is waiting for the first ma_reply
-//   Some(bytes)   — reply has been captured for this frame
-//
-// Push before dispatch, pop after to retrieve the captured reply.
-thread_local! {
-    static CALL_CAPTURE: RefCell<Vec<Option<Vec<u8>>>> = const { RefCell::new(Vec::new()) };
+// This eliminates `block_in_place` entirely: no Wasm call ever parks a Tokio
+// worker thread, and nested `ma_call` chains (room → house → avatar) never
+// deadlock — each entity blocks only its own thread while awaiting a sub-call.
+
+/// Messages sent to an entity's dedicated worker thread.
+enum EntityMsg {
+    /// Dispatch a message to `handle_cast` / `handle_call`.
+    Dispatch {
+        /// `true` → `handle_call` (stateful); `false` → `handle_cast` (stateless).
+        stateful: bool,
+        /// `true` → capture the first `ma_reply` and return it in
+        /// [`DispatchResult::captured_reply`] instead of enqueuing to the outbox.
+        /// Set only for synchronous `ma_call` dispatches.
+        capture: bool,
+        /// Chain of entity fragments already in the current call stack — used by
+        /// `ma_call` for cycle detection.
+        call_path: Vec<String>,
+        input: CastInput,
+        reply: oneshot::Sender<Result<DispatchResult>>,
+    },
+    /// Take the pending (unsaved) state bytes out of the entity's `StateCtx`.
+    /// Used by [`EntityPlugin::trigger_save`].
+    TakePending {
+        reply: oneshot::Sender<Option<Vec<u8>>>,
+    },
+    /// Record that `bytes` were successfully persisted to IPFS: update the
+    /// `persisted` snapshot and clear the dirty flag.
+    MarkSaved(Vec<u8>),
+    /// Stop the worker thread.
+    #[allow(dead_code)]
+    Shutdown,
 }
 
-// ── ma_call cycle detection ───────────────────────────────────────────────────
+// ── Per-thread dispatch state ─────────────────────────────────────────────────
 //
-// Tracks which entity fragments are currently executing on this thread.
-// Pushed in `dispatch_to` (Extism backend) before the plugin runs;
-// popped unconditionally on return.  `ma_call_fn` checks this before
-// dispatching to detect A→B→A (or longer) cycles and return :error
-// instead of deadlocking on the non-reentrant plugin Mutex.
+// Set on the entity's own thread immediately before each `plugin.call(...)`,
+// and read by the `ma_call` / `ma_reply` host functions (which run on the same
+// thread during the call).  Cleared after the call returns.
+
 thread_local! {
-    static CALL_STACK: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// The chain of caller fragments leading to the current dispatch.
+    /// `ma_call` appends the current entity and checks for cycles before
+    /// sending to a target.
+    static CALL_PATH: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+
+    /// Reply-capture slot for synchronous `ma_call` dispatches.
+    ///   `None`          — not capturing; `ma_reply` goes to the outbox.
+    ///   `Some(None)`    — capturing, nothing captured yet.
+    ///   `Some(Some(b))` — first `ma_reply` captured.
+    static CAPTURE: RefCell<Option<Option<Vec<u8>>>> = const { RefCell::new(None) };
 }
 
 // ── Native dispatch type ─────────────────────────────────────────────────────
@@ -71,26 +102,6 @@ thread_local! {
 /// state via `Arc<Mutex<…>>` or similar).
 pub type NativeDispatch =
     std::sync::Arc<dyn Fn(&CastInput) -> anyhow::Result<DispatchResult> + Send + Sync>;
-
-// ── Private entity backend ────────────────────────────────────────────────────
-
-/// Backing implementation for an [`EntityPlugin`].
-enum EntityBackend {
-    /// Wasm module loaded from IPFS via Extism.
-    Extism {
-        plugin: Box<Mutex<Plugin>>,
-        state: UserData<StateCtx>,
-        create_queue: UserData<CreateEntityCtx>,
-        delete_queue: UserData<DeleteEntityCtx>,
-    },
-    /// Compiled-in Rust closure — no Wasm involved.
-    Native(NativeDispatch),
-}
-
-// Safety: Plugin does not implement Send upstream, but our usage is exclusively
-// through &mut-guarded Mutex calls.  NativeDispatch is Send+Sync by its bound.
-unsafe impl Send for EntityBackend {}
-unsafe impl Sync for EntityBackend {}
 
 // ── Fragment generation ───────────────────────────────────────────────────────
 
@@ -136,13 +147,13 @@ host_fn!(ma_send_fn(user_data: OutboxCtx; input: Vec<u8>) -> Vec<u8> {
 // automatically — plugin only provides the reply body.
 host_fn!(ma_reply_fn(user_data: OutboxCtx; input: Vec<u8>) -> Vec<u8> {
     let req: ReplyRequest = from_cbor_bytes(&input)?;
-    // If inside a synchronous ma_call, capture the first reply for the
-    // innermost active frame (top of stack).  Only captures once per frame.
-    let captured = CALL_CAPTURE.with(|c| {
-        let mut stack = c.borrow_mut();
-        if let Some(slot) = stack.last_mut() {
-            if slot.is_none() {
-                *slot = Some(req.content.clone());
+    // If inside a synchronous ma_call (capture mode), capture the first reply
+    // for this dispatch instead of enqueuing to the outbox.
+    let captured = CAPTURE.with(|c| {
+        let mut slot = c.borrow_mut();
+        if let Some(inner) = slot.as_mut() {
+            if inner.is_none() {
+                *inner = Some(req.content.clone());
                 return true;
             }
         }
@@ -295,12 +306,15 @@ struct CallRequest {
 // `ma_call` host function: synchronous call to another entity in this runtime.
 //
 // The plugin passes a CBOR-encoded `CallRequest { to, content }`.
-// The runtime looks up the target entity by fragment, builds a synthetic
-// `LocalMessage`, dispatches to `handle_call`, and returns the raw reply bytes.
+// The runtime looks up the target entity handle by fragment, sends a capturing
+// `Dispatch` message to the target's worker thread, and blocks *this* entity's
+// thread until the reply arrives.  Because each entity owns its own thread,
+// this never parks a Tokio worker.
 //
-// Safety: called inside `block_in_place`; acquiring the tokio RwLock via
-// `Handle::current().block_on` is permitted in that context.
-// Self-calls are rejected to prevent deadlocks.
+// Cycle detection: the current CALL_PATH plus this entity's own fragment is
+// checked against the target; A→B→A (or longer) returns :error instead of
+// deadlocking (the target's thread could never make progress if it is an
+// ancestor waiting on us).
 host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
     let req: CallRequest = from_cbor_bytes(&input)?;
 
@@ -311,14 +325,10 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
     let caller_fragment = ctx.caller_fragment.clone();
     drop(ctx);
 
-    // Reject direct self-calls and any indirect cycle (A→B→A, etc.).
-    // CALL_STACK records every fragment currently executing on this thread;
-    // a cycle would attempt to re-lock a std::sync::Mutex that is already
-    // held on this thread, causing a permanent hang.
-    let cycle_detected = CALL_STACK.with(|s| {
-        let stack = s.borrow();
-        stack.contains(&req.to) || req.to == caller_fragment
-    });
+    // Build the call path leading to the target: everything already on the
+    // stack, plus this entity.  Reject self-calls and cycles.
+    let mut call_path = CALL_PATH.with(|p| p.borrow().clone());
+    let cycle_detected = req.to == caller_fragment || call_path.contains(&req.to);
     if cycle_detected {
         let mut out = Vec::new();
         ciborium::ser::into_writer(
@@ -334,10 +344,12 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
         .map_err(|e| extism::Error::msg(format!("ma_call encode: {e}")))?;
         return Ok(out);
     }
+    call_path.push(caller_fragment.clone());
 
-    let ep = tokio::runtime::Handle::current()
-        .block_on(async { registry.read().await.get(&req.to).cloned() });
-
+    // Look up the target handle.  `blocking_read` is safe here: an entity
+    // worker thread is a plain OS thread, never a Tokio worker, so it is not
+    // in an async execution context.
+    let ep = registry.blocking_read().get(&req.to).cloned();
     let ep = match ep {
         Some(ep) => ep,
         None => {
@@ -372,26 +384,62 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
     };
     let cast_input = CastInput { msg };
 
-    // Enable reply capture for synchronous dispatch: push a fresh slot.
-    CALL_CAPTURE.with(|c| c.borrow_mut().push(None));
-    let dispatch_err = ep.handle_call(&cast_input).err();
-    // Pop this frame's slot to get the captured reply (regardless of outcome).
-    let reply = CALL_CAPTURE.with(|c| c.borrow_mut().pop().and_then(|v| v));
-
-    if let Some(e) = dispatch_err {
+    // Send a capturing dispatch to the target's worker thread and block this
+    // thread until it replies.
+    let (reply_tx, reply_rx) = oneshot::channel();
+    if ep
+        .tx
+        .send(EntityMsg::Dispatch {
+            stateful: true,
+            capture: true,
+            call_path,
+            input: cast_input,
+            reply: reply_tx,
+        })
+        .is_err()
+    {
         let mut out = Vec::new();
         ciborium::ser::into_writer(
             &ciborium::Value::Array(vec![
                 ciborium::Value::Text(":error".into()),
-                ciborium::Value::Text(format!("ma_call: dispatch failed: {e}")),
+                ciborium::Value::Text(format!("ma_call: entity #{} thread is gone", req.to)),
             ]),
             &mut out,
         )
-        .map_err(|err| extism::Error::msg(format!("ma_call encode: {err}")))?;
+        .map_err(|e| extism::Error::msg(format!("ma_call encode: {e}")))?;
         return Ok(out);
     }
+
+    let dispatch_result = match reply_rx.blocking_recv() {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &ciborium::Value::Array(vec![
+                    ciborium::Value::Text(":error".into()),
+                    ciborium::Value::Text(format!("ma_call: dispatch failed: {e}")),
+                ]),
+                &mut out,
+            )
+            .map_err(|err| extism::Error::msg(format!("ma_call encode: {err}")))?;
+            return Ok(out);
+        }
+        Err(_) => {
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(
+                &ciborium::Value::Array(vec![
+                    ciborium::Value::Text(":error".into()),
+                    ciborium::Value::Text(format!("ma_call: no reply from #{}", req.to)),
+                ]),
+                &mut out,
+            )
+            .map_err(|err| extism::Error::msg(format!("ma_call encode: {err}")))?;
+            return Ok(out);
+        }
+    };
+
     // Return the captured ma_reply content, or :ok if plugin never replied.
-    if let Some(bytes) = reply {
+    if let Some(bytes) = dispatch_result.captured_reply {
         Ok(bytes)
     } else {
         let mut out = Vec::new();
@@ -436,11 +484,14 @@ pub struct DispatchResult {
     /// Entity deletion requests enqueued via `ma_delete_entity` host function.
     /// Each entry is the fragment of the entity to delete.
     pub delete_requests: Vec<String>,
+    /// First `ma_reply` captured during a synchronous `ma_call` dispatch
+    /// (`capture = true`).  `None` for normal (outbox) dispatches.
+    pub captured_reply: Option<Vec<u8>>,
 }
 
 // ── Registry type alias ───────────────────────────────────────────────────────
 
-/// Thread-safe map from fragment name (e.g. `"fortune"`) to loaded plugin.
+/// Thread-safe map from fragment name (e.g. `"fortune"`) to its entity handle.
 pub type EntityRegistry = Arc<RwLock<HashMap<String, Arc<EntityPlugin>>>>;
 
 pub fn new_entity_registry() -> EntityRegistry {
@@ -456,8 +507,14 @@ struct InitPayload<'a> {
     state: Vec<u8>,
 }
 
-// ── EntityPlugin ──────────────────────────────────────────────────────────────
+// ── EntityPlugin (handle) ─────────────────────────────────────────────────────
 
+/// Handle to an entity running on its own dedicated worker thread.
+///
+/// The actual Wasm `Plugin` (or native closure) lives on that thread and is
+/// never shared; all interaction goes through the [`EntityMsg`] channel.  This
+/// struct is a cheap, cloneable handle carrying the entity's metadata plus the
+/// channel sender.
 pub struct EntityPlugin {
     /// Globally unique entity name (bare, no `#` prefix, no dots).
     /// Matches the key in `RuntimeManifest.entities` and equals the DID fragment:
@@ -472,12 +529,11 @@ pub struct EntityPlugin {
     /// Parent fragment — the entity that owns/created this one, if any.
     /// Immutable after creation. Only the parent may delete this entity.
     pub parent: Option<String>,
-    backend: EntityBackend,
+    /// `true` for compiled-in native entities (e.g. `#scheduler`).
+    native: bool,
+    /// Channel to the entity's dedicated worker thread.
+    tx: UnboundedSender<EntityMsg>,
 }
-
-// Safety: EntityBackend carries its own Send+Sync bounds.
-unsafe impl Send for EntityPlugin {}
-unsafe impl Sync for EntityPlugin {}
 
 impl EntityPlugin {
     /// Create a native entity plugin backed by a compiled-in Rust closure.
@@ -486,22 +542,33 @@ impl EntityPlugin {
     /// implementation is compiled into the runtime binary.  The closure
     /// receives a [`CastInput`] and returns a [`DispatchResult`].
     ///
+    /// The closure runs on a dedicated worker thread that has entered the
+    /// current Tokio runtime context, so `tokio::spawn` inside the closure
+    /// works.  Must be called from within a Tokio runtime.
+    ///
     /// Returns `(plugin, Lifecycle::Running)` — native entities are always
     /// immediately running; they never go through `init()`.
-    ///
-    /// **Do not** call [`EntityPlugin::load`] for [`Evaluator::Native`] kinds;
-    /// that function returns `Err` when the evaluator is `Native`.
     pub fn new_native(
         fragment: impl Into<String>,
         node: &EntityNode,
         handler: NativeDispatch,
     ) -> (Self, Lifecycle) {
+        let fragment = fragment.into();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<EntityMsg>();
+        let handle = tokio::runtime::Handle::current();
+        let thread_name = format!("entity-{fragment}");
+        std::thread::Builder::new()
+            .name(thread_name)
+            .spawn(move || run_native_thread(handler, handle, rx))
+            .expect("failed to spawn native entity thread");
+
         let ep = Self {
-            fragment: fragment.into(),
+            fragment,
             kind: PluginKind::Stateless, // native entities dispatch via a single closure
             acl: node.acl.clone(),
             parent: node.parent.clone(),
-            backend: EntityBackend::Native(handler),
+            native: true,
+            tx,
         };
         (ep, Lifecycle::Running)
     }
@@ -510,18 +577,22 @@ impl EntityPlugin {
     /// (i.e. not an Extism/Wasm entity).  Native entities are not stored in
     /// the IPFS manifest and must be skipped during manifest-bound operations.
     pub fn is_native(&self) -> bool {
-        matches!(self.backend, EntityBackend::Native(_))
+        self.native
     }
 
-    /// Load a Wasm plugin from IPFS, initialise it with persisted state (or empty).
+    /// Load a Wasm plugin from IPFS, spawn its worker thread, and initialise it.
     ///
-    /// Returns `(plugin, Lifecycle::Running)` on success.
-    /// Returns `(plugin, Lifecycle::Error)` if `init()` fails (plugin still usable
-    /// for `:debug`/`:dump` calls).
-    /// Returns `Err` only for fatal errors (Wasm fetch, plugin instantiation),
-    /// or when `kind_node.evaluator == Evaluator::Native` (callers must use
+    /// The Wasm `Plugin` is created and driven entirely on the dedicated worker
+    /// thread — it never crosses a thread boundary — so no `unsafe impl Send`
+    /// is required and no Tokio worker is ever blocked by a Wasm call.
+    ///
+    /// Returns `(handle, Lifecycle::Running)` on success, or
+    /// `(handle, Lifecycle::Error)` if `init()` returned `[:error, …]` (the
+    /// entity is still dispatchable for debugging).
+    /// Returns `Err` for fatal errors (Wasm fetch / plugin instantiation), or
+    /// when `kind_node.evaluator == Evaluator::Native` (use
     /// [`EntityPlugin::new_native`] instead).
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     pub async fn load(
         fragment: impl Into<String>,
         node: &EntityNode,
@@ -557,7 +628,7 @@ impl EntityPlugin {
 
         debug!(fragment = %fragment, cid = %behaviour_cid, kind = ?kind, wasi = wasi, "loading entity plugin");
 
-        // 1. Fetch Wasm bytes from IPFS.
+        // 1. Fetch Wasm bytes from IPFS (async, before the thread is spawned).
         let wasm_bytes = cat_bytes(kubo_url, behaviour_cid)
             .await
             .with_context(|| format!("fetching wasm for '{fragment}' from {behaviour_cid}"))?;
@@ -574,154 +645,41 @@ impl EntityPlugin {
             Vec::new()
         };
 
-        // 3. Build all possible host functions, then filter to the set declared
-        //    in kind_node.host_functions (principle of least privilege).
-        let outbox_ctx_send = UserData::new(OutboxCtx {
-            tx: envelope_tx.clone(),
+        // 3. Assemble all Send-able data the worker thread needs.  The Wasm
+        //    Plugin and its host Functions are built *on* the thread.
+        let cfg = WasmThreadCfg {
             fragment: fragment.clone(),
-        });
-        let outbox_ctx_reply = UserData::new(OutboxCtx {
-            tx: envelope_tx,
-            fragment: fragment.clone(),
-        });
-        let state: UserData<StateCtx> = UserData::new(StateCtx::new(init_state.clone()));
-        let create_queue: UserData<CreateEntityCtx> = UserData::new(CreateEntityCtx {
-            pending: Vec::new(),
-            caller_fragment: fragment.clone(),
-        });
-        let delete_queue: UserData<DeleteEntityCtx> = UserData::new(DeleteEntityCtx {
-            pending: Vec::new(),
-        });
-        let call_ctx: UserData<CallCtx> = UserData::new(CallCtx {
-            registry: entity_registry,
-            caller_did: format!("{}#{}", our_did, &fragment),
-            caller_fragment: fragment.clone(),
-        });
-        let avatar_id_ctx: UserData<AvatarIdCtx> = UserData::new(AvatarIdCtx { key: avatar_key });
-        let ctx_for_init = EntityCtx {
-            self_did: format!("{}#{}", our_did, &fragment),
-            fragment: fragment.clone(),
-            kind: node.kind.clone(),
+            our_did: our_did.to_string(),
+            wasm_bytes,
+            init_state,
+            wasi,
+            host_functions: kind_node.host_functions.clone(),
+            has_init: kind_node.api.iter().any(|s| s == "init"),
+            node_kind: node.kind.clone(),
             parent: node.parent.clone(),
             lifecycle: node.lifecycle.clone(),
+            envelope_tx,
+            entity_registry,
+            avatar_key,
         };
 
-        // IMPORTANT: This order MUST match the @extism.import_fn declaration order
-        // in the Python actor library chain (actor.py → avatar.py / root.py).
-        // extism-py assigns IMPORT_INDEX sequentially across all @extism.import_fn
-        // declarations, and ffi.__invoke_host_func(idx) indexes into the FILTERED
-        // host_fns array by position.  The filter preserves all_fns order, so
-        // IMPORT_INDEX must equal the position in this list after filtering.
-        //
-        // Python IMPORT_INDEX assignments:
-        //   actor.py:  ma_reply=0, ma_set_state=1, ma_send=2, ma_call=3
-        //   avatar.py: ma_avatar_id=4
-        //   root.py:   ma_create_entity=4, ma_delete_entity=5
-        let all_fns: Vec<(&str, Function)> = vec![
-            (
-                "ma_reply",
-                Function::new("ma_reply", [PTR], [PTR], outbox_ctx_reply, ma_reply_fn),
-            ),
-            (
-                "ma_set_state",
-                Function::new("ma_set_state", [PTR], [PTR], state.clone(), ma_set_state_fn),
-            ),
-            (
-                "ma_send",
-                Function::new("ma_send", [PTR], [PTR], outbox_ctx_send, ma_send_fn),
-            ),
-            (
-                "ma_call",
-                Function::new("ma_call", [PTR], [PTR], call_ctx, ma_call_fn),
-            ),
-            (
-                "ma_avatar_id",
-                Function::new("ma_avatar_id", [PTR], [PTR], avatar_id_ctx, ma_avatar_id_fn),
-            ),
-            (
-                "ma_create_entity",
-                Function::new(
-                    "ma_create_entity",
-                    [PTR],
-                    [PTR],
-                    create_queue.clone(),
-                    ma_create_entity_fn,
-                ),
-            ),
-            (
-                "ma_delete_entity",
-                Function::new(
-                    "ma_delete_entity",
-                    [PTR],
-                    [PTR],
-                    delete_queue.clone(),
-                    ma_delete_entity_fn,
-                ),
-            ),
-        ];
-        let allowed: std::collections::HashSet<&str> = kind_node
-            .host_functions
-            .iter()
-            .map(String::as_str)
-            .collect();
-        let host_fns: Vec<Function> = all_fns
-            .into_iter()
-            .filter(|(name, _)| allowed.contains(*name))
-            .map(|(_, f)| f)
-            .collect();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<EntityMsg>();
+        let (life_tx, life_rx) = oneshot::channel::<Result<Lifecycle>>();
+        let thread_name = format!("entity-{fragment}");
+        std::thread::Builder::new()
+            .name(thread_name)
+            .spawn(move || run_wasm_thread(cfg, rx, life_tx))
+            .with_context(|| format!("spawning worker thread for '{fragment}'"))?;
 
-        let manifest = Manifest::new([Wasm::data(wasm_bytes)]);
-        let mut plugin = tokio::task::block_in_place(|| Plugin::new(&manifest, host_fns, wasi))
-            .map_err(|e| anyhow!("failed to create extism plugin for '{fragment}': {e}"))?;
-
-        // 4. Call init() only if the kind declares it in its API.
-        //    Kinds without `init` (e.g. stateless plugins) skip this step
-        //    and start in the Running state directly.
-        //    Return value: :ok → Running, [:error, reason] → Error.
-        let lifecycle = if kind_node.api.iter().any(|s| s == "init") {
-            let init_payload = InitPayload {
-                ctx: &ctx_for_init,
-                state: init_state,
-            };
-            let mut init_bytes = Vec::new();
-            ciborium::ser::into_writer(&init_payload, &mut init_bytes)
-                .context("encoding init payload")?;
-            let init_result_bytes = tokio::task::block_in_place(|| {
-                plugin
-                    .call::<&[u8], Vec<u8>>("init", init_bytes.as_slice())
-                    .map_err(|e| anyhow!("init() failed for '{fragment}': {e}"))
-            })?;
-            match ciborium::de::from_reader::<ciborium::Value, _>(init_result_bytes.as_slice()) {
-                Ok(ciborium::Value::Text(s)) if s == ":ok" => Lifecycle::Running,
-                Ok(ciborium::Value::Array(ref v))
-                    if v.first() == Some(&ciborium::Value::Text(":ok".into())) =>
-                {
-                    Lifecycle::Running
-                }
-                Ok(ciborium::Value::Array(ref v))
-                    if v.first() == Some(&ciborium::Value::Text(":error".into())) =>
-                {
-                    let reason = v
-                        .get(1)
-                        .and_then(|r| {
-                            if let ciborium::Value::Text(s) = r {
-                                Some(s.as_str())
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or("unknown");
-                    warn!(fragment = %fragment, reason = %reason, "init() returned :error");
-                    Lifecycle::Error
-                }
-                Ok(other) => {
-                    warn!(fragment = %fragment, value = ?other, "init() returned unexpected value; treating as :ok");
-                    Lifecycle::Running
-                }
-                Err(_) => Lifecycle::Running,
+        // Wait for the thread to build the plugin and run init().
+        let lifecycle = match life_rx.await {
+            Ok(Ok(lc)) => lc,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                return Err(anyhow!(
+                    "entity '{fragment}' worker thread exited before init completed"
+                ))
             }
-        } else {
-            Lifecycle::Running
         };
 
         let ep = Self {
@@ -729,128 +687,63 @@ impl EntityPlugin {
             kind,
             acl: node.acl.clone(),
             parent: node.parent.clone(),
-            backend: EntityBackend::Extism {
-                plugin: Box::new(Mutex::new(plugin)),
-                state,
-                create_queue,
-                delete_queue,
-            },
+            native: false,
+            tx,
         };
         Ok((ep, lifecycle))
     }
 
     /// Dispatch to the `handle_cast` export (stateless — no state threading).
-    pub fn handle_cast(&self, input: &CastInput) -> Result<DispatchResult> {
-        self.dispatch_to("handle_cast", input)
+    pub async fn handle_cast(&self, input: &CastInput) -> Result<DispatchResult> {
+        self.dispatch(false, input).await
     }
 
     /// Dispatch to the `handle_call` export (stateful).
-    ///
-    /// `dirty` is only set if the plugin calls `ma_set_state` with bytes that
-    /// actually differ from the last persisted snapshot.
-    pub fn handle_call(&self, input: &CastInput) -> Result<DispatchResult> {
-        self.dispatch_to("handle_call", input)
+    pub async fn handle_call(&self, input: &CastInput) -> Result<DispatchResult> {
+        self.dispatch(true, input).await
     }
 
-    /// Dispatch to the named export (Extism) or the native closure.
-    fn dispatch_to(&self, export: &str, input: &CastInput) -> Result<DispatchResult> {
-        match &self.backend {
-            EntityBackend::Native(f) => f(input),
-            EntityBackend::Extism {
-                plugin,
-                state,
-                create_queue,
-                delete_queue,
-            } => {
-                let mut input_bytes = Vec::new();
-                ciborium::ser::into_writer(input, &mut input_bytes)
-                    .map_err(|e| anyhow!("failed to CBOR-encode CastInput: {e}"))?;
-
-                let fragment = self.fragment.clone();
-                CALL_STACK.with(|s| s.borrow_mut().push(fragment.clone()));
-                let output = tokio::task::block_in_place(|| {
-                    let mut plugin = plugin
-                        .lock()
-                        .map_err(|e| anyhow!("plugin mutex poisoned: {e}"))?;
-                    plugin
-                        .call::<&[u8], Vec<u8>>(export, input_bytes.as_slice())
-                        .map_err(|e| anyhow!("{export}() failed for '{}': {e}", self.fragment))
-                });
-                CALL_STACK.with(|s| {
-                    let mut stack = s.borrow_mut();
-                    if let Some(pos) = stack.iter().rposition(|f| f == &fragment) {
-                        stack.remove(pos);
-                    }
-                });
-                let output = output?;
-
-                let pending_state = state
-                    .get()
-                    .map_err(|e| anyhow!("state error: {e}"))?
-                    .lock()
-                    .map_err(|e| anyhow!("state poisoned: {e}"))?
-                    .pending
-                    .take();
-
-                let create_requests = create_queue
-                    .get()
-                    .map_err(|e| anyhow!("create_queue error: {e}"))?
-                    .lock()
-                    .map_err(|e| anyhow!("create_queue poisoned: {e}"))?
-                    .pending
-                    .drain(..)
-                    .collect();
-
-                let delete_requests = delete_queue
-                    .get()
-                    .map_err(|e| anyhow!("delete_queue error: {e}"))?
-                    .lock()
-                    .map_err(|e| anyhow!("delete_queue poisoned: {e}"))?
-                    .pending
-                    .drain(..)
-                    .collect();
-
-                Ok(DispatchResult {
-                    output,
-                    pending_state,
-                    create_requests,
-                    delete_requests,
-                })
-            }
+    /// Send a non-capturing dispatch to the worker thread and await the result.
+    async fn dispatch(&self, stateful: bool, input: &CastInput) -> Result<DispatchResult> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(EntityMsg::Dispatch {
+                stateful,
+                capture: false,
+                call_path: Vec::new(),
+                input: input.clone(),
+                reply: reply_tx,
+            })
+            .map_err(|_| anyhow!("entity '{}' worker thread is gone", self.fragment))?;
+        match reply_rx.await {
+            Ok(res) => res,
+            Err(_) => Err(anyhow!("entity '{}' dropped dispatch reply", self.fragment)),
         }
     }
 
     /// Record a successful IPFS persist: update the persisted snapshot and
-    /// clear the dirty flag.  No-op for native entities.
+    /// clear the dirty flag.  No-op (ignored by the thread) for native entities.
     pub fn mark_saved(&self, saved_bytes: Vec<u8>) {
-        if let EntityBackend::Extism { state, .. } = &self.backend {
-            if let Ok(arc) = state.get() {
-                if let Ok(mut ctx) = arc.lock() {
-                    ctx.persisted = Some(saved_bytes);
-                    ctx.dirty = false;
-                }
-            }
-        }
+        let _ = self.tx.send(EntityMsg::MarkSaved(saved_bytes));
     }
 
     /// Persist any state queued by `ma_set_state` during the last dispatch.
     ///
     /// Plugins call `ma_set_state` reactively inside `handle_call`; this method
-    /// flushes whatever was queued to IPFS and returns the resulting CID.
+    /// flushes whatever is still queued to IPFS and returns the resulting CID.
     /// Returns `Ok(None)` when there is no pending state (nothing to save).
     /// Always returns `Ok(None)` for native entities (they manage their own state).
     pub async fn trigger_save(&self, kubo_url: &str) -> Result<Option<String>> {
-        let EntityBackend::Extism { state, .. } = &self.backend else {
+        if self.native {
             return Ok(None);
-        };
-
-        let pending = state
-            .get()
-            .map_err(|e| anyhow!("state error: {e}"))?
-            .lock()
-            .map_err(|e| anyhow!("state poisoned: {e}"))?
-            .pending
-            .take();
+        }
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(EntityMsg::TakePending { reply: reply_tx })
+            .map_err(|_| anyhow!("entity '{}' worker thread is gone", self.fragment))?;
+        let pending = reply_rx
+            .await
+            .map_err(|_| anyhow!("entity '{}' dropped TakePending reply", self.fragment))?;
 
         if let Some(bytes) = pending {
             let cid = ipfs_add(kubo_url, bytes.clone())
@@ -860,6 +753,360 @@ impl EntityPlugin {
             Ok(Some(cid))
         } else {
             Ok(None)
+        }
+    }
+}
+
+// ── Worker threads ────────────────────────────────────────────────────────────
+
+/// Everything a Wasm entity's worker thread needs to build and run its plugin.
+/// All fields are `Send`; the non-`Send` `Plugin` is constructed on the thread.
+struct WasmThreadCfg {
+    fragment: String,
+    our_did: String,
+    wasm_bytes: Vec<u8>,
+    init_state: Vec<u8>,
+    wasi: bool,
+    host_functions: Vec<String>,
+    has_init: bool,
+    node_kind: String,
+    parent: Option<String>,
+    lifecycle: Lifecycle,
+    envelope_tx: UnboundedSender<(String, SendEnvelope)>,
+    entity_registry: EntityRegistry,
+    avatar_key: [u8; 32],
+}
+
+/// Handles retained by the worker thread to drain plugin side-effects after
+/// each dispatch and to service state messages.
+struct WasmThreadState {
+    plugin: Plugin,
+    state: UserData<StateCtx>,
+    create_queue: UserData<CreateEntityCtx>,
+    delete_queue: UserData<DeleteEntityCtx>,
+}
+
+/// Build the Wasm plugin and its filtered host-function set on the worker thread.
+fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
+    let outbox_ctx_send = UserData::new(OutboxCtx {
+        tx: cfg.envelope_tx.clone(),
+        fragment: cfg.fragment.clone(),
+    });
+    let outbox_ctx_reply = UserData::new(OutboxCtx {
+        tx: cfg.envelope_tx.clone(),
+        fragment: cfg.fragment.clone(),
+    });
+    let state: UserData<StateCtx> = UserData::new(StateCtx::new(cfg.init_state.clone()));
+    let create_queue: UserData<CreateEntityCtx> = UserData::new(CreateEntityCtx {
+        pending: Vec::new(),
+        caller_fragment: cfg.fragment.clone(),
+    });
+    let delete_queue: UserData<DeleteEntityCtx> = UserData::new(DeleteEntityCtx {
+        pending: Vec::new(),
+    });
+    let call_ctx: UserData<CallCtx> = UserData::new(CallCtx {
+        registry: cfg.entity_registry.clone(),
+        caller_did: format!("{}#{}", cfg.our_did, &cfg.fragment),
+        caller_fragment: cfg.fragment.clone(),
+    });
+    let avatar_id_ctx: UserData<AvatarIdCtx> = UserData::new(AvatarIdCtx { key: cfg.avatar_key });
+
+    // IMPORTANT: This order MUST match the @extism.import_fn declaration order
+    // in the Python actor library chain (actor.py → avatar.py / root.py).
+    // extism-py assigns IMPORT_INDEX sequentially across all @extism.import_fn
+    // declarations, and ffi.__invoke_host_func(idx) indexes into the FILTERED
+    // host_fns array by position.  The filter preserves all_fns order, so
+    // IMPORT_INDEX must equal the position in this list after filtering.
+    //
+    // Python IMPORT_INDEX assignments:
+    //   actor.py:  ma_reply=0, ma_set_state=1, ma_send=2, ma_call=3
+    //   avatar.py: ma_avatar_id=4
+    //   root.py:   ma_create_entity=4, ma_delete_entity=5
+    let all_fns: Vec<(&str, Function)> = vec![
+        (
+            "ma_reply",
+            Function::new("ma_reply", [PTR], [PTR], outbox_ctx_reply, ma_reply_fn),
+        ),
+        (
+            "ma_set_state",
+            Function::new("ma_set_state", [PTR], [PTR], state.clone(), ma_set_state_fn),
+        ),
+        (
+            "ma_send",
+            Function::new("ma_send", [PTR], [PTR], outbox_ctx_send, ma_send_fn),
+        ),
+        (
+            "ma_call",
+            Function::new("ma_call", [PTR], [PTR], call_ctx, ma_call_fn),
+        ),
+        (
+            "ma_avatar_id",
+            Function::new("ma_avatar_id", [PTR], [PTR], avatar_id_ctx, ma_avatar_id_fn),
+        ),
+        (
+            "ma_create_entity",
+            Function::new(
+                "ma_create_entity",
+                [PTR],
+                [PTR],
+                create_queue.clone(),
+                ma_create_entity_fn,
+            ),
+        ),
+        (
+            "ma_delete_entity",
+            Function::new(
+                "ma_delete_entity",
+                [PTR],
+                [PTR],
+                delete_queue.clone(),
+                ma_delete_entity_fn,
+            ),
+        ),
+    ];
+    let allowed: std::collections::HashSet<&str> = cfg
+        .host_functions
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let host_fns: Vec<Function> = all_fns
+        .into_iter()
+        .filter(|(name, _)| allowed.contains(*name))
+        .map(|(_, f)| f)
+        .collect();
+
+    let manifest = Manifest::new([Wasm::data(cfg.wasm_bytes.clone())]);
+    let plugin = Plugin::new(&manifest, host_fns, cfg.wasi)
+        .map_err(|e| anyhow!("failed to create extism plugin for '{}': {e}", cfg.fragment))?;
+
+    Ok(WasmThreadState {
+        plugin,
+        state,
+        create_queue,
+        delete_queue,
+    })
+}
+
+/// Run `init()` on the freshly built plugin, returning the resulting lifecycle.
+fn run_init(ts: &mut WasmThreadState, cfg: &WasmThreadCfg) -> Result<Lifecycle> {
+    if !cfg.has_init {
+        return Ok(Lifecycle::Running);
+    }
+    let ctx_for_init = EntityCtx {
+        self_did: format!("{}#{}", cfg.our_did, &cfg.fragment),
+        fragment: cfg.fragment.clone(),
+        kind: cfg.node_kind.clone(),
+        parent: cfg.parent.clone(),
+        lifecycle: cfg.lifecycle.clone(),
+    };
+    let init_payload = InitPayload {
+        ctx: &ctx_for_init,
+        state: cfg.init_state.clone(),
+    };
+    let mut init_bytes = Vec::new();
+    ciborium::ser::into_writer(&init_payload, &mut init_bytes).context("encoding init payload")?;
+    let init_result_bytes = ts
+        .plugin
+        .call::<&[u8], Vec<u8>>("init", init_bytes.as_slice())
+        .map_err(|e| anyhow!("init() failed for '{}': {e}", cfg.fragment))?;
+
+    let lifecycle = match ciborium::de::from_reader::<ciborium::Value, _>(
+        init_result_bytes.as_slice(),
+    ) {
+        Ok(ciborium::Value::Text(s)) if s == ":ok" => Lifecycle::Running,
+        Ok(ciborium::Value::Array(ref v))
+            if v.first() == Some(&ciborium::Value::Text(":ok".into())) =>
+        {
+            Lifecycle::Running
+        }
+        Ok(ciborium::Value::Array(ref v))
+            if v.first() == Some(&ciborium::Value::Text(":error".into())) =>
+        {
+            let reason = v
+                .get(1)
+                .and_then(|r| {
+                    if let ciborium::Value::Text(s) = r {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("unknown");
+            warn!(fragment = %cfg.fragment, reason = %reason, "init() returned :error");
+            Lifecycle::Error
+        }
+        Ok(other) => {
+            warn!(fragment = %cfg.fragment, value = ?other, "init() returned unexpected value; treating as :ok");
+            Lifecycle::Running
+        }
+        Err(_) => Lifecycle::Running,
+    };
+    Ok(lifecycle)
+}
+
+/// Execute one dispatch to the plugin, draining side-effects into a
+/// [`DispatchResult`].  Runs on the entity's own worker thread.
+fn execute_dispatch(
+    ts: &mut WasmThreadState,
+    fragment: &str,
+    stateful: bool,
+    capture: bool,
+    call_path: Vec<String>,
+    input: &CastInput,
+) -> Result<DispatchResult> {
+    let export = if stateful { "handle_call" } else { "handle_cast" };
+    let mut input_bytes = Vec::new();
+    ciborium::ser::into_writer(input, &mut input_bytes)
+        .map_err(|e| anyhow!("failed to CBOR-encode CastInput: {e}"))?;
+
+    // Publish per-dispatch context for the ma_call / ma_reply host functions,
+    // which run on this same thread during the call.
+    CALL_PATH.with(|p| *p.borrow_mut() = call_path);
+    CAPTURE.with(|c| *c.borrow_mut() = if capture { Some(None) } else { None });
+
+    let output = ts
+        .plugin
+        .call::<&[u8], Vec<u8>>(export, input_bytes.as_slice())
+        .map_err(|e| anyhow!("{export}() failed for '{fragment}': {e}"));
+
+    let captured_reply = CAPTURE.with(|c| c.borrow_mut().take().flatten());
+    CALL_PATH.with(|p| p.borrow_mut().clear());
+
+    let output = output?;
+
+    let pending_state = ts
+        .state
+        .get()
+        .map_err(|e| anyhow!("state error: {e}"))?
+        .lock()
+        .map_err(|e| anyhow!("state poisoned: {e}"))?
+        .pending
+        .take();
+
+    let create_requests = ts
+        .create_queue
+        .get()
+        .map_err(|e| anyhow!("create_queue error: {e}"))?
+        .lock()
+        .map_err(|e| anyhow!("create_queue poisoned: {e}"))?
+        .pending
+        .drain(..)
+        .collect();
+
+    let delete_requests = ts
+        .delete_queue
+        .get()
+        .map_err(|e| anyhow!("delete_queue error: {e}"))?
+        .lock()
+        .map_err(|e| anyhow!("delete_queue poisoned: {e}"))?
+        .pending
+        .drain(..)
+        .collect();
+
+    Ok(DispatchResult {
+        output,
+        pending_state,
+        create_requests,
+        delete_requests,
+        captured_reply,
+    })
+}
+
+/// Entry point for a Wasm entity's dedicated worker thread.
+///
+/// Builds the plugin, runs `init()`, reports the lifecycle back to
+/// [`EntityPlugin::load`], then serves dispatch / state messages until the
+/// channel closes.  The thread is a plain OS thread (never a Tokio worker),
+/// so blocking here — including `ma_call`'s `blocking_recv` — is safe.
+fn run_wasm_thread(
+    cfg: WasmThreadCfg,
+    mut rx: UnboundedReceiver<EntityMsg>,
+    life_tx: oneshot::Sender<Result<Lifecycle>>,
+) {
+    let mut ts = match build_wasm_plugin(&cfg) {
+        Ok(ts) => ts,
+        Err(e) => {
+            let _ = life_tx.send(Err(e));
+            return;
+        }
+    };
+    let lifecycle = match run_init(&mut ts, &cfg) {
+        Ok(lc) => lc,
+        Err(e) => {
+            let _ = life_tx.send(Err(e));
+            return;
+        }
+    };
+    if life_tx.send(Ok(lifecycle)).is_err() {
+        // Loader gave up (dropped the receiver); nothing to serve.
+        return;
+    }
+
+    while let Some(msg) = rx.blocking_recv() {
+        match msg {
+            EntityMsg::Dispatch {
+                stateful,
+                capture,
+                call_path,
+                input,
+                reply,
+            } => {
+                let res = execute_dispatch(
+                    &mut ts,
+                    &cfg.fragment,
+                    stateful,
+                    capture,
+                    call_path,
+                    &input,
+                );
+                let _ = reply.send(res);
+            }
+            EntityMsg::TakePending { reply } => {
+                let pending = ts
+                    .state
+                    .get()
+                    .ok()
+                    .and_then(|arc| arc.lock().ok().and_then(|mut c| c.pending.take()));
+                let _ = reply.send(pending);
+            }
+            EntityMsg::MarkSaved(bytes) => {
+                if let Ok(arc) = ts.state.get() {
+                    if let Ok(mut c) = arc.lock() {
+                        c.persisted = Some(bytes);
+                        c.dirty = false;
+                    }
+                }
+            }
+            EntityMsg::Shutdown => break,
+        }
+    }
+}
+
+/// Entry point for a native (compiled-in) entity's worker thread.
+///
+/// The closure may call `tokio::spawn` (e.g. `#scheduler`), so the runtime
+/// context is entered *only* around the closure — never around `blocking_recv`,
+/// which would panic inside an async context.
+fn run_native_thread(
+    handler: NativeDispatch,
+    handle: tokio::runtime::Handle,
+    mut rx: UnboundedReceiver<EntityMsg>,
+) {
+    while let Some(msg) = rx.blocking_recv() {
+        match msg {
+            EntityMsg::Dispatch { input, reply, .. } => {
+                let res = {
+                    let _guard = handle.enter();
+                    handler(&input)
+                };
+                let _ = reply.send(res);
+            }
+            // Native entities have no Wasm state; state messages are no-ops.
+            EntityMsg::TakePending { reply } => {
+                let _ = reply.send(None);
+            }
+            EntityMsg::MarkSaved(_) => {}
+            EntityMsg::Shutdown => break,
         }
     }
 }

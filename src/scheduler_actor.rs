@@ -108,6 +108,7 @@ pub fn make_native_dispatch(
             pending_state: None,
             create_requests: vec![],
             delete_requests: vec![],
+            captured_reply: None,
         })
     })
 }

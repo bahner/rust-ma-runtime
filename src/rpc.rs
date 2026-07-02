@@ -226,8 +226,8 @@ async fn handle_entity_plugin_message(
 
     let cast_input = CastInput { msg: local_msg };
     let result = match entity.kind {
-        PluginKind::Stateless => entity.handle_cast(&cast_input)?,
-        PluginKind::Stateful => entity.handle_call(&cast_input)?,
+        PluginKind::Stateless => entity.handle_cast(&cast_input).await?,
+        PluginKind::Stateful => entity.handle_call(&cast_input).await?,
     };
 
     // If the plugin called `ma_set_state` during this dispatch, persist to IPFS.

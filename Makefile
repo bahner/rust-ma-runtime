@@ -41,22 +41,19 @@ src/i18n.yaml: $(wildcard i18n/*.ftl)
 	echo "Written src/i18n.yaml (i18n_cid=$$lang_cid)"
 
 gen-kinds-cids:
-$(BINARY): $(RELEASE)
-	cp $(RELEASE) $(BINARY)
 
 $(RELEASE): $(SRCS)
 	$(CARGO) build --release
 
 clean:
 	$(CARGO) clean
-	rm -f $(BINARY)
 
 install: $(RELEASE)
 	mkdir -p $(PREFIX)
 	install -m 0755 $(RELEASE) $(PREFIX)/$(BINARY)
 
-publish: $(BINARY)
-	scp $(BINARY) $(PUBLISH)
+publish: $(RELEASE)
+	scp $(RELEASE) $(PUBLISH)
 
 distclean: clean
 	rm -rf target

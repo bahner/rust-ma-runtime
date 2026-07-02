@@ -146,6 +146,7 @@ pub(super) async fn acl_cache_update(ctx: &CrudHandlerCtx<'_>, cache_key: &str, 
 ///
 /// Returns immediately — the reload happens asynchronously so the CRUD event
 /// loop is never blocked by WASM fetching, instantiation, or `init()`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_entity_reload(
     name: String,
     entity_node: EntityNode,

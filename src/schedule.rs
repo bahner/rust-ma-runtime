@@ -292,8 +292,8 @@ pub async fn dispatch_scheduled(
     let cast_input = CastInput { msg: local_msg };
 
     let result = match plugin.kind {
-        PluginKind::Stateless => plugin.handle_cast(&cast_input),
-        PluginKind::Stateful => plugin.handle_call(&cast_input),
+        PluginKind::Stateless => plugin.handle_cast(&cast_input).await,
+        PluginKind::Stateful => plugin.handle_call(&cast_input).await,
     };
 
     let result = match result {

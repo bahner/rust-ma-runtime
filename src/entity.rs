@@ -175,7 +175,7 @@ pub struct LocalMessage {
 // ── Plugin context and I/O ────────────────────────────────────────────────────
 
 /// Which ABI a plugin kind implements.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginKind {
     /// Stateless — exports `handle_cast`.  No state is passed in or out.
     /// Replies are sent via the `ma_send` host function.

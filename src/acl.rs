@@ -207,7 +207,7 @@ pub async fn query_actor_group(
         content,
     };
     let input = crate::entity::CastInput { msg };
-    let result = ep.handle_call(&input)?;
+    let result = ep.handle_call(&input).await?;
 
     // Parse reply: :ok true → caller is member; anything else → not member.
     let contained = match ciborium::de::from_reader::<ciborium::Value, _>(result.output.as_slice())
