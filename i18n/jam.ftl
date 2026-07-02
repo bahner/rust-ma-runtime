@@ -6,8 +6,8 @@ own-did-publish-failed = Cyaan publish owna DID dokument
 own-did-publish-timeout = Owna DID dokument publish time out afta 2 minit
 started = ma runtime staat
 shutdown-requested = Shutdown request mek
-closing-endpoint = Closing iroh endpoint...
-shutdown-complete = Shutdown complete
+closing-endpoint = A klooz iroh endpoint...
+shutdown-complete = Shutdown don
 status-listening = Status server a listen
 rpc-message-received = RPC message receive
 rpc-message-rejected = RPC message reject
@@ -30,21 +30,21 @@ ipfs-store-cid-reply-sent = CID reply send
 ipfs-store-resolve-failed = Cyaan resolve sender fi deliver ipfs-store reply
 
 # Entity dispatch
-bootstrap-complete = Bootstrap complete
+bootstrap-complete = Bootstrap don
 entity-loaded = Entity plugin load
 entity-load-failed = Cyaan load entity plugin
 entity-not-found = Entity nuh find, ignore RPC
 entity-dispatched = RPC dispatch to entity
 entity-replied = Entity send RPC reply
-root-create-entity = #root: create entity
+root-create-entity = #root: mek entity
 root-list-entities = #root: list entity dem
-root-delete-entity = #root: delete entity
+root-delete-entity = #root: dash we entity
 root-entity-updated = Runtime manifest update
 entity-created = Entity create
-entity-reloaded = Entity plugin reloaded
+entity-reloaded = Entity plugin load op fresh agen
 entity-deleted = Entity delete
 entity-states-saving = Saving entity state dem to IPFS
-entity-state-saving = Saving entity state
+entity-state-saving = A save entity state
 entity-state-saved = Entity state save
 entity-state-empty = Plugin return empty state, skip it
 entity-states-saved = Entity state dem save
@@ -53,7 +53,7 @@ ftl-loaded = Lang message load from IPFS
 
 # First-run auto-init
 no-config-found = No config nuh find.
-initialising-new-identity = Initialising new runtime identity.
+initialising-new-identity = A set op nyuu runtime identity.
 generated-headless-config = Headless config generate.
 
 # Ownership / claim
@@ -80,7 +80,7 @@ cidv1-required = di value haffi be a bare CIDv1 (start wid 'b'; CIDv0 'Qm…' nu
 config-key-protected = config key '%key%' protect
 config-key-no-delete = daemon config key '%key%' cyaan delete
 config-key-not-manifest = config key '%key%' nuh known manifest config key
-wrong-crud-protocol = wrong CRUD protocol: %type%
+wrong-crud-protocol = rong CRUD protokol: %type%
 entity-name-invalid = di entity name haffi be printable UTF-8
 reserved-entity-name = di entity name '%name%' reserved
 
