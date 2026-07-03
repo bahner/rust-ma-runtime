@@ -6,6 +6,17 @@ use anyhow::{anyhow, Result};
 use reqwest::multipart;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
+/// HTTP client with hard timeouts.  `dag/get` on a CID that is not in the
+/// local store makes Kubo search the network — without a client-side bound
+/// that request (and whatever task awaits it) would hang indefinitely.
+fn client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 // ── Response types ────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -43,7 +54,7 @@ pub async fn dag_put<T: Serialize + Sync>(kubo_url: &str, value: &T) -> Result<S
         .mime_str("application/json")?;
     let form = multipart::Form::new().part("file", part);
 
-    let body = reqwest::Client::new()
+    let body = client()
         .post(url)
         .query(&[
             ("store-codec", "dag-cbor"),
@@ -71,7 +82,7 @@ pub async fn dag_put<T: Serialize + Sync>(kubo_url: &str, value: &T) -> Result<S
 pub async fn pin_add(kubo_url: &str, cid: &str) -> Result<()> {
     let base = kubo_url.trim_end_matches('/');
     let url = format!("{base}/api/v0/pin/add");
-    reqwest::Client::new()
+    client()
         .post(&url)
         .query(&[("arg", cid), ("recursive", "true")])
         .send()
@@ -86,7 +97,7 @@ pub async fn pin_add(kubo_url: &str, cid: &str) -> Result<()> {
 pub async fn pin_update(kubo_url: &str, old_cid: &str, new_cid: &str) -> Result<()> {
     let base = kubo_url.trim_end_matches('/');
     let url = format!("{base}/api/v0/pin/update");
-    let resp = reqwest::Client::new()
+    let resp = client()
         .post(&url)
         .query(&[("arg", old_cid), ("arg", new_cid), ("unpin", "true")])
         .send()
@@ -108,7 +119,7 @@ pub async fn dag_get<T: DeserializeOwned>(kubo_url: &str, cid: &str) -> Result<T
     let base = kubo_url.trim_end_matches('/');
     let url = format!("{base}/api/v0/dag/get");
 
-    let body = reqwest::Client::new()
+    let body = client()
         .post(&url)
         .query(&[("arg", cid), ("output-codec", "dag-json")])
         .send()
@@ -134,7 +145,7 @@ pub async fn dag_resolve(kubo_url: &str, path: &str) -> Result<String> {
     let base = kubo_url.trim_end_matches('/');
     let url = format!("{base}/api/v0/dag/resolve");
 
-    let body = reqwest::Client::new()
+    let body = client()
         .post(&url)
         .query(&[("arg", path)])
         .send()

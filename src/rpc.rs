@@ -218,6 +218,7 @@ async fn handle_entity_plugin_message(
         created_at: message.created_at,
         expires: message.exp,
         reply_to: message.reply_to.clone(),
+        message_type: message.message_type.clone(),
         content_type: message.content_type.clone(),
         content: content_bytes,
     };
@@ -272,6 +273,11 @@ async fn handle_entity_plugin_message(
             lifecycle: Lifecycle::New,
         };
 
+        let (iroh_node_id, started_at) = {
+            let s = ctx.stats.read().await;
+            (s.endpoint_id.clone(), s.started_at)
+        };
+
         match crate::plugin::EntityPlugin::load(
             req.fragment.clone(),
             &entity_node,
@@ -281,6 +287,8 @@ async fn handle_entity_plugin_message(
             ctx.envelope_tx.clone(),
             ctx.entity_registry.clone(),
             ctx.avatar_key,
+            &iroh_node_id,
+            started_at,
         )
         .await
         {

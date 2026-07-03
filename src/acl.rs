@@ -201,8 +201,7 @@ pub async fn query_actor_group(
         to: format!("#{fragment}"),
         created_at: now_secs,
         expires: now_secs + 5, // 5 seconds
-        reply_to: None,
-        content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
+        reply_to: None,        message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),        content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
         content,
     };
     let input = crate::entity::CastInput {

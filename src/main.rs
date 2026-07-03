@@ -383,6 +383,8 @@ async fn main() -> Result<()> {
         tokio::sync::mpsc::unbounded_channel::<(String, entity::SendEnvelope)>();
     let entity_registry = plugin::new_entity_registry();
     let kind_registry = entity::new_kind_registry();
+    let startup_epoch = status::now_unix_secs();
+    let startup_iroh_node_id = endpoint.id();
     if let Some(ref rc) = root_cid {
         let (count, updated_root) = bootstrap::load_entities(
             rc,
@@ -391,6 +393,8 @@ async fn main() -> Result<()> {
             &entity_registry,
             envelope_tx.clone(),
             avatar_key,
+            &startup_iroh_node_id,
+            startup_epoch,
         )
         .await;
         info!(count = %count, "Entity plugins loaded");
@@ -505,8 +509,8 @@ async fn main() -> Result<()> {
     let entity_names: Vec<String> = entity_registry.read().await.keys().cloned().collect();
     let stats = Arc::new(tokio::sync::RwLock::new(status::Stats {
         our_did: our_did.clone(),
-        endpoint_id: endpoint.id(),
-        started_at: status::now_unix_secs(),
+        endpoint_id: startup_iroh_node_id,
+        started_at: startup_epoch,
         ipfs_publisher_enabled,
         entity_names,
         root_cid: root_cid.clone(),

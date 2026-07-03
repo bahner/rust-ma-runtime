@@ -189,6 +189,11 @@ pub(super) fn spawn_entity_reload(
             }
         };
 
+        let (iroh_node_id, started_at) = {
+            let s = stats.read().await;
+            (s.endpoint_id.clone(), s.started_at)
+        };
+
         match crate::plugin::EntityPlugin::load(
             name.clone(),
             &entity_node,
@@ -198,6 +203,8 @@ pub(super) fn spawn_entity_reload(
             envelope_tx,
             entity_registry.clone(),
             avatar_key,
+            &iroh_node_id,
+            started_at,
         )
         .await
         {

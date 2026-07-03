@@ -34,10 +34,17 @@ tracing = "0.1"
 unic-langid = "0.9"
 zeroize = "1"
 
+[dev-dependencies]
+wat = "1"
+
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# Development note (see AGENTS.md): remove before publishing.
+[patch.crates-io]
+ma-core = { path = "../rust-ma-core" }
 
 

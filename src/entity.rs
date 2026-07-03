@@ -166,6 +166,7 @@ pub struct LocalMessage {
     /// Expiry as Unix epoch seconds (0 = never expires).
     pub expires: u64,
     pub reply_to: Option<String>,
+    pub message_type: String,
     pub content_type: String,
     /// CBOR-encoded payload (verb atom or `[":verb", args…]` array).
     #[serde(with = "serde_bytes")]
@@ -185,27 +186,6 @@ pub enum PluginKind {
     Stateful,
 }
 
-/// Context returned by the `ma_ctx` host function.
-///
-/// Plugin calls `ma_ctx()` once (typically at module load) and caches the
-/// result.  Runtime populates all fields from the entity registry — plugins
-/// cannot forge or modify them.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntityCtx {
-    /// Full DID-URL of this entity, e.g. `did:ma:<runtime>#fortune`.
-    #[serde(rename = "self")]
-    pub self_did: String,
-    /// Bare fragment without `#` prefix.
-    pub fragment: String,
-    /// Protocol ID of the kind, e.g. `/ma/root/0.0.1`.
-    pub kind: String,
-    /// Fragment of the parent entity.  `None` for `#root`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent: Option<String>,
-    /// Lifecycle state managed by the runtime.
-    pub lifecycle: Lifecycle,
-}
-
 /// Plugin-facing message — the subset of `LocalMessage` that plugins
 /// actually use.  Excludes `created_at` and `expires` (epoch-second integers
 /// in the uint32 range) which trigger a broken `struct.unpack_from('>I',…)`
@@ -219,6 +199,7 @@ pub struct PluginMsg {
     pub to: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
+    pub message_type: String,
     pub content_type: String,
     /// CBOR-encoded payload (verb atom or `[":verb", args…]` array).
     #[serde(with = "serde_bytes")]
@@ -232,6 +213,7 @@ impl From<&LocalMessage> for PluginMsg {
             from: m.from.clone(),
             to: m.to.clone(),
             reply_to: m.reply_to.clone(),
+            message_type: m.message_type.clone(),
             content_type: m.content_type.clone(),
             content: m.content.clone(),
         }
@@ -355,8 +337,7 @@ pub fn new_kind_registry() -> KindRegistry {
 /// These names cannot be used as entity names.
 pub const RESERVED_ENTITY_NAMES: &[&str] = &["root", "acl", "scheduler", "logger", "runtime"];
 
-/// Lifecycle state of an entity, persisted in [`EntityNode`] and passed to
-/// plugins via [`EntityCtx`].
+/// Lifecycle state of an entity, persisted in [`EntityNode`].
 ///
 /// | State | Meaning |
 /// |-------|---------|

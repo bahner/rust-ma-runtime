@@ -27,7 +27,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
-use ma_core::{ipfs_add, CONTENT_TYPE_TERM};
+use ma_core::{ipfs_add, CONTENT_TYPE_TERM, MESSAGE_TYPE_RPC};
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::warn;
 
@@ -282,6 +282,7 @@ pub async fn dispatch_scheduled(
         created_at: now_secs,
         expires: 0,
         reply_to: None,
+        message_type: MESSAGE_TYPE_RPC.to_string(),
         content_type: CONTENT_TYPE_TERM.to_string(),
         content: content.to_vec(),
     };

@@ -6,7 +6,7 @@
 //! parks a Tokio worker.  The public handle and message types live in the
 //! parent module.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use extism::{host_fn, Function, Manifest, Plugin, UserData, Wasm, PTR};
 use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender},
@@ -15,7 +15,7 @@ use tokio::sync::{
 use tracing::warn;
 
 use crate::entity::{
-    CastInput, CreateEntityRequest, EntityCtx, Lifecycle, ReplyRequest, SendEnvelope,
+    CastInput, CreateEntityRequest, Lifecycle, ReplyRequest, SendEnvelope,
 };
 
 use super::{DispatchResult, EntityMsg, EntityRegistry, NativeDispatch, CALL_PATH, CAPTURE};
@@ -210,19 +210,36 @@ host_fn!(ma_avatar_id_fn(user_data: AvatarIdCtx; input: Vec<u8>) -> Vec<u8> {
     Ok(hex.into_bytes())
 });
 
-// ── ma_call host function ─────────────────────────────────────────────────────────────────────────
+// ── ma_call host function ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+/// Parse a duration in whole seconds from `var`, falling back to `default`.
+fn env_secs(var: &str, default: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(
+        std::env::var(var)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(default),
+    )
+}
 
 /// Hard cap on any single Wasm export invocation (init / `handle_cast` /
 /// `handle_call`).  Enforced by extism via wasmtime epoch interruption — a
 /// plugin stuck in an infinite loop gets aborted and the worker thread
 /// survives, instead of being wedged forever.
-pub(super) const WASM_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+///
+/// Override with `MA_WASM_CALL_TIMEOUT_SECS` (used by tests; also an
+/// operational escape hatch).
+pub(super) fn wasm_call_timeout() -> std::time::Duration {
+    env_secs("MA_WASM_CALL_TIMEOUT_SECS", 30)
+}
 
 /// Upper bound on how long `ma_call` waits for the target entity's reply.
-/// Slightly above [`WASM_CALL_TIMEOUT`] so the callee's own execution cap
+/// Slightly above [`wasm_call_timeout`] so the callee's own execution cap
 /// fires first; this bound only triggers when the callee's dispatch queue
 /// is severely backed up.
-const MA_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(35);
+fn ma_call_timeout() -> std::time::Duration {
+    wasm_call_timeout() + std::time::Duration::from_secs(5)
+}
 
 // Context captured by the `ma_call` host function.
 struct CallCtx {
@@ -319,6 +336,7 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
         created_at: now_secs,
         expires: now_secs + 5,
         reply_to: None,
+        message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),
         content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
         content: req.content,
     };
@@ -351,7 +369,7 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
     }
 
     let dispatch_result = match handle.block_on(async {
-        tokio::time::timeout(MA_CALL_TIMEOUT, reply_rx).await
+        tokio::time::timeout(ma_call_timeout(), reply_rx).await
     }) {
         Ok(Ok(Ok(r))) => r,
         Ok(Ok(Err(e))) => {
@@ -386,7 +404,7 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
                     ciborium::Value::Text(format!(
                         "ma_call: timed out waiting for #{} after {}s",
                         req.to,
-                        MA_CALL_TIMEOUT.as_secs()
+                        ma_call_timeout().as_secs()
                     )),
                 ]),
                 &mut out,
@@ -409,12 +427,16 @@ host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
 
 // ── ma_delete_entity host function ───────────────────────────────────────────
 
-/// Context captured by `ma_delete_entity` host function.
+/// Context captured by `ma_delete_entity` and `ma_end` host functions.
 struct DeleteEntityCtx {
     pending: Vec<String>,
+    /// Set by `ma_end` — entity requests its own removal after this dispatch.
+    self_terminate: bool,
+    /// Fragment of the owning entity; used when `self_terminate` is true.
+    self_fragment: String,
 }
 
-// `ma_delete_entity` host function: plugin requests removal of an entity.
+// `ma_delete_entity` host function: plugin requests removal of another entity.
 //
 // Input is a CBOR-encoded fragment string.
 // The request is queued; the runtime validates and removes after dispatch.
@@ -428,14 +450,22 @@ host_fn!(ma_delete_entity_fn(user_data: DeleteEntityCtx; input: Vec<u8>) -> Vec<
     Ok(out)
 });
 
+// `ma_end` host function: entity requests its own removal (self-termination).
+//
+// Takes no meaningful input.  After the current dispatch completes the runtime
+// removes this entity from the registry and manifest.
+host_fn!(ma_end_fn(user_data: DeleteEntityCtx; _input: Vec<u8>) -> Vec<u8> {
+    let arc = user_data.get()?;
+    arc.lock().unwrap().self_terminate = true;
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(&ciborium::Value::Text(":ok".to_string()), &mut out)
+        .map_err(|e| extism::Error::msg(format!("ma_end: CBOR encode: {e}")))?;
+    Ok(out)
+});
+
 // ── init() payload ────────────────────────────────────────────────────────────
 
-#[derive(serde::Serialize)]
-struct InitPayload<'a> {
-    ctx: &'a EntityCtx,
-    #[serde(with = "serde_bytes", skip_serializing_if = "Vec::is_empty")]
-    state: Vec<u8>,
-}
+
 // ── Worker threads ────────────────────────────────────────────────────────────
 
 /// Everything a Wasm entity's worker thread needs to build and run its plugin.
@@ -449,14 +479,20 @@ pub(super) struct WasmThreadCfg {
     pub(super) host_functions: Vec<String>,
     pub(super) has_init: bool,
     pub(super) node_kind: String,
-    pub(super) parent: Option<String>,
-    pub(super) lifecycle: Lifecycle,
     pub(super) envelope_tx: UnboundedSender<(String, SendEnvelope)>,
     pub(super) entity_registry: EntityRegistry,
     pub(super) avatar_key: [u8; 32],
     /// Tokio runtime handle, captured in `EntityPlugin::load` (async context).
     /// Passed to `CallCtx` so `ma_call` can run timed waits from the worker thread.
     pub(super) handle: tokio::runtime::Handle,
+    /// IPFS CID of the Wasm behaviour bytes for this entity.
+    pub(super) behaviour_cid: String,
+    /// iroh QUIC node ID of this runtime.
+    pub(super) iroh_node_id: String,
+    /// Unix epoch seconds when the runtime process started.
+    pub(super) started_at: u64,
+    /// DID-URL of the parent entity, if any.
+    pub(super) parent: Option<String>,
 }
 
 /// Handles retained by the worker thread to drain plugin side-effects after
@@ -466,6 +502,35 @@ struct WasmThreadState {
     state: UserData<StateCtx>,
     create_queue: UserData<CreateEntityCtx>,
     delete_queue: UserData<DeleteEntityCtx>,
+}
+
+/// Build the flat config map injected into the extism `Manifest` for this
+/// entity.  Available to the plugin at any time via `extism_config_get`.
+///
+/// This replaces `EntityCtx` — plugins no longer receive ctx in `init()`.
+///
+/// Keys:
+///   `self`         full DID-URL of this entity (`did:ma:<runtime>#<id>`)  [always]
+///   `id`           bare fragment without `#`                               [always]
+///   `kind`         kind protocol ID e.g. `/ma/root/0.0.1`                 [always]
+///   `cid`          IPFS CID of the entity's Wasm behaviour                [always]
+///   `runtime`      runtime's own DID                                       [always]
+///   `iroh_node_id` iroh QUIC node ID of this runtime                      [always]
+///   `started_at`   Unix epoch seconds when the runtime started            [always]
+///   `parent`       DID-URL of the parent entity                           [if set]
+fn build_plugin_config(cfg: &WasmThreadCfg) -> std::collections::BTreeMap<String, String> {
+    let mut config = std::collections::BTreeMap::new();
+    config.insert("self".to_string(), format!("{}#{}", cfg.our_did, cfg.fragment));
+    config.insert("id".to_string(), cfg.fragment.clone());
+    config.insert("kind".to_string(), cfg.node_kind.clone());
+    config.insert("cid".to_string(), cfg.behaviour_cid.clone());
+    config.insert("runtime".to_string(), cfg.our_did.clone());
+    config.insert("iroh_node_id".to_string(), cfg.iroh_node_id.clone());
+    config.insert("started_at".to_string(), cfg.started_at.to_string());
+    if let Some(parent) = &cfg.parent {
+        config.insert("parent".to_string(), parent.clone());
+    }
+    config
 }
 
 /// Build the Wasm plugin and its filtered host-function set on the worker thread.
@@ -485,6 +550,8 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
     });
     let delete_queue: UserData<DeleteEntityCtx> = UserData::new(DeleteEntityCtx {
         pending: Vec::new(),
+        self_terminate: false,
+        self_fragment: cfg.fragment.clone(),
     });
     let call_ctx: UserData<CallCtx> = UserData::new(CallCtx {
         registry: cfg.entity_registry.clone(),
@@ -504,9 +571,12 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
     // IMPORT_INDEX must equal the position in this list after filtering.
     //
     // Python IMPORT_INDEX assignments:
-    //   actor.py:  ma_reply=0, ma_set_state=1, ma_send=2, ma_call=3
-    //   avatar.py: ma_avatar_id=4
-    //   root.py:   ma_create_entity=4, ma_delete_entity=5
+    //   actor.py:  ma_reply=0, ma_set_state=1, ma_send=2, ma_call=3, ma_end=4
+    //   avatar.py: ma_avatar_id=5
+    //   root.py:   ma_create_entity=5, ma_delete_entity=6
+    //
+    // Plugins that do NOT declare ma_end skip it via the host_functions filter,
+    // so their existing indices (ma_avatar_id=4, ma_create_entity=4) are unchanged.
     let all_fns: Vec<(&str, Function)> = vec![
         (
             "ma_reply",
@@ -523,6 +593,10 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
         (
             "ma_call",
             Function::new("ma_call", [PTR], [PTR], call_ctx, ma_call_fn),
+        ),
+        (
+            "ma_end",
+            Function::new("ma_end", [PTR], [PTR], delete_queue.clone(), ma_end_fn),
         ),
         (
             "ma_avatar_id",
@@ -557,8 +631,9 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
         .map(|(_, f)| f)
         .collect();
 
-    let manifest =
-        Manifest::new([Wasm::data(cfg.wasm_bytes.clone())]).with_timeout(WASM_CALL_TIMEOUT);
+    let manifest = Manifest::new([Wasm::data(cfg.wasm_bytes.clone())])
+        .with_timeout(wasm_call_timeout())
+        .with_config(build_plugin_config(cfg).into_iter());
     let plugin = Plugin::new(&manifest, host_fns, cfg.wasi)
         .map_err(|e| anyhow!("failed to create extism plugin for '{}': {e}", cfg.fragment))?;
 
@@ -571,26 +646,16 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
 }
 
 /// Run `init()` on the freshly built plugin, returning the resulting lifecycle.
+///
+/// Entity context is available via `extism_config_get` — `init()` receives
+/// only the raw persisted state bytes (empty slice for a brand-new entity).
 fn run_init(ts: &mut WasmThreadState, cfg: &WasmThreadCfg) -> Result<Lifecycle> {
     if !cfg.has_init {
         return Ok(Lifecycle::Running);
     }
-    let ctx_for_init = EntityCtx {
-        self_did: format!("{}#{}", cfg.our_did, &cfg.fragment),
-        fragment: cfg.fragment.clone(),
-        kind: cfg.node_kind.clone(),
-        parent: cfg.parent.clone(),
-        lifecycle: cfg.lifecycle.clone(),
-    };
-    let init_payload = InitPayload {
-        ctx: &ctx_for_init,
-        state: cfg.init_state.clone(),
-    };
-    let mut init_bytes = Vec::new();
-    ciborium::ser::into_writer(&init_payload, &mut init_bytes).context("encoding init payload")?;
     let init_result_bytes = ts
         .plugin
-        .call::<&[u8], Vec<u8>>("init", init_bytes.as_slice())
+        .call::<&[u8], Vec<u8>>("init", cfg.init_state.as_slice())
         .map_err(|e| anyhow!("init() failed for '{}': {e}", cfg.fragment))?;
 
     let lifecycle = match ciborium::de::from_reader::<ciborium::Value, _>(
@@ -680,15 +745,19 @@ fn execute_dispatch(
         .drain(..)
         .collect();
 
-    let delete_requests = ts
-        .delete_queue
-        .get()
-        .map_err(|e| anyhow!("delete_queue error: {e}"))?
-        .lock()
-        .map_err(|e| anyhow!("delete_queue poisoned: {e}"))?
-        .pending
-        .drain(..)
-        .collect();
+    let delete_requests = {
+        let arc = ts
+            .delete_queue
+            .get()
+            .map_err(|e| anyhow!("delete_queue error: {e}"))?;
+        let mut dq = arc.lock().map_err(|e| anyhow!("delete_queue poisoned: {e}"))?;
+        let mut reqs: Vec<String> = dq.pending.drain(..).collect();
+        if dq.self_terminate {
+            reqs.push(dq.self_fragment.clone());
+            dq.self_terminate = false;
+        }
+        reqs
+    };
 
     Ok(DispatchResult {
         output,

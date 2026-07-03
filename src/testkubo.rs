@@ -1,9 +1,9 @@
 //! In-process mock of the Kubo HTTP DAG API for integration tests.
 //!
 //! Stores DAG nodes content-addressed (blake3 of the JSON body) and serves the
-//! `dag/put`, `dag/get`, `dag/resolve`, and `pin/*` endpoints that
-//! [`crate::kubo`] talks to — enough to drive the manifest writer and other
-//! IPFS-backed flows without a real Kubo daemon.
+//! `dag/put`, `dag/get`, `dag/resolve`, `cat`, and `pin/*` endpoints that
+//! [`crate::kubo`] and `ma_core` talk to — enough to drive the manifest writer
+//! and other IPFS-backed flows without a real Kubo daemon.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,6 +23,7 @@ struct Store(Arc<Mutex<HashMap<String, Vec<u8>>>>);
 /// `kubo_rpc_url` is expected.
 pub struct MockKubo {
     url: String,
+    store: Store,
 }
 
 impl MockKubo {
@@ -33,9 +34,10 @@ impl MockKubo {
             .route("/api/v0/dag/put", post(dag_put))
             .route("/api/v0/dag/get", post(dag_get))
             .route("/api/v0/dag/resolve", post(dag_resolve))
+            .route("/api/v0/cat", post(cat))
             .route("/api/v0/pin/update", post(pin_ok))
             .route("/api/v0/pin/add", post(pin_ok))
-            .with_state(store);
+            .with_state(store.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -43,11 +45,20 @@ impl MockKubo {
         });
         Self {
             url: format!("http://{addr}"),
+            store,
         }
     }
 
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// Store raw bytes (e.g. a Wasm module) and return their fake CID, so
+    /// tests can serve plugin behaviour blobs through `/api/v0/cat`.
+    pub async fn add_bytes(&self, bytes: Vec<u8>) -> String {
+        let cid = fake_cid(&bytes);
+        self.store.0.lock().await.insert(cid.clone(), bytes);
+        cid
     }
 }
 
@@ -85,6 +96,11 @@ async fn dag_put(State(store): State<Store>, body: Bytes) -> String {
 }
 
 async fn dag_get(State(store): State<Store>, RawQuery(q): RawQuery) -> Vec<u8> {
+    let cid = query_arg(q, "arg").unwrap_or_default();
+    store.0.lock().await.get(&cid).cloned().unwrap_or_default()
+}
+
+async fn cat(State(store): State<Store>, RawQuery(q): RawQuery) -> Vec<u8> {
     let cid = query_arg(q, "arg").unwrap_or_default();
     store.0.lock().await.get(&cid).cloned().unwrap_or_default()
 }
