@@ -4,6 +4,7 @@ mod crud;
 mod entity;
 mod eventloop;
 mod i18n;
+mod inbox;
 mod ipfs;
 mod kubo;
 mod manifest;
@@ -23,7 +24,7 @@ use cid::Cid;
 use clap::Parser;
 use ma_core::config::{Config, MaArgs};
 use ma_core::ipfs::IpfsDidPublisher;
-use ma_core::{ipns_from_secret, Ipld, IPFS_PROTOCOL_ID};
+use ma_core::{ipns_from_secret, Ipld, INBOX_PROTOCOL_ID, IPFS_PROTOCOL_ID};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -224,6 +225,7 @@ async fn main() -> Result<()> {
     }
     let mut endpoint = ma_core::new_ma_endpoint(secrets.iroh_secret_key, ipv6_enabled).await?;
     let rpc_messages = endpoint.service(rpc::RPC_PROTOCOL_ID);
+    let inbox_messages = endpoint.service(INBOX_PROTOCOL_ID);
     let ipfs_messages = if ipfs_publisher_enabled {
         Some(endpoint.service(IPFS_PROTOCOL_ID))
     } else {
@@ -563,6 +565,7 @@ async fn main() -> Result<()> {
     eventloop::run(
         endpoint,
         rpc_messages,
+        inbox_messages,
         crud_messages,
         ipfs_state,
         envelope_tx,

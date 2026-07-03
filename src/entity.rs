@@ -471,14 +471,21 @@ pub struct RuntimeManifest {
 
 /// Outbound message queued by a plugin via the `ma_send` host function.
 ///
-/// `to`       — recipient DID (or DID-URL).
-/// `reply_to` — if set, marks this as a reply to the given message ID; the
-///              runtime will use `MESSAGE_TYPE_RPC_REPLY` for the wire message.
-/// `content`  — raw payload bytes (e.g. CBOR-encoded RPC atom or JSON).
+/// `to`           — recipient DID (or DID-URL).
+/// `content_type` — MIME type of the payload (e.g. `application/cbor`).
+/// `message_type` — envelope routing type (e.g. `application/x-ma-chat`).  If
+///                  `None` the runtime defaults to `MESSAGE_TYPE_RPC`.  The
+///                  protocol used for delivery is derived from this field; see
+///                  `eventloop::protocol_for`.
+/// `reply_to`     — if set, marks this as a reply; overrides `message_type` to
+///                  `MESSAGE_TYPE_RPC_REPLY` and routes via `/ma/rpc/0.0.1`.
+/// `content`      — raw payload bytes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendEnvelope {
     pub to: String,
     pub content_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_type: Option<String>,
     #[serde(with = "serde_bytes")]
     pub content: Vec<u8>,
     pub reply_to: Option<String>,

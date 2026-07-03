@@ -332,6 +332,7 @@ async fn handle_entity_plugin_message(
                     crate::entity::SendEnvelope {
                         to: format!("{}#{}", ctx.our_did, req.parent),
                         content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
+                        message_type: None,
                         content: err_content,
                         reply_to: None,
                     },

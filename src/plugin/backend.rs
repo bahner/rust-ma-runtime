@@ -91,6 +91,7 @@ host_fn!(ma_reply_fn(user_data: OutboxCtx; input: Vec<u8>) -> Vec<u8> {
     let envelope = SendEnvelope {
         to: req.msg.from,
         content_type: req.content_type,
+        message_type: None,
         content: req.content,
         reply_to: Some(req.msg.id),
     };
@@ -211,8 +212,8 @@ host_fn!(ma_avatar_id_fn(user_data: AvatarIdCtx; input: Vec<u8>) -> Vec<u8> {
 
 // ── ma_call host function ─────────────────────────────────────────────────────────────────────────
 
-/// Hard cap on any single Wasm export invocation (init / handle_cast /
-/// handle_call).  Enforced by extism via wasmtime epoch interruption — a
+/// Hard cap on any single Wasm export invocation (init / `handle_cast` /
+/// `handle_call`).  Enforced by extism via wasmtime epoch interruption — a
 /// plugin stuck in an infinite loop gets aborted and the worker thread
 /// survives, instead of being wedged forever.
 pub(super) const WASM_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);

@@ -381,7 +381,7 @@ impl EntityPlugin {
 mod wasm_repro {
     //! Local reproduction harness for plugin WASM crashes.
     //! Requires a local Kubo node with the plugin CID pinned.
-    //! Run: cargo test wasm_repro -- --ignored --nocapture
+    //! Run: cargo test `wasm_repro` -- --ignored --nocapture
 
     use std::collections::BTreeMap;
 

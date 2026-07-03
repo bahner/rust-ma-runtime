@@ -10,8 +10,9 @@ use std::time::Duration;
 use anyhow::Result;
 use ma_core::config::Config;
 use ma_core::{
-    Did, Inbox, IpfsGatewayResolver, MaEndpoint, Message, SigningKey, IPFS_PROTOCOL_ID,
-    MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY,
+    Did, Inbox, IpfsGatewayResolver, MaEndpoint, Message, SigningKey, INBOX_PROTOCOL_ID,
+    IPFS_PROTOCOL_ID, MESSAGE_TYPE_CRUD, MESSAGE_TYPE_CRUD_REPLY, MESSAGE_TYPE_IPFS_REQUEST,
+    MESSAGE_TYPE_IPFS_STORE, MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY,
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::RwLock;
@@ -24,12 +25,27 @@ use crate::ipfs::IpfsServiceState;
 use crate::manifest::ManifestWriter;
 use crate::plugin::EntityRegistry;
 use crate::status::SharedStats;
-use crate::{bootstrap, crud, i18n, ipfs, rpc, status};
+use crate::{bootstrap, crud, i18n, inbox, ipfs, rpc, status};
+
+/// Map a `message_type` string to the iroh delivery protocol.
+///
+/// Only RPC and its reply go to `/ma/rpc/0.0.1`; IPFS requests go to
+/// `/ma/ipfs/0.0.1`; CRUD goes to `/ma/crud/0.0.1`.  Everything else
+/// (message, broadcast, chat, emote, unknown) falls back to `/ma/inbox/0.0.1`.
+fn protocol_for(msg_type: &str) -> &'static str {
+    match msg_type {
+        MESSAGE_TYPE_RPC | MESSAGE_TYPE_RPC_REPLY => rpc::RPC_PROTOCOL_ID,
+        MESSAGE_TYPE_IPFS_REQUEST | MESSAGE_TYPE_IPFS_STORE => IPFS_PROTOCOL_ID,
+        MESSAGE_TYPE_CRUD | MESSAGE_TYPE_CRUD_REPLY => crud::CRUD_PROTOCOL_ID,
+        _ => INBOX_PROTOCOL_ID,
+    }
+}
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub async fn run(
     mut endpoint: Arc<dyn MaEndpoint>,
     rpc_messages: Inbox<Message>,
+    inbox_messages: Inbox<Message>,
     mut crud_messages: Option<Inbox<Message>>,
     mut ipfs_state: Option<IpfsServiceState>,
     envelope_tx: UnboundedSender<(String, SendEnvelope)>,
@@ -202,12 +218,40 @@ pub async fn run(
                     }
                 }
 
+                // Drain /ma/inbox/0.0.1
+                while let Some(mut message) = inbox_messages.pop(now) {
+                    debug!(
+                        from = %message.from,
+                        to = %message.to,
+                        message_type = %message.message_type,
+                        "{}", i18n::t("inbox-message-received")
+                    );
+                    let ctx = inbox::InboxHandlerCtx {
+                        our_did: Arc::from(our_did.as_str()),
+                        entity_registry: entity_registry.clone(),
+                        kubo_rpc_url: Arc::from(kubo_url.as_str()),
+                    };
+                    tokio::spawn(async move {
+                        if let Err(err) = tokio::time::timeout(
+                            Duration::from_secs(30),
+                            inbox::handle_inbox_message(&message, &ctx),
+                        )
+                        .await
+                        .unwrap_or_else(|_| Err(anyhow::anyhow!("inbox handler timed out")))
+                        {
+                            warn!(error = %err, from = %message.from, "inbox message rejected");
+                        }
+                        message.content.zeroize();
+                        message.signature.zeroize();
+                    });
+                }
+
                 // Drain plugin outbox — envelopes sent fire-and-forget by ma_send/ma_reply.
                 while let Ok((fragment, env)) = envelope_rx.try_recv() {
                     let msg_type = if env.reply_to.is_some() {
                         MESSAGE_TYPE_RPC_REPLY
                     } else {
-                        MESSAGE_TYPE_RPC
+                        env.message_type.as_deref().unwrap_or(MESSAGE_TYPE_RPC)
                     };
                     let sender_did_url = format!("{our_did}#{fragment}");
                     let recipient = match Did::try_from(env.to.as_str()) {
@@ -232,6 +276,7 @@ pub async fn run(
                         }
                     };
                     msg.reply_to = env.reply_to;
+                    let protocol = protocol_for(msg_type);
                     // Spawn each delivery independently so one unreachable peer
                     // cannot block others. Cap the outbox-open at 5 seconds.
                     let ep   = Arc::clone(&endpoint);
@@ -240,7 +285,7 @@ pub async fn run(
                     tokio::spawn(async move {
                         match tokio::time::timeout(
                             Duration::from_secs(5),
-                            ep.outbox(res.as_ref(), &base, rpc::RPC_PROTOCOL_ID),
+                            ep.outbox(res.as_ref(), &base, protocol),
                         )
                         .await
                         {
