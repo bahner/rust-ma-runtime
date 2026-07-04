@@ -14,17 +14,17 @@ use super::CrudHandlerCtx;
 
 // ── Path helpers ───────────────────────────────────────────────────────────────
 
-/// Parse `.ns.seg1.seg2` → `("ns", ["seg1", "seg2"])`.
+/// Parse `/ns/seg1/seg2` → `("ns", ["seg1", "seg2"])`.
 pub(super) fn parse_path(path: &str) -> Result<(&str, Vec<String>)> {
     let body = path
-        .strip_prefix('.')
-        .ok_or_else(|| anyhow!("CRUD path must start with '.' — got: {path}"))?;
-    let (ns, rest_str) = body.split_once('.').unwrap_or((body, ""));
+        .strip_prefix('/')
+        .ok_or_else(|| anyhow!("CRUD path must start with '/' — got: {path}"))?;
+    let (ns, rest_str) = body.split_once('/').unwrap_or((body, ""));
     if ns.is_empty() {
         return Err(anyhow!("CRUD path has no handler segment: {path}"));
     }
     let segs: Vec<String> = rest_str
-        .split('.')
+        .split('/')
         .filter(|s| !s.is_empty())
         .map(String::from)
         .collect();
@@ -371,6 +371,30 @@ pub(super) async fn send_crud_data_cbor<T: serde::Serialize + Sync>(
     send_crud_reply_raw(incoming, reply_type, ctx, CONTENT_TYPE_TERM_CBOR, &out).await
 }
 
+/// Send a GET data reply whose payload is an inline YAML string.
+///
+/// Wraps in `[":ok", yaml_str]` CBOR term with `content_type = "text/yaml"`.
+/// The receiver unwraps the `:ok` tuple and uses `content_type` to know
+/// the payload is YAML — message-type and content-type are kept separate.
+pub(super) async fn send_crud_ok_yaml<T: serde::Serialize + Sync>(
+    incoming: &ma_core::Message,
+    reply_type: &str,
+    ctx: &CrudHandlerCtx,
+    value: &T,
+) -> Result<()> {
+    let yaml_str = serde_yaml::to_string(value).context("encoding YAML reply")?;
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(
+        &CborValue::Array(vec![
+            CborValue::Text(":ok".into()),
+            CborValue::Text(yaml_str),
+        ]),
+        &mut out,
+    )
+    .context("encoding [:ok, yaml] CBOR array")?;
+    send_crud_reply_raw(incoming, reply_type, ctx, "text/yaml", &out).await
+}
+
 /// Send a GET data reply whose payload is an inline YAML string (encoded
 /// as a CBOR text value).  Uses `CONTENT_TYPE_TERM_YAML` so the receiver
 /// can use it directly as editor content without further decoding.
@@ -468,62 +492,62 @@ mod tests {
 
     #[test]
     fn parse_path_splits_namespace_and_segments() {
-        let (ns, segs) = parse_path(".entities.rms.acl").unwrap();
+        let (ns, segs) = parse_path("/entities/rms/acl").unwrap();
         assert_eq!(ns, "entities");
         assert_eq!(segs, vec!["rms", "acl"]);
     }
 
     #[test]
     fn parse_path_bare_namespace_has_no_segments() {
-        let (ns, segs) = parse_path(".entities").unwrap();
+        let (ns, segs) = parse_path("/entities").unwrap();
         assert_eq!(ns, "entities");
         assert!(segs.is_empty());
     }
 
     #[test]
-    fn parse_path_requires_leading_dot() {
-        assert!(parse_path("entities.rms").is_err());
+    fn parse_path_requires_leading_slash() {
+        assert!(parse_path("entities/rms").is_err());
     }
 
     #[test]
     fn parse_path_rejects_empty_namespace() {
-        assert!(parse_path("..rms").is_err());
+        assert!(parse_path("//rms").is_err());
     }
 
     #[test]
-    fn parse_path_ignores_double_and_trailing_dots() {
-        let (ns, segs) = parse_path(".entities..rms.").unwrap();
+    fn parse_path_ignores_double_and_trailing_slashes() {
+        let (ns, segs) = parse_path("/entities//rms/").unwrap();
         assert_eq!(ns, "entities");
         assert_eq!(segs, vec!["rms"]);
     }
 
     #[test]
     fn decode_crud_get_on_single_element() {
-        let payload = cbor(&CborValue::Array(vec![CborValue::Text(".entities".into())]));
+        let payload = cbor(&CborValue::Array(vec![CborValue::Text("/entities".into())]));
         assert!(
-            matches!(decode_crud_payload(&payload).unwrap(), CrudOp::Get(p) if p == ".entities")
+            matches!(decode_crud_payload(&payload).unwrap(), CrudOp::Get(p) if p == "/entities")
         );
     }
 
     #[test]
     fn decode_crud_delete_on_empty_string() {
         let payload = cbor(&CborValue::Array(vec![
-            CborValue::Text(".entities.rms".into()),
+            CborValue::Text("/entities/rms".into()),
             CborValue::Text(String::new()),
         ]));
         assert!(
-            matches!(decode_crud_payload(&payload).unwrap(), CrudOp::Delete(p) if p == ".entities.rms")
+            matches!(decode_crud_payload(&payload).unwrap(), CrudOp::Delete(p) if p == "/entities/rms")
         );
     }
 
     #[test]
     fn decode_crud_set_on_value() {
         let payload = cbor(&CborValue::Array(vec![
-            CborValue::Text(".config.k".into()),
+            CborValue::Text("/config/k".into()),
             CborValue::Text("v".into()),
         ]));
         assert!(
-            matches!(decode_crud_payload(&payload).unwrap(), CrudOp::Set(p, _) if p == ".config.k")
+            matches!(decode_crud_payload(&payload).unwrap(), CrudOp::Set(p, _) if p == "/config/k")
         );
     }
 
