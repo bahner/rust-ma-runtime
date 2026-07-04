@@ -82,6 +82,7 @@ runtime:
     /ma/register/0.0.1:
       attributes:
         stateful: true
+        wasi: true
       api:
         - init
         - handle_message
@@ -96,6 +97,7 @@ runtime:
     /ma/set/0.0.1:
       attributes:
         stateful: true
+        wasi: true
       api:
         - init
         - handle_message
@@ -109,6 +111,7 @@ runtime:
     /ma/counter/0.0.1:
       attributes:
         stateful: true
+        wasi: true
       api:
         - init
         - handle_message
@@ -133,6 +136,7 @@ runtime:
         - ma_reply
         - ma_set_state
         - ma_send
+        - ma_avatar_id
       allow:
         - "*"
 
@@ -180,28 +184,31 @@ runtime:
     root:
       kind: /ma/root/0.0.1
       behaviour:
-        /: bafybeic2opv5s2mmkkl25ekgp6ulun4erc63ocqp4tsilsjhl5wr5pfnvm
+        /: bafybeibmwvh4svdctw5wbceakcohyvgochgfhrqcgop24qvd6hanfqjcty
       acl: open
 
     # Counter — atomic integer with :get/:set/:inc/:dec/:reset verbs.
+    # Build: make -C ../python-ma-actors/counter ipfs
     counter:
       kind: /ma/counter/0.0.1
       behaviour:
-        /: bafkreibqd55px3nwvpk7ltdz4yovp33exc4jis6cxilbf6cicyfz3ftniy
+        /: bafybeigzgqaodh3zphxl3ro4ifumdguy7rcbtm6a2z3a6q4ut3opdholcm
       acl: open
 
     # Register — bijective key↔value map.
+    # Build: make -C ../python-ma-actors/register ipfs
     register:
       kind: /ma/register/0.0.1
       behaviour:
-        /: bafkreihth6wygd65kfdzj4gn3wh2gxudmnhegzwvqkvudo2soif24dsbqy
+        /: bafybeiauh5ixcmbswudolo54glzfmiu23go53icmrxakvl527c7wyysuim
       acl: open
 
     # Set — unordered unique-value collection.
+    # Build: make -C ../python-ma-actors/set ipfs
     set:
       kind: /ma/set/0.0.1
       behaviour:
-        /: bafkreifkccobn75jdy4gpp5pcga6pvwcqribxnlaryb6jqjo7mi3a75qsm
+        /: bafybeihljn3tfdabyylhk3jqltu7nkouzzrehtc3pyrumpvcvu4wyfkidm
       acl: open
 
     # Inline form — bootstrap builds and publishes the EntityNode.
@@ -217,14 +224,14 @@ runtime:
     avatar:
       kind: /ma/avatar/0.0.1
       behaviour:
-        /: bafybeidttvnnz4twcyvv4o4bqohjxscnp2yfsagjwtmqcwfpfszg3dg6qy
+        /: bafybeicp5iae4igp3grvv6c7cqbva3hq6cjv5emqgvh4spyg7amrxub5ly
       acl: open
 
     # Clearing house — placement authority for the runtime world.
     house:
       kind: /ma/house/0.0.1
       behaviour:
-        /: bafybeib3bfzxff4ykyru6iksr5obt3boxsfo6zzhi76sb5x7nd5w63ee4u
+        /: bafybeie3x2xrmzycxw3r3h3lou6culcdmzcxydopuzlrtx7rccfypey5am
       acl: open
 
     # The common room.
@@ -232,5 +239,5 @@ runtime:
     room:
       kind: /ma/room/0.0.1
       behaviour:
-        /: bafybeiewmwsvzmxnfz7327ja4llidr4d5ghmnyptq7r6ovbqh2rw2zaybm
+        /: bafybeidixrckulaqhpqf2bbmnxxwggyixefph3sfhe2mwxf22jydjw66ze
       acl: open
