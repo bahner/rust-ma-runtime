@@ -4,9 +4,8 @@ attributes:
   stateful: true
 api:
   - init
-  - handle_call
+  - handle_message
 host_functions:
   - ma_reply
   - ma_set_state
   - ma_send
-  - ma_call

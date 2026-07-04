@@ -9,10 +9,10 @@
 //!   called for [`Evaluator::Native`] kinds.
 //!
 //! Both backends implement the same dispatch surface: [`EntityPlugin::handle_cast`]
-//! / [`EntityPlugin::handle_call`].  The [`PluginKind`] field determines which
+//! / [`EntityPlugin::handle_message`].  The [`PluginKind`] field determines which
 //! export is called (for Extism) or which path the closure takes (for Native).
 
-use std::{cell::RefCell, collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use ma_core::{cat_bytes, ipfs_add};
@@ -34,22 +34,16 @@ use backend::{run_native_thread, run_wasm_thread, WasmThreadCfg};
 // an [`EntityMsg`] on the entity's channel and receive the result on a oneshot.
 //
 // This eliminates `block_in_place` entirely: no Wasm call ever parks a Tokio
-// worker thread, and nested `ma_call` chains (room → house → avatar) never
-// deadlock — each entity blocks only its own thread while awaiting a sub-call.
+// worker thread.  Entities communicate exclusively via `ma_send` (fire-and-
+// forget).  There is no synchronous inter-entity call primitive.
 
 /// Messages sent to an entity's dedicated worker thread.
 enum EntityMsg {
-    /// Dispatch a message to `handle_cast` / `handle_call`.
+    /// Dispatch a message to `handle_message`.
     Dispatch {
-        /// `true` → `handle_call` (stateful); `false` → `handle_cast` (stateless).
+        /// `true` → stateful (`handle_message` with state threading);
+        /// `false` → stateless (no state threading).
         stateful: bool,
-        /// `true` → capture the first `ma_reply` and return it in
-        /// [`DispatchResult::captured_reply`] instead of enqueuing to the outbox.
-        /// Set only for synchronous `ma_call` dispatches.
-        capture: bool,
-        /// Chain of entity fragments already in the current call stack — used by
-        /// `ma_call` for cycle detection.
-        call_path: Vec<String>,
         input: CastInput,
         reply: oneshot::Sender<Result<DispatchResult>>,
     },
@@ -66,42 +60,21 @@ enum EntityMsg {
     Shutdown,
 }
 
-// ── Per-thread dispatch state ─────────────────────────────────────────────────
-//
-// Set on the entity's own thread immediately before each `plugin.call(...)`,
-// and read by the `ma_call` / `ma_reply` host functions (which run on the same
-// thread during the call).  Cleared after the call returns.
-
-thread_local! {
-    /// The chain of caller fragments leading to the current dispatch.
-    /// `ma_call` appends the current entity and checks for cycles before
-    /// sending to a target.
-    static CALL_PATH: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-
-    /// Reply-capture slot for synchronous `ma_call` dispatches.
-    ///   `None`          — not capturing; `ma_reply` goes to the outbox.
-    ///   `Some(None)`    — capturing, nothing captured yet.
-    ///   `Some(Some(b))` — first `ma_reply` captured.
-    #[allow(clippy::option_option)] // the three states are meaningful, see above
-    static CAPTURE: RefCell<Option<Option<Vec<u8>>>> = const { RefCell::new(None) };
-}
-
 // ── Native dispatch type ─────────────────────────────────────────────────────
 
 /// Type of the compiled-in Rust closure used by native entity plugins.
 ///
 /// The closure receives a [`CastInput`] and returns a [`DispatchResult`],
-/// exactly like a Wasm `handle_cast` / `handle_call` export.
-/// Both [`EntityPlugin::handle_cast`] and [`EntityPlugin::handle_call`] route
-/// through the same closure for native entities — native entities do not
-/// distinguish stateful vs stateless internally (the closure owns its own
-/// state via `Arc<Mutex<…>>` or similar).
+/// exactly like a Wasm `handle_message` export.
+/// [`EntityPlugin::handle_message`] routes through this closure for native
+/// entities — native entities do not distinguish stateful vs stateless
+/// internally (the closure owns its own state via `Arc<Mutex<…>>` or similar).
 pub type NativeDispatch =
     std::sync::Arc<dyn Fn(&CastInput) -> anyhow::Result<DispatchResult> + Send + Sync>;
 
 // ── Dispatch result ─────────────────────────────────────────────────────────
 
-/// Return value from `handle_cast` and `handle_call`.
+/// Return value from `handle_message`.
 pub struct DispatchResult {
     /// Raw CBOR bytes returned by the plugin export.
     pub output: Vec<u8>,
@@ -113,9 +86,6 @@ pub struct DispatchResult {
     /// Entity deletion requests enqueued via `ma_delete_entity` host function.
     /// Each entry is the fragment of the entity to delete.
     pub delete_requests: Vec<String>,
-    /// First `ma_reply` captured during a synchronous `ma_call` dispatch
-    /// (`capture = true`).  `None` for normal (outbox) dispatches.
-    pub captured_reply: Option<Vec<u8>>,
 }
 
 // ── Registry type alias ───────────────────────────────────────────────────────
@@ -220,7 +190,7 @@ impl EntityPlugin {
         our_did: &str,
         kubo_url: &str,
         envelope_tx: UnboundedSender<(String, SendEnvelope)>,
-        entity_registry: EntityRegistry,
+        _entity_registry: EntityRegistry,
         avatar_key: [u8; 32],
         iroh_node_id: &str,
         started_at: u64,
@@ -279,9 +249,7 @@ impl EntityPlugin {
             has_init: kind_node.api.iter().any(|s| s == "init"),
             node_kind: node.kind.clone(),
             envelope_tx,
-            entity_registry,
             avatar_key,
-            handle: tokio::runtime::Handle::current(),
             behaviour_cid: behaviour_cid.to_string(),
             iroh_node_id: iroh_node_id.to_string(),
             started_at,
@@ -330,17 +298,17 @@ impl EntityPlugin {
         Ok((ep, lifecycle))
     }
 
-    /// Dispatch to the `handle_cast` export (stateless — no state threading).
+    /// Dispatch to the `handle_message` export (stateless — no state threading).
     pub async fn handle_cast(&self, input: &CastInput) -> Result<DispatchResult> {
         self.dispatch(false, input).await
     }
 
-    /// Dispatch to the `handle_call` export (stateful).
-    pub async fn handle_call(&self, input: &CastInput) -> Result<DispatchResult> {
+    /// Dispatch to the `handle_message` export (stateful).
+    pub async fn handle_message(&self, input: &CastInput) -> Result<DispatchResult> {
         self.dispatch(true, input).await
     }
 
-    /// Send a non-capturing dispatch to the worker thread and await the result.
+    /// Send a dispatch to the worker thread and await the result.
     ///
     /// Bounded by a backstop timeout slightly above the Wasm execution cap:
     /// no caller can ever wait forever on a wedged worker, even if the epoch
@@ -350,8 +318,6 @@ impl EntityPlugin {
         self.tx
             .send(EntityMsg::Dispatch {
                 stateful,
-                capture: false,
-                call_path: Vec::new(),
                 input: input.clone(),
                 reply: reply_tx,
             })
@@ -383,7 +349,7 @@ impl EntityPlugin {
 
     /// Persist any state queued by `ma_set_state` during the last dispatch.
     ///
-    /// Plugins call `ma_set_state` reactively inside `handle_call`; this method
+    /// Plugins call `ma_set_state` reactively inside `handle_message`; this method
     /// flushes whatever is still queued to IPFS and returns the resulting CID.
     /// Returns `Ok(None)` when there is no pending state (nothing to save).
     /// Always returns `Ok(None)` for native entities (they manage their own state).
@@ -446,16 +412,14 @@ mod hostile {
         (module
           (func $spin (result i32) (loop $l (br $l)) (i32.const 0))
           (export "init" (func $spin))
-          (export "handle_call" (func $spin))
-          (export "handle_cast" (func $spin)))
+          (export "handle_message" (func $spin)))
     "#;
 
     /// A module whose exports return immediately.
     const GOOD_WAT: &str = r#"
         (module
           (func $ok (result i32) (i32.const 0))
-          (export "handle_call" (func $ok))
-          (export "handle_cast" (func $ok)))
+          (export "handle_message" (func $ok)))
     "#;
 
     fn kind_node(api: &[&str]) -> KindNode {
@@ -544,7 +508,7 @@ mod hostile {
             kubo.url(),
             "garbage",
             &garbage_cid,
-            &kind_node(&["handle_call"]),
+            &kind_node(&["handle_message"]),
             envelope_tx.clone(),
             registry.clone(),
         )
@@ -562,7 +526,7 @@ mod hostile {
             kubo.url(),
             "evil-init",
             &evil_cid,
-            &kind_node(&["init", "handle_call"]),
+            &kind_node(&["init", "handle_message"]),
             envelope_tx.clone(),
             registry.clone(),
         )
@@ -574,13 +538,13 @@ mod hostile {
             t.elapsed()
         );
 
-        // ── 3. Infinite loop in handle_call: dispatch errors within the
+        // ── 3. Infinite loop in handle_message: dispatch errors within the
         //       bound, and a healthy entity is fully responsive meanwhile. ────
         let (evil, _) = load(
             kubo.url(),
             "evil",
             &evil_cid,
-            &kind_node(&["handle_call"]), // no init → load succeeds
+            &kind_node(&["handle_message"]), // no init → load succeeds
             envelope_tx.clone(),
             registry.clone(),
         )
@@ -590,7 +554,7 @@ mod hostile {
             kubo.url(),
             "good",
             &good_cid,
-            &kind_node(&["handle_call"]),
+            &kind_node(&["handle_message"]),
             envelope_tx.clone(),
             registry.clone(),
         )
@@ -605,12 +569,12 @@ mod hostile {
         // Kick off the wedging dispatch.
         let evil_clone = evil.clone();
         let wedged =
-            tokio::spawn(async move { evil_clone.handle_call(&cast_input("wedge-1")).await });
+            tokio::spawn(async move { evil_clone.handle_message(&cast_input("wedge-1")).await });
 
         // While evil spins, the good entity must answer immediately.
         tokio::time::sleep(Duration::from_millis(200)).await;
         let t = Instant::now();
-        good.handle_call(&cast_input("good-1"))
+        good.handle_message(&cast_input("good-1"))
             .await
             .expect("good entity must not be affected by evil one");
         assert!(
@@ -622,7 +586,7 @@ mod hostile {
         // The wedged dispatch must come back as a bounded error.
         let t = Instant::now();
         let res = wedged.await.expect("join");
-        assert!(res.is_err(), "infinite handle_call must error, got Ok");
+        assert!(res.is_err(), "infinite handle_message must error, got Ok");
         assert!(
             t.elapsed() < Duration::from_secs(10),
             "wedged dispatch not bounded: {:?}",
@@ -631,7 +595,7 @@ mod hostile {
 
         // ── 4. The evil worker survives the epoch abort and stays bounded. ───
         let t = Instant::now();
-        let res2 = evil.handle_call(&cast_input("wedge-2")).await;
+        let res2 = evil.handle_message(&cast_input("wedge-2")).await;
         assert!(res2.is_err(), "second dispatch must also error");
         assert!(
             t.elapsed() < Duration::from_secs(10),
@@ -644,7 +608,7 @@ mod hostile {
             kubo.url(),
             "evil",
             &good_cid, // "fixed" version
-            &kind_node(&["handle_call"]),
+            &kind_node(&["handle_message"]),
             envelope_tx.clone(),
             registry.clone(),
         )
@@ -656,7 +620,7 @@ mod hostile {
             .insert("evil".to_string(), std::sync::Arc::new(evil2));
         let reloaded = registry.read().await.get("evil").cloned().unwrap();
         reloaded
-            .handle_call(&cast_input("post-reload"))
+            .handle_message(&cast_input("post-reload"))
             .await
             .expect("reloaded (fixed) entity must dispatch fine");
 
@@ -692,7 +656,7 @@ mod wasm_repro {
 
         let kind_node = KindNode {
             protocol: "/ma/room/0.0.1".to_string(),
-            api: vec!["init".to_string(), "handle_call".to_string()],
+            api: vec!["init".to_string(), "handle_message".to_string()],
             host_functions: vec![
                 "ma_reply".to_string(),
                 "ma_set_state".to_string(),
@@ -752,7 +716,7 @@ mod wasm_repro {
             };
 
             println!("\n=== dispatch {verb} ===");
-            match ep.handle_call(&CastInput { msg }).await {
+            match ep.handle_message(&CastInput { msg }).await {
                 Ok(result) => {
                     println!("OK, output {} bytes", result.output.len());
                     while let Ok((frag, env)) = envelope_rx.try_recv() {
@@ -785,7 +749,7 @@ mod wasm_repro {
 
         let kind_node = KindNode {
             protocol: "/ma/room/0.0.1".to_string(),
-            api: vec!["init".to_string(), "handle_call".to_string()],
+            api: vec!["init".to_string(), "handle_message".to_string()],
             host_functions: vec![
                 "ma_reply".to_string(),
                 "ma_set_state".to_string(),
@@ -847,7 +811,7 @@ mod wasm_repro {
                 content,
             };
             let ep = registry.read().await.get("room").cloned().unwrap();
-            ep.handle_call(&CastInput { msg }).await
+            ep.handle_message(&CastInput { msg }).await
         };
         tokio::time::timeout(
             std::time::Duration::from_secs(40),

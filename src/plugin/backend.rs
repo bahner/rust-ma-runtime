@@ -14,11 +14,9 @@ use tokio::sync::{
 };
 use tracing::warn;
 
-use crate::entity::{
-    CastInput, CreateEntityRequest, Lifecycle, ReplyRequest, SendEnvelope,
-};
+use crate::entity::{CastInput, CreateEntityRequest, Lifecycle, ReplyRequest, SendEnvelope};
 
-use super::{DispatchResult, EntityMsg, EntityRegistry, NativeDispatch, CALL_PATH, CAPTURE};
+use super::{DispatchResult, EntityMsg, NativeDispatch};
 
 // ── Fragment generation ───────────────────────────────────────────────────────
 
@@ -30,15 +28,6 @@ fn generate_fragment() -> String {
     (0..8)
         .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
         .collect()
-}
-
-/// True if dispatching `target` from `caller` (with `call_path` already on the
-/// stack) would form a cycle — i.e. a self-call or a re-entry into an entity
-/// that is an ancestor still awaiting a reply.  Such a dispatch would deadlock
-/// (the ancestor's thread is blocked and can never service the call), so
-/// `ma_call` returns `:error` instead.
-fn is_call_cycle(target: &str, caller: &str, call_path: &[String]) -> bool {
-    target == caller || call_path.iter().any(|f| f == target)
 }
 
 // ── Host functions ────────────────────────────────────────────────────────────
@@ -75,19 +64,6 @@ host_fn!(ma_reply_fn(user_data: OutboxCtx; input: Vec<u8>) -> Vec<u8> {
     let req: ReplyRequest = from_cbor_bytes(&input)?;
     // If inside a synchronous ma_call (capture mode), capture the first reply
     // for this dispatch instead of enqueuing to the outbox.
-    let captured = CAPTURE.with(|c| {
-        let mut slot = c.borrow_mut();
-        if let Some(inner) = slot.as_mut() {
-            if inner.is_none() {
-                *inner = Some(req.content.clone());
-                return true;
-            }
-        }
-        false
-    });
-    if captured {
-        return Ok(Vec::new());
-    }
     let envelope = SendEnvelope {
         to: req.msg.from,
         content_type: req.content_type,
@@ -210,7 +186,7 @@ host_fn!(ma_avatar_id_fn(user_data: AvatarIdCtx; input: Vec<u8>) -> Vec<u8> {
     Ok(hex.into_bytes())
 });
 
-// ── ma_call host function ─────────────────────────────────────────────────────────────────────────────────────────────────
+// ── Wasm execution timeouts ───────────────────────────────────────────────────
 
 /// Parse a duration in whole seconds from `var`, falling back to `default`.
 fn env_secs(var: &str, default: u64) -> std::time::Duration {
@@ -222,208 +198,15 @@ fn env_secs(var: &str, default: u64) -> std::time::Duration {
     )
 }
 
-/// Hard cap on any single Wasm export invocation (init / `handle_cast` /
-/// `handle_call`).  Enforced by extism via wasmtime epoch interruption — a
-/// plugin stuck in an infinite loop gets aborted and the worker thread
-/// survives, instead of being wedged forever.
+/// Hard cap on any single Wasm export invocation (`init` / `handle_message`).
+/// Enforced by extism via wasmtime epoch interruption — a plugin stuck in an
+/// infinite loop gets aborted and the worker thread survives.
 ///
 /// Override with `MA_WASM_CALL_TIMEOUT_SECS` (used by tests; also an
 /// operational escape hatch).
 pub(super) fn wasm_call_timeout() -> std::time::Duration {
     env_secs("MA_WASM_CALL_TIMEOUT_SECS", 30)
 }
-
-/// Upper bound on how long `ma_call` waits for the target entity's reply.
-/// Slightly above [`wasm_call_timeout`] so the callee's own execution cap
-/// fires first; this bound only triggers when the callee's dispatch queue
-/// is severely backed up.
-fn ma_call_timeout() -> std::time::Duration {
-    wasm_call_timeout() + std::time::Duration::from_secs(5)
-}
-
-// Context captured by the `ma_call` host function.
-struct CallCtx {
-    registry: EntityRegistry,
-    /// DID of the calling entity — used as `from` in the synthetic message.
-    caller_did: String,
-    /// Fragment of the calling entity — prevents self-calls.
-    caller_fragment: String,
-    /// Tokio runtime handle — lets the (plain OS) worker thread run a
-    /// timed wait for the reply without ever parking a Tokio worker.
-    handle: tokio::runtime::Handle,
-}
-
-// Input sent by the plugin to `ma_call`.
-#[derive(serde::Deserialize)]
-struct CallRequest {
-    /// Bare fragment name of the target entity (no `#` prefix).
-    to: String,
-    /// CBOR-encoded verb atom or array to send to the target.
-    #[serde(with = "serde_bytes")]
-    content: Vec<u8>,
-}
-
-// `ma_call` host function: synchronous call to another entity in this runtime.
-//
-// The plugin passes a CBOR-encoded `CallRequest { to, content }`.
-// The runtime looks up the target entity handle by fragment, sends a capturing
-// `Dispatch` message to the target's worker thread, and blocks *this* entity's
-// thread until the reply arrives.  Because each entity owns its own thread,
-// this never parks a Tokio worker.
-//
-// Cycle detection: the current CALL_PATH plus this entity's own fragment is
-// checked against the target; A→B→A (or longer) returns :error instead of
-// deadlocking (the target's thread could never make progress if it is an
-// ancestor waiting on us).
-host_fn!(ma_call_fn(user_data: CallCtx; input: Vec<u8>) -> Vec<u8> {
-    let req: CallRequest = from_cbor_bytes(&input)?;
-
-    let arc = user_data.get()?;
-    let ctx = arc.lock().unwrap();
-    let registry = ctx.registry.clone();
-    let caller_did = ctx.caller_did.clone();
-    let caller_fragment = ctx.caller_fragment.clone();
-    let handle = ctx.handle.clone();
-    drop(ctx);
-
-    // Build the call path leading to the target: everything already on the
-    // stack, plus this entity.  Reject self-calls and cycles.
-    let mut call_path = CALL_PATH.with(|p| p.borrow().clone());
-    let cycle_detected = is_call_cycle(&req.to, &caller_fragment, &call_path);
-    if cycle_detected {
-        let mut out = Vec::new();
-        ciborium::ser::into_writer(
-            &ciborium::Value::Array(vec![
-                ciborium::Value::Text(":error".into()),
-                ciborium::Value::Text(format!(
-                    "ma_call: cycle detected — #{} is already in the call stack",
-                    req.to
-                )),
-            ]),
-            &mut out,
-        )
-        .map_err(|e| extism::Error::msg(format!("ma_call encode: {e}")))?;
-        return Ok(out);
-    }
-    call_path.push(caller_fragment.clone());
-
-    // Look up the target handle.  `blocking_read` is safe here: an entity
-    // worker thread is a plain OS thread, never a Tokio worker, so it is not
-    // in an async execution context.
-    let ep = registry.blocking_read().get(&req.to).cloned();
-    let Some(ep) = ep else {
-        let mut out = Vec::new();
-        ciborium::ser::into_writer(
-            &ciborium::Value::Array(vec![
-                ciborium::Value::Text(":error".into()),
-                ciborium::Value::Text(format!("ma_call: entity #{} not found", req.to)),
-            ]),
-            &mut out,
-        )
-        .map_err(|e| extism::Error::msg(format!("ma_call encode: {e}")))?;
-        return Ok(out);
-    };
-
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    let msg = crate::entity::LocalMessage {
-        id: format!("ma-call-{}-{}", caller_fragment, req.to),
-        from: caller_did,
-        to: format!("#{}", req.to),
-        created_at: now_secs,
-        expires: now_secs + 5,
-        reply_to: None,
-        message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),
-        content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
-        content: req.content,
-    };
-    let cast_input = CastInput { msg: crate::entity::PluginMsg::from(&msg) };
-
-    // Send a capturing dispatch to the target's worker thread and block this
-    // thread until it replies.
-    let (reply_tx, reply_rx) = oneshot::channel();
-    if ep
-        .tx
-        .send(EntityMsg::Dispatch {
-            stateful: true,
-            capture: true,
-            call_path,
-            input: cast_input,
-            reply: reply_tx,
-        })
-        .is_err()
-    {
-        let mut out = Vec::new();
-        ciborium::ser::into_writer(
-            &ciborium::Value::Array(vec![
-                ciborium::Value::Text(":error".into()),
-                ciborium::Value::Text(format!("ma_call: entity #{} thread is gone", req.to)),
-            ]),
-            &mut out,
-        )
-        .map_err(|e| extism::Error::msg(format!("ma_call encode: {e}")))?;
-        return Ok(out);
-    }
-
-    let dispatch_result = match handle.block_on(async {
-        tokio::time::timeout(ma_call_timeout(), reply_rx).await
-    }) {
-        Ok(Ok(Ok(r))) => r,
-        Ok(Ok(Err(e))) => {
-            let mut out = Vec::new();
-            ciborium::ser::into_writer(
-                &ciborium::Value::Array(vec![
-                    ciborium::Value::Text(":error".into()),
-                    ciborium::Value::Text(format!("ma_call: dispatch failed: {e}")),
-                ]),
-                &mut out,
-            )
-            .map_err(|err| extism::Error::msg(format!("ma_call encode: {err}")))?;
-            return Ok(out);
-        }
-        Ok(Err(_)) => {
-            let mut out = Vec::new();
-            ciborium::ser::into_writer(
-                &ciborium::Value::Array(vec![
-                    ciborium::Value::Text(":error".into()),
-                    ciborium::Value::Text(format!("ma_call: no reply from #{}", req.to)),
-                ]),
-                &mut out,
-            )
-            .map_err(|err| extism::Error::msg(format!("ma_call encode: {err}")))?;
-            return Ok(out);
-        }
-        Err(_elapsed) => {
-            let mut out = Vec::new();
-            ciborium::ser::into_writer(
-                &ciborium::Value::Array(vec![
-                    ciborium::Value::Text(":error".into()),
-                    ciborium::Value::Text(format!(
-                        "ma_call: timed out waiting for #{} after {}s",
-                        req.to,
-                        ma_call_timeout().as_secs()
-                    )),
-                ]),
-                &mut out,
-            )
-            .map_err(|err| extism::Error::msg(format!("ma_call encode: {err}")))?;
-            return Ok(out);
-        }
-    };
-
-    // Return the captured ma_reply content, or :ok if plugin never replied.
-    if let Some(bytes) = dispatch_result.captured_reply {
-        Ok(bytes)
-    } else {
-        let mut out = Vec::new();
-        ciborium::ser::into_writer(&ciborium::Value::Text(":ok".into()), &mut out)
-            .map_err(|e| extism::Error::msg(format!("ma_call encode: {e}")))?;
-        Ok(out)
-    }
-});
 
 // ── ma_delete_entity host function ───────────────────────────────────────────
 
@@ -465,7 +248,6 @@ host_fn!(ma_end_fn(user_data: DeleteEntityCtx; _input: Vec<u8>) -> Vec<u8> {
 
 // ── init() payload ────────────────────────────────────────────────────────────
 
-
 // ── Worker threads ────────────────────────────────────────────────────────────
 
 /// Everything a Wasm entity's worker thread needs to build and run its plugin.
@@ -480,11 +262,7 @@ pub(super) struct WasmThreadCfg {
     pub(super) has_init: bool,
     pub(super) node_kind: String,
     pub(super) envelope_tx: UnboundedSender<(String, SendEnvelope)>,
-    pub(super) entity_registry: EntityRegistry,
     pub(super) avatar_key: [u8; 32],
-    /// Tokio runtime handle, captured in `EntityPlugin::load` (async context).
-    /// Passed to `CallCtx` so `ma_call` can run timed waits from the worker thread.
-    pub(super) handle: tokio::runtime::Handle,
     /// IPFS CID of the Wasm behaviour bytes for this entity.
     pub(super) behaviour_cid: String,
     /// iroh QUIC node ID of this runtime.
@@ -520,7 +298,10 @@ struct WasmThreadState {
 ///   `parent`       DID-URL of the parent entity                           [if set]
 fn build_plugin_config(cfg: &WasmThreadCfg) -> std::collections::BTreeMap<String, String> {
     let mut config = std::collections::BTreeMap::new();
-    config.insert("self".to_string(), format!("{}#{}", cfg.our_did, cfg.fragment));
+    config.insert(
+        "self".to_string(),
+        format!("{}#{}", cfg.our_did, cfg.fragment),
+    );
     config.insert("id".to_string(), cfg.fragment.clone());
     config.insert("kind".to_string(), cfg.node_kind.clone());
     config.insert("cid".to_string(), cfg.behaviour_cid.clone());
@@ -553,12 +334,6 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
         self_terminate: false,
         self_fragment: cfg.fragment.clone(),
     });
-    let call_ctx: UserData<CallCtx> = UserData::new(CallCtx {
-        registry: cfg.entity_registry.clone(),
-        caller_did: format!("{}#{}", cfg.our_did, &cfg.fragment),
-        caller_fragment: cfg.fragment.clone(),
-        handle: cfg.handle.clone(),
-    });
     let avatar_id_ctx: UserData<AvatarIdCtx> = UserData::new(AvatarIdCtx {
         key: cfg.avatar_key,
     });
@@ -571,8 +346,9 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
     // IMPORT_INDEX must equal the position in this list after filtering.
     //
     // Python IMPORT_INDEX assignments:
-    //   actor.py:  ma_reply=0, ma_set_state=1, ma_send=2, ma_call=3, ma_end=4
-    //   avatar.py: ma_avatar_id=5
+    //   actor.py:  ma_reply=0, ma_set_state=1, ma_send=2, ma_end=3
+    //   avatar.py: ma_avatar_id=3 (without ma_end) or 4 (with ma_end)
+    //   root.py:   ma_create_entity=3/4, ma_delete_entity=4/5
     //   root.py:   ma_create_entity=5, ma_delete_entity=6
     //
     // Plugins that do NOT declare ma_end skip it via the host_functions filter,
@@ -589,10 +365,6 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
         (
             "ma_send",
             Function::new("ma_send", [PTR], [PTR], outbox_ctx_send, ma_send_fn),
-        ),
-        (
-            "ma_call",
-            Function::new("ma_call", [PTR], [PTR], call_ctx, ma_call_fn),
         ),
         (
             "ma_end",
@@ -698,31 +470,18 @@ fn execute_dispatch(
     ts: &mut WasmThreadState,
     fragment: &str,
     stateful: bool,
-    capture: bool,
-    call_path: Vec<String>,
     input: &CastInput,
 ) -> Result<DispatchResult> {
-    let export = if stateful {
-        "handle_call"
-    } else {
-        "handle_cast"
-    };
+    let export = "handle_message";
+    let _ = stateful; // still tracked for PluginKind but export name is unified
     let mut input_bytes = Vec::new();
     ciborium::ser::into_writer(input, &mut input_bytes)
         .map_err(|e| anyhow!("failed to CBOR-encode CastInput: {e}"))?;
-
-    // Publish per-dispatch context for the ma_call / ma_reply host functions,
-    // which run on this same thread during the call.
-    CALL_PATH.with(|p| *p.borrow_mut() = call_path);
-    CAPTURE.with(|c| *c.borrow_mut() = if capture { Some(None) } else { None });
 
     let output = ts
         .plugin
         .call::<&[u8], Vec<u8>>(export, input_bytes.as_slice())
         .map_err(|e| anyhow!("{export}() failed for '{fragment}': {e}"));
-
-    let captured_reply = CAPTURE.with(|c| c.borrow_mut().take().flatten());
-    CALL_PATH.with(|p| p.borrow_mut().clear());
 
     let output = output?;
 
@@ -750,7 +509,9 @@ fn execute_dispatch(
             .delete_queue
             .get()
             .map_err(|e| anyhow!("delete_queue error: {e}"))?;
-        let mut dq = arc.lock().map_err(|e| anyhow!("delete_queue poisoned: {e}"))?;
+        let mut dq = arc
+            .lock()
+            .map_err(|e| anyhow!("delete_queue poisoned: {e}"))?;
         let mut reqs: Vec<String> = dq.pending.drain(..).collect();
         if dq.self_terminate {
             reqs.push(dq.self_fragment.clone());
@@ -764,7 +525,6 @@ fn execute_dispatch(
         pending_state,
         create_requests,
         delete_requests,
-        captured_reply,
     })
 }
 
@@ -803,13 +563,10 @@ pub(super) fn run_wasm_thread(
         match msg {
             EntityMsg::Dispatch {
                 stateful,
-                capture,
-                call_path,
                 input,
                 reply,
             } => {
-                let res =
-                    execute_dispatch(&mut ts, &cfg.fragment, stateful, capture, call_path, &input);
+                let res = execute_dispatch(&mut ts, &cfg.fragment, stateful, &input);
                 let _ = reply.send(res);
             }
             EntityMsg::TakePending { reply } => {
@@ -870,7 +627,7 @@ fn from_cbor_bytes<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{generate_fragment, is_call_cycle};
+    use super::generate_fragment;
 
     #[test]
     fn generate_fragment_is_8_alphanumeric() {
@@ -883,22 +640,5 @@ mod tests {
     fn generate_fragment_varies() {
         let set: std::collections::HashSet<_> = (0..5).map(|_| generate_fragment()).collect();
         assert!(set.len() > 1, "fragments should not all be identical");
-    }
-
-    #[test]
-    fn cycle_detects_self_call() {
-        assert!(is_call_cycle("a", "a", &[]));
-    }
-
-    #[test]
-    fn cycle_detects_ancestor_reentry() {
-        let path = vec!["a".to_string(), "b".to_string()];
-        assert!(is_call_cycle("a", "c", &path)); // a -> b -> c -> a
-    }
-
-    #[test]
-    fn cycle_allows_fresh_target() {
-        let path = vec!["a".to_string(), "b".to_string()];
-        assert!(!is_call_cycle("d", "c", &path)); // a -> b -> c -> d
     }
 }

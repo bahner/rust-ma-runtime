@@ -335,7 +335,7 @@ pub fn new_kind_registry() -> KindRegistry {
 
 /// Entity fragment names reserved by the runtime system.
 /// These names cannot be used as entity names.
-pub const RESERVED_ENTITY_NAMES: &[&str] = &["root", "acl", "scheduler", "logger", "runtime"];
+pub const RESERVED_ENTITY_NAMES: &[&str] = &["root", "acl", "scheduler", "runtime"];
 
 /// Lifecycle state of an entity, persisted in [`EntityNode`].
 ///

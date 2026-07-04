@@ -42,9 +42,11 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
   an unsupported evaluator.
 - **ACL group resolution via local actors.** Groups in ACL maps use the
   `+#<fragment>` syntax to reference a local `ma-set` actor. Resolution is done
-  by calling `[:contains, caller]` on the actor via `handle_call`. This is a
-  single-member probe, not a bulk fetch — there is no `fetch_group_members`.
-  Use `query_actor_group(group_ref, caller, registry)` in `acl.rs`.
+  by sending `[:contains, caller]` to the actor via `handle_message`. This is a
+  runtime-level infrastructure probe — it intentionally bypasses the per-entity
+  queue since ACL must be resolved before dispatch. Single-member probe only;
+  there is no `fetch_group_members`. Use
+  `query_actor_group(group_ref, caller, registry)` in `acl.rs`.
 - **Keys in memory only.** IPNS private key material arriving in a request is
   used once and immediately zeroized (`zeroize`). The daemon's own keys live in
   an encrypted `SecretBundle` on disk, decrypted into memory at startup and
@@ -84,6 +86,17 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
   A missing ACL is a configuration error — fail loudly rather than silently
   opening access. The `:acl:` delete verb on the root ACL is therefore a no-op;
   to change the ACL, replace it with a new published CID via `:acl: <cid>`.
+- **Actors communicate exclusively via message passing.** One entity plugin must
+  never invoke another entity's handler directly. All inter-entity communication
+  goes through the per-entity message queue. `ma_send` (fire-and-forget) is the
+  only inter-actor primitive. There is no `ma_call` — synchronous request-reply
+  between actors is not supported. Replies are ordinary messages matched by
+  `reply_to` message-ID. This is not a style preference; it is the only
+  architecture that scales to hundreds of thousands of entities.
+- **Per-entity message queues.** Each entity has a dedicated `tokio::mpsc`
+  channel. The RPC handler routes incoming messages non-blockingly to the correct
+  entity channel. Each entity processes its own queue sequentially in a spawned
+  tokio task. Entities never block one another.
 
 ## Dependencies
 
@@ -317,7 +330,7 @@ dot-path grammar rooted in four namespaces:
 | `:ping` | reply `:pong` |
 
 Fragment-addressed messages (`did:ma:<ipns>#<name>`) are routed directly to
-the named entity plugin (Wasm `handle_cast`).
+the named entity plugin (Wasm `handle_message`).
 
 ### `:edit` verb
 

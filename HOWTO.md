@@ -335,7 +335,6 @@ The example bootstrap ships with these standard kinds out of the box:
 | `counter` | `/ma/counter/0.0.1` | Atomic integer with `:get/:inc/:dec/:set` |
 | `register` | `/ma/register/0.0.1` | Bijective key↔value map |
 | `set` | `/ma/set/0.0.1` | Unordered unique-value collection |
-| `logger` | `/ma/logger/0.0.1` | Structured log store |
 | `fortune` | `/ma/stateless/python/0.0.1` | Stateless Python handler |
 
 Kinds are the most important architectural decision in your runtime.  A
@@ -481,7 +480,7 @@ Update `root_cid` in `ma.yaml` and restart.  Now you can create entities
 with `kind: /my/greeter/0.0.1`.
 
 The [ma-python](https://github.com/bahner/ma-python) repository has working
-examples for counter, fortune, register, set, and logger — all production
+examples for counter, fortune, register, and set — all production
 plugins used in the standard bootstrap.
 
 If you want to understand the message types being exchanged under the hood

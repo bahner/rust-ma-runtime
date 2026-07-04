@@ -63,7 +63,7 @@ pub async fn handle_inbox_message(message: &ma_core::Message, ctx: &InboxHandler
 
     let result = match entity.kind {
         PluginKind::Stateless => entity.handle_cast(&cast_input).await?,
-        PluginKind::Stateful => entity.handle_call(&cast_input).await?,
+        PluginKind::Stateful => entity.handle_message(&cast_input).await?,
     };
 
     // Persist state if the entity called ma_set_state during this dispatch.

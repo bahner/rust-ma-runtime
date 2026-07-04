@@ -44,7 +44,7 @@ runtime:
         stateful: false
         wasi: true
       api:
-        - handle_cast
+        - handle_message
       host_functions:
         - ma_reply
         - ma_send
@@ -54,7 +54,7 @@ runtime:
         wasi: true
       api:
         - init
-        - handle_call
+        - handle_message
       host_functions:
         - ma_reply
         - ma_send
@@ -67,12 +67,11 @@ runtime:
         wasi: true
       api:
         - init
-        - handle_cast
+        - handle_message
       host_functions:
         - ma_reply
         - ma_set_state
         - ma_send
-        - ma_call
         - ma_create_entity
         - ma_delete_entity
       allow:
@@ -85,7 +84,7 @@ runtime:
         stateful: true
       api:
         - init
-        - handle_call
+        - handle_message
       host_functions:
         - ma_set_state
         - ma_reply
@@ -99,7 +98,7 @@ runtime:
         stateful: true
       api:
         - init
-        - handle_call
+        - handle_message
       host_functions:
         - ma_set_state
         - ma_reply
@@ -112,26 +111,13 @@ runtime:
         stateful: true
       api:
         - init
-        - handle_call
+        - handle_message
       host_functions:
         - ma_set_state
         - ma_reply
       allow:
         - "*"
 
-    # Structured log store — receives [:log, level, msg] via handle_call.
-    /ma/logger/0.0.1:
-      attributes:
-        stateful: true
-        wasi: true
-      api:
-        - init
-        - handle_call
-      host_functions:
-        - ma_set_state
-        - ma_reply
-      allow:
-        - "*"
 
     # Clearing house — two-phase claim/accept placement authority.
     # Tracks who/what is where (containment tree).
@@ -142,12 +128,11 @@ runtime:
         wasi: true
       api:
         - init
-        - handle_call
+        - handle_message
       host_functions:
         - ma_reply
         - ma_set_state
         - ma_send
-        - ma_call
       allow:
         - "*"
 
@@ -159,12 +144,11 @@ runtime:
         wasi: true
       api:
         - init
-        - handle_call
+        - handle_message
       host_functions:
         - ma_reply
         - ma_set_state
         - ma_send
-        - ma_call
       allow:
         - "*"
 
@@ -176,12 +160,11 @@ runtime:
         wasi: true
       api:
         - init
-        - handle_call
+        - handle_message
       host_functions:
         - ma_reply
         - ma_set_state
         - ma_send
-        - ma_call
         - ma_avatar_id
       allow:
         - "*"
@@ -222,14 +205,6 @@ runtime:
       acl: open
 
     # Inline form — bootstrap builds and publishes the EntityNode.
-
-    # Log store — actors send [:log, level, msg] here; query via :entries.
-    # Replace the behaviour CID with: make -C ../ma-python/logger ipfs
-    logger:
-      kind: /ma/logger/0.0.1
-      behaviour:
-        /: bafybeieugo2lmj34ledezlot4btcbm7kuwta5dgjnqtdpugdbyrrbnsi7u
-      acl: open
 
     rms:
       kind: /ma/stateless/python/0.0.1

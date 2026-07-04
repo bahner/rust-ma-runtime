@@ -201,13 +201,15 @@ pub async fn query_actor_group(
         to: format!("#{fragment}"),
         created_at: now_secs,
         expires: now_secs + 5, // 5 seconds
-        reply_to: None,        message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),        content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
+        reply_to: None,
+        message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),
+        content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
         content,
     };
     let input = crate::entity::CastInput {
         msg: crate::entity::PluginMsg::from(&msg),
     };
-    let result = ep.handle_call(&input).await?;
+    let result = ep.handle_message(&input).await?;
 
     // Parse reply: :ok true → caller is member; anything else → not member.
     let contained = match ciborium::de::from_reader::<ciborium::Value, _>(result.output.as_slice())

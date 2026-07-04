@@ -368,6 +368,7 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
 /// for every successfully loaded entity whose stored lifecycle differs.
 /// Returns `(count, Some(new_root_cid))` when any entity nodes were updated,
 /// or `(count, None)` when nothing changed.
+#[allow(clippy::too_many_arguments)]
 pub async fn load_entities(
     root_cid: &str,
     kubo_url: &str,
