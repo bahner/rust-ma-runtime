@@ -5,7 +5,7 @@ use crate::entity::{IpldLink, KindNode};
 
 use super::helpers::{
     load_manifest, send_crud_i18n_error, send_crud_ok, send_crud_ok_cid, send_crud_ok_yaml,
-    send_crud_reply_cbor, strip_brackets, with_manifest_crud,
+    send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -17,7 +17,7 @@ use super::CrudHandlerCtx;
 /// |-----------|------|------|
 /// | List all  | `GET /kinds` | — |
 /// | Get kind  | `GET /kinds/ma/avatar/0.0.1` | — |
-/// | Upsert    | `SET /kinds/ma/avatar/0.0.1` | `<bafyCID>` |
+/// | Upsert    | `SET /kinds/ma/avatar/0.0.1` | `/ipfs/<cid>` |
 /// | Delete    | `DEL /kinds/ma/avatar/0.0.1` | — |
 pub(super) async fn handle_kinds_ns(
     message: &ma_core::Message,
@@ -61,7 +61,7 @@ pub(super) async fn handle_kinds_ns(
         }
         // SET /kinds/<protocol> <cid> → upsert kind
         (Some(""), [CborValue::Text(raw)]) => {
-            let cid = strip_brackets(raw).unwrap_or(raw.as_str()).to_string();
+            let cid = crate::kubo::dag_resolve(&ctx.kubo_rpc_url, raw).await?;
             let new_root = with_manifest_crud(ctx, |m| {
                 m.kinds.insert_protocol(&protocol_id, IpldLink::new(&cid));
                 Ok(())

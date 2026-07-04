@@ -5,8 +5,8 @@ use tracing::info;
 use crate::entity::IpldLink;
 
 use super::helpers::{
-    acl_cache_update, load_manifest, send_crud_i18n_error, send_crud_ok_cid, send_crud_reply_cbor,
-    strip_brackets, with_manifest_crud,
+    acl_cache_update, load_manifest, resolve_ipfs_ref, send_crud_i18n_error, send_crud_ok_cid,
+    send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -55,11 +55,8 @@ pub(super) async fn handle_root_acls(
         }
         // Set a named ACL by CID.
         ([acl_name], Some(""), [CborValue::Text(raw)]) => {
-            let cid = match strip_brackets(raw) {
-                Some(c) => c.to_string(),
-                None => {
-                    return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await
-                }
+            let Some(cid) = resolve_ipfs_ref(&ctx.kubo_rpc_url, raw).await? else {
+                return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await;
             };
             let acl_name = acl_name.clone();
             let new_root = with_manifest_crud(ctx, |m| {
@@ -105,11 +102,8 @@ pub(super) async fn handle_root_acl(
             send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(cid)).await
         }
         (Some(""), [CborValue::Text(raw)]) => {
-            let cid = match strip_brackets(raw) {
-                Some(c) => c.to_string(),
-                None => {
-                    return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await
-                }
+            let Some(cid) = resolve_ipfs_ref(&ctx.kubo_rpc_url, raw).await? else {
+                return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await;
             };
             let acl_map = crate::acl::load_acl_from_cid(&ctx.kubo_rpc_url, &cid)
                 .await

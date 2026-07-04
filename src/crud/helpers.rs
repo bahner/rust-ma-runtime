@@ -35,7 +35,7 @@ pub(super) fn parse_path(path: &str) -> Result<(&str, Vec<String>)> {
 pub(super) enum CrudOp {
     /// `[".path"]`
     Get(String),
-    /// `[".path", value]` — value is a CBOR scalar or `<cid>` IPFS reference
+    /// `[".path", value]` — value is a CBOR scalar or `/ipfs/…`, `/ipns/…` reference
     Set(String, CborValue),
     /// `[".path", ""]` — empty string value means delete
     Delete(String),
@@ -45,7 +45,7 @@ pub(super) enum CrudOp {
 ///
 /// - `[".path"]`          → GET
 /// - `[".path", ""]`      → DELETE (empty string = delete)
-/// - `[".path", value]`   → SET (value is a CBOR scalar or `<cid>` IPFS reference)
+/// - `[".path", value]`   → SET (value is a CBOR scalar or `/ipfs/…`, `/ipns/…` reference)
 pub(super) fn decode_crud_payload(content: &[u8]) -> Result<CrudOp> {
     let val: CborValue =
         ciborium::de::from_reader(content).context("invalid CBOR in CRUD payload")?;
@@ -77,12 +77,23 @@ pub(super) fn decode_crud_payload(content: &[u8]) -> Result<CrudOp> {
     }
 }
 
-/// Return the inner CID string if `s` is bracketed as `<cid>`, else `None`.
+/// True if `s` is an explicit `/ipfs/<cid>` or `/ipns/<key>` reference.
 ///
-/// Explicit `<brackets>` are required wherever a CID is expected — bare CID
-/// strings are treated as plain text and never auto-detected.
-pub(super) fn strip_brackets(s: &str) -> Option<&str> {
-    s.strip_prefix('<')?.strip_suffix('>')
+/// Explicit prefixes are required wherever a CID/IPNS reference is
+/// expected — bare CID strings are treated as plain text and never
+/// auto-detected.
+pub(super) fn is_ipfs_ref(s: &str) -> bool {
+    s.starts_with("/ipfs/") || s.starts_with("/ipns/")
+}
+
+/// Resolve an explicit `/ipfs/<cid>` or `/ipns/<key>` reference to a bare
+/// CID via Kubo's `dag/resolve` API. Returns `None` if `s` is not an
+/// `/ipfs/` or `/ipns/` reference (see [`is_ipfs_ref`]).
+pub(super) async fn resolve_ipfs_ref(kubo_url: &str, s: &str) -> Result<Option<String>> {
+    if !is_ipfs_ref(s) {
+        return Ok(None);
+    }
+    Ok(Some(crate::kubo::dag_resolve(kubo_url, s).await?))
 }
 
 // ── Manifest helpers ───────────────────────────────────────────────────────────
@@ -481,7 +492,7 @@ async fn send_crud_reply_raw(
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_crud_payload, parse_path, strip_brackets, CrudOp};
+    use super::{decode_crud_payload, is_ipfs_ref, parse_path, CrudOp};
     use ciborium::Value as CborValue;
 
     fn cbor(v: &CborValue) -> Vec<u8> {
@@ -568,14 +579,15 @@ mod tests {
     }
 
     #[test]
-    fn strip_brackets_extracts_inner() {
-        assert_eq!(strip_brackets("<bafy123>"), Some("bafy123"));
+    fn is_ipfs_ref_accepts_ipfs_and_ipns() {
+        assert!(is_ipfs_ref("/ipfs/bafy123"));
+        assert!(is_ipfs_ref("/ipns/k51q123"));
     }
 
     #[test]
-    fn strip_brackets_rejects_bare_and_partial() {
-        assert_eq!(strip_brackets("bafy123"), None);
-        assert_eq!(strip_brackets("<bafy123"), None);
-        assert_eq!(strip_brackets("bafy123>"), None);
+    fn is_ipfs_ref_rejects_bare_cid_and_other_paths() {
+        assert!(!is_ipfs_ref("bafy123"));
+        assert!(!is_ipfs_ref("/ipld/bafy123"));
+        assert!(!is_ipfs_ref("plain text"));
     }
 }

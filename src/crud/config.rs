@@ -3,8 +3,8 @@ use ciborium::Value as CborValue;
 use tracing::warn;
 
 use super::helpers::{
-    load_manifest, send_crud_data_dag_cbor, send_crud_data_yaml, send_crud_i18n_error,
-    send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, send_crud_ok_path, strip_brackets,
+    is_ipfs_ref, load_manifest, resolve_ipfs_ref, send_crud_data_dag_cbor, send_crud_data_yaml,
+    send_crud_i18n_error, send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, send_crud_ok_path,
     with_manifest_crud,
 };
 use super::CrudHandlerCtx;
@@ -265,8 +265,8 @@ pub(super) async fn handle_config_ns(
                 }
             };
             if let serde_yaml::Value::String(ref s) = val {
-                if let Some(cid) = strip_brackets(s) {
-                    return send_crud_data_dag_cbor(message, reply_type, ctx, cid).await;
+                if let Some(cid) = resolve_ipfs_ref(&ctx.kubo_rpc_url, s).await? {
+                    return send_crud_data_dag_cbor(message, reply_type, ctx, &cid).await;
                 }
             }
             send_crud_data_yaml(message, reply_type, ctx, &val).await
@@ -385,7 +385,7 @@ pub(super) async fn handle_config_ns(
             // so clients can follow the link. For inline values (sequences,
             // strings, numbers) just confirm the path was updated.
             let is_cid_value = matches!(&yaml_val,
-                serde_yaml::Value::String(s) if strip_brackets(s).is_some());
+                serde_yaml::Value::String(s) if is_ipfs_ref(s));
             if is_cid_value {
                 send_crud_ok_cid(message, reply_type, ctx, &new_root).await
             } else {

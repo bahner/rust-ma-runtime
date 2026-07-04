@@ -1,11 +1,12 @@
 //! `/ma/crud/0.0.1` — structured data management service.
 //!
 //! Single message type `application/x-ma-crud`. The operation is encoded in
-//! the CBOR payload:
+//! a 1- or 2-element CBOR array payload:
 //!
-//!   GET:    `[":get",    ".ns.key"]`
-//!   SET:    `[".ns.key", value]`   — value is a scalar or `/ipfs/…` path
-//!   DELETE: `[":delete", ".ns.key"]`
+//!   GET:    `["/ns/key"]`
+//!   SET:    `["/ns/key", value]`   — value is a scalar or a `/ipfs/<cid>` /
+//!                                    `/ipns/<key>` reference
+//!   DELETE: `["/ns/key", ""]`      — empty string value means delete
 //!
 //! All replies use `application/x-ma-crud-reply`.
 

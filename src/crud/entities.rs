@@ -7,9 +7,9 @@ use crate::acl::check_full;
 use crate::entity::{EntityNode, IpldLink};
 
 use super::helpers::{
-    load_manifest, send_crud_data_cbor, send_crud_data_dag_cbor, send_crud_i18n_error,
-    send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, spawn_entity_reload, strip_brackets,
-    with_manifest_crud,
+    load_manifest, resolve_ipfs_ref, send_crud_data_cbor, send_crud_data_dag_cbor,
+    send_crud_i18n_error, send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid,
+    spawn_entity_reload, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -112,15 +112,9 @@ async fn handle_single_entity(
                 )
                 .await;
             }
-            let path = match strip_brackets(raw) {
-                Some(c) => c.to_string(),
-                None => {
-                    return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await
-                }
+            let Some(cid) = resolve_ipfs_ref(&ctx.kubo_rpc_url, raw).await? else {
+                return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await;
             };
-            let cid = crate::kubo::dag_resolve(&ctx.kubo_rpc_url, &path)
-                .await
-                .with_context(|| format!("resolving path {path}"))?;
             let cid = cid.as_str();
             let entity_node: EntityNode = crate::kubo::dag_get(&ctx.kubo_rpc_url, cid)
                 .await
