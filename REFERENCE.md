@@ -440,7 +440,7 @@ Each Wasm plugin must export:
 | Export | Description |
 |--------|-------------|
 | `init(state: Bytes)` | Called at load with persisted state (empty bytes on first load) |
-| `handle_message(PluginInput JSON) → PluginOutput JSON` | Handle an incoming RPC message |
+| `on_message(PluginInput JSON) → PluginOutput JSON` | Handle an incoming RPC message |
 | `get_state() → Bytes` | Return current state for IPFS persistence |
 
 **`PluginInput`:**

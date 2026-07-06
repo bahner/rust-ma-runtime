@@ -126,14 +126,20 @@ struct CreateEntityCtx {
 
 // `ma_create_entity` host function: plugin requests creation of a new entity.
 //
-// Input is CBOR-encoded `{ "kind": "/ma/…/0.0.1", "behaviour": "bafyCID" }`.
-// The runtime generates a nanoid fragment, queues the request, and returns the
-// fragment string (CBOR-encoded) to the plugin immediately.
-// Actual plugin loading and manifest persistence happen after dispatch returns.
+// Input is CBOR-encoded `{ "kind": "/ma/…/0.0.1", "behaviour": "bafyCID",
+// "init": <payload> }`. `behaviour` is only meaningful for kinds that
+// declare `KindNode.behaviour`; `init` is the opaque `do_init` creation
+// payload (§14.2.1). Both are optional. The runtime generates a nanoid
+// fragment, queues the request, and returns the fragment string
+// (CBOR-encoded) to the plugin immediately. Actual plugin loading and
+// manifest persistence happen after dispatch returns.
 #[derive(serde::Deserialize)]
 struct CreateEntityInput {
     kind: String,
-    behaviour: String,
+    #[serde(default)]
+    behaviour: Option<String>,
+    #[serde(default, with = "serde_bytes")]
+    init: Option<Vec<u8>>,
 }
 
 host_fn!(ma_create_entity_fn(user_data: CreateEntityCtx; input: Vec<u8>) -> Vec<u8> {
@@ -146,6 +152,7 @@ host_fn!(ma_create_entity_fn(user_data: CreateEntityCtx; input: Vec<u8>) -> Vec<
         fragment: fragment.clone(),
         kind_protocol: req.kind,
         behaviour_cid: req.behaviour,
+        init_payload: req.init,
         parent,
     });
     drop(ctx);
@@ -198,7 +205,7 @@ fn env_secs(var: &str, default: u64) -> std::time::Duration {
     )
 }
 
-/// Hard cap on any single Wasm export invocation (`init` / `handle_message`).
+/// Hard cap on any single Wasm export invocation (`init` / `on_message`).
 /// Enforced by extism via wasmtime epoch interruption — a plugin stuck in an
 /// infinite loop gets aborted and the worker thread survives.
 ///
@@ -246,7 +253,76 @@ host_fn!(ma_end_fn(user_data: DeleteEntityCtx; _input: Vec<u8>) -> Vec<u8> {
     Ok(out)
 });
 
-// ── init() payload ────────────────────────────────────────────────────────────
+// ── Behaviour management host functions ──────────────────────────────────────
+//
+// Available only to kinds that declare `KindNode.behaviour` (a dialect
+// identifier). `EntityNode.behaviour` is a single CID reference, never a
+// list — see ma-runtime-v1.md §14.2.2.
+
+// Context captured by `ma_get_behaviour`, `ma_get_behaviour_cid`, and
+// `ma_set_behaviour_cid` host functions.
+struct BehaviourCtx {
+    kubo_url: String,
+    /// Handle into the Tokio runtime, used to block on the (async) IPFS
+    /// fetch from this synchronous host-function callback.
+    handle: tokio::runtime::Handle,
+    /// Current behaviour reference (single CID), `None` if this entity has
+    /// none. Updated in place by `ma_set_behaviour_cid`.
+    current_cid: Option<String>,
+    /// New reference requested via `ma_set_behaviour_cid` during the current
+    /// dispatch, queued for the runtime to process (republish `EntityNode`)
+    /// after dispatch returns. `None` if not called during this dispatch.
+    pending_cid: Option<String>,
+}
+
+// `ma_get_behaviour` host function: resolves the entity's current behaviour
+// reference fresh, every call (MUST NOT be cached) and returns the resulting
+// plain text.
+host_fn!(ma_get_behaviour_fn(user_data: BehaviourCtx; _input: Vec<u8>) -> Vec<u8> {
+    let arc = user_data.get()?;
+    let (kubo_url, handle, cid) = {
+        let ctx = arc.lock().unwrap();
+        (ctx.kubo_url.clone(), ctx.handle.clone(), ctx.current_cid.clone())
+    };
+    let Some(cid) = cid else {
+        return Err(extism::Error::msg("ma_get_behaviour: entity has no behaviour reference"));
+    };
+    let bytes = handle
+        .block_on(ma_core::cat_bytes(&kubo_url, &cid))
+        .map_err(|e| extism::Error::msg(format!("ma_get_behaviour: fetch {cid}: {e}")))?;
+    Ok(bytes)
+});
+
+// `ma_get_behaviour_cid` host function: returns the current behaviour
+// reference itself (a single CID), CBOR-encoded, no fetching/resolution
+// performed.
+host_fn!(ma_get_behaviour_cid_fn(user_data: BehaviourCtx; _input: Vec<u8>) -> Vec<u8> {
+    let arc = user_data.get()?;
+    let cid = arc.lock().unwrap().current_cid.clone();
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(&cid, &mut out)
+        .map_err(|e| extism::Error::msg(format!("ma_get_behaviour_cid: CBOR encode: {e}")))?;
+    Ok(out)
+});
+
+// `ma_set_behaviour_cid` host function: plugin requests the runtime replace
+// `EntityNode.behaviour` with a new (single) reference. Queued during
+// dispatch and processed by the runtime after it returns (same pattern as
+// `ma_create_entity`/`ma_delete_entity`): the runtime validates the new
+// reference, republishes a new `EntityNode` (`state` untouched), and
+// repoints the manifest entry.
+host_fn!(ma_set_behaviour_cid_fn(user_data: BehaviourCtx; input: Vec<u8>) -> Vec<u8> {
+    let new_cid: String = from_cbor_bytes(&input)?;
+    let arc = user_data.get()?;
+    let mut ctx = arc.lock().unwrap();
+    ctx.current_cid = Some(new_cid.clone());
+    ctx.pending_cid = Some(new_cid);
+    drop(ctx);
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(&ciborium::Value::Text(":ok".to_string()), &mut out)
+        .map_err(|e| extism::Error::msg(format!("ma_set_behaviour_cid: CBOR encode: {e}")))?;
+    Ok(out)
+});
 
 // ── Worker threads ────────────────────────────────────────────────────────────
 
@@ -259,12 +335,33 @@ pub(super) struct WasmThreadCfg {
     pub(super) init_state: Vec<u8>,
     pub(super) wasi: bool,
     pub(super) host_functions: Vec<String>,
-    pub(super) has_init: bool,
+    /// Whether the kind's `api` declares each of the five optional
+    /// lifecycle exports (`on_message` is always mandatory and unconditional).
+    pub(super) has_set_state: bool,
+    pub(super) has_set_behaviour: bool,
+    pub(super) has_do_init: bool,
+    pub(super) has_do_start: bool,
+    pub(super) has_do_shutdown: bool,
+    /// `true` only on this entity's very first ever load — gates whether
+    /// `do_init` runs at all, even if the kind declares it.
+    pub(super) is_genesis: bool,
+    /// Opaque creation payload for `do_init`, only `Some` when `is_genesis`.
+    pub(super) init_payload: Option<Vec<u8>>,
+    /// Pre-resolved behaviour source text for `set_behaviour`, if this kind
+    /// declares a behaviour dialect and the entity has a reference.
+    pub(super) behaviour_text: Option<Vec<u8>>,
     pub(super) node_kind: String,
     pub(super) envelope_tx: UnboundedSender<(String, SendEnvelope)>,
     pub(super) avatar_key: [u8; 32],
-    /// IPFS CID of the Wasm behaviour bytes for this entity.
-    pub(super) behaviour_cid: String,
+    /// IPFS CID of the kind's shared Wasm binary (`KindNode.cid`).
+    pub(super) wasm_cid: String,
+    /// This entity's own behaviour source reference, if any (`EntityNode.behaviour`).
+    pub(super) entity_behaviour_cid: Option<String>,
+    /// Kubo RPC URL, needed to resolve `ma_get_behaviour` fresh on every call.
+    pub(super) kubo_url: String,
+    /// Handle into the Tokio runtime, used to block on IPFS fetches from the
+    /// synchronous `ma_get_behaviour` host-function callback.
+    pub(super) tokio_handle: tokio::runtime::Handle,
     /// iroh QUIC node ID of this runtime.
     pub(super) iroh_node_id: String,
     /// Unix epoch seconds when the runtime process started.
@@ -278,6 +375,7 @@ pub(super) struct WasmThreadCfg {
 struct WasmThreadState {
     plugin: Plugin,
     state: UserData<StateCtx>,
+    behaviour: UserData<BehaviourCtx>,
     create_queue: UserData<CreateEntityCtx>,
     delete_queue: UserData<DeleteEntityCtx>,
 }
@@ -285,13 +383,11 @@ struct WasmThreadState {
 /// Build the flat config map injected into the extism `Manifest` for this
 /// entity.  Available to the plugin at any time via `extism_config_get`.
 ///
-/// This replaces `EntityCtx` — plugins no longer receive ctx in `init()`.
-///
 /// Keys:
 ///   `self`         full DID-URL of this entity (`did:ma:<runtime>#<id>`)  [always]
 ///   `id`           bare fragment without `#`                               [always]
 ///   `kind`         kind protocol ID e.g. `/ma/root/0.0.1`                 [always]
-///   `cid`          IPFS CID of the entity's Wasm behaviour                [always]
+///   `cid`          IPFS CID of the kind's shared Wasm binary              [always]
 ///   `runtime`      runtime's own DID                                       [always]
 ///   `iroh_node_id` iroh QUIC node ID of this runtime                      [always]
 ///   `started_at`   Unix epoch seconds when the runtime started            [always]
@@ -304,7 +400,7 @@ fn build_plugin_config(cfg: &WasmThreadCfg) -> std::collections::BTreeMap<String
     );
     config.insert("id".to_string(), cfg.fragment.clone());
     config.insert("kind".to_string(), cfg.node_kind.clone());
-    config.insert("cid".to_string(), cfg.behaviour_cid.clone());
+    config.insert("cid".to_string(), cfg.wasm_cid.clone());
     config.insert("runtime".to_string(), cfg.our_did.clone());
     config.insert("iroh_node_id".to_string(), cfg.iroh_node_id.clone());
     config.insert("started_at".to_string(), cfg.started_at.to_string());
@@ -337,6 +433,12 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
     let avatar_id_ctx: UserData<AvatarIdCtx> = UserData::new(AvatarIdCtx {
         key: cfg.avatar_key,
     });
+    let behaviour: UserData<BehaviourCtx> = UserData::new(BehaviourCtx {
+        kubo_url: cfg.kubo_url.clone(),
+        handle: cfg.tokio_handle.clone(),
+        current_cid: cfg.entity_behaviour_cid.clone(),
+        pending_cid: None,
+    });
 
     // IMPORTANT: This order MUST match the @extism.import_fn declaration order
     // in the Python actor library chain (actor.py → avatar.py / root.py).
@@ -353,6 +455,10 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
     //
     // Plugins that do NOT declare ma_end skip it via the host_functions filter,
     // so their existing indices (ma_avatar_id=4, ma_create_entity=4) are unchanged.
+    //
+    // NOTE: the three behaviour-management functions below are appended at
+    // the end and are NOT YET aligned with python-ma-actors IMPORT_INDEX
+    // declarations (deferred; Rust-only kinds for now — see AGENTS.md).
     let all_fns: Vec<(&str, Function)> = vec![
         (
             "ma_reply",
@@ -394,6 +500,36 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
                 ma_delete_entity_fn,
             ),
         ),
+        (
+            "ma_get_behaviour",
+            Function::new(
+                "ma_get_behaviour",
+                [PTR],
+                [PTR],
+                behaviour.clone(),
+                ma_get_behaviour_fn,
+            ),
+        ),
+        (
+            "ma_get_behaviour_cid",
+            Function::new(
+                "ma_get_behaviour_cid",
+                [PTR],
+                [PTR],
+                behaviour.clone(),
+                ma_get_behaviour_cid_fn,
+            ),
+        ),
+        (
+            "ma_set_behaviour_cid",
+            Function::new(
+                "ma_set_behaviour_cid",
+                [PTR],
+                [PTR],
+                behaviour.clone(),
+                ma_set_behaviour_cid_fn,
+            ),
+        ),
     ];
     let allowed: std::collections::HashSet<&str> =
         cfg.host_functions.iter().map(String::as_str).collect();
@@ -412,33 +548,18 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
     Ok(WasmThreadState {
         plugin,
         state,
+        behaviour,
         create_queue,
         delete_queue,
     })
 }
 
-/// Run `init()` on the freshly built plugin, returning the resulting lifecycle.
-///
-/// Entity context is available via `extism_config_get` — `init()` receives
-/// only the raw persisted state bytes (empty slice for a brand-new entity).
-fn run_init(ts: &mut WasmThreadState, cfg: &WasmThreadCfg) -> Result<Lifecycle> {
-    if !cfg.has_init {
-        return Ok(Lifecycle::Running);
-    }
-    let init_result_bytes = ts
-        .plugin
-        .call::<&[u8], Vec<u8>>("init", cfg.init_state.as_slice())
-        .map_err(|e| anyhow!("init() failed for '{}': {e}", cfg.fragment))?;
-
-    let lifecycle = match ciborium::de::from_reader::<ciborium::Value, _>(
-        init_result_bytes.as_slice(),
-    ) {
-        Ok(ciborium::Value::Text(s)) if s == ":ok" => Lifecycle::Running,
-        Ok(ciborium::Value::Array(ref v))
-            if v.first() == Some(&ciborium::Value::Text(":ok".into())) =>
-        {
-            Lifecycle::Running
-        }
+/// Parse a plugin export's CBOR-encoded return value as `:ok`/`[:ok, …]` vs
+/// `[:error, reason]`. Returns `Ok(None)` for anything that isn't a
+/// recognised error tuple (treated as success), `Ok(Some(reason))` for an
+/// explicit `[:error, reason]`.
+fn parse_error_reason(bytes: &[u8]) -> Option<String> {
+    match ciborium::de::from_reader::<ciborium::Value, _>(bytes) {
         Ok(ciborium::Value::Array(ref v))
             if v.first() == Some(&ciborium::Value::Text(":error".into())) =>
         {
@@ -446,21 +567,65 @@ fn run_init(ts: &mut WasmThreadState, cfg: &WasmThreadCfg) -> Result<Lifecycle> 
                 .get(1)
                 .and_then(|r| {
                     if let ciborium::Value::Text(s) = r {
-                        Some(s.as_str())
+                        Some(s.clone())
                     } else {
                         None
                     }
                 })
-                .unwrap_or("unknown");
-            warn!(fragment = %cfg.fragment, reason = %reason, "init() returned :error");
-            Lifecycle::Error
+                .unwrap_or_else(|| "unknown".to_string());
+            Some(reason)
         }
-        Ok(other) => {
-            warn!(fragment = %cfg.fragment, value = ?other, "init() returned unexpected value; treating as :ok");
-            Lifecycle::Running
+        _ => None,
+    }
+}
+
+/// Drive the freshly built plugin through the applicable lifecycle stages, in
+/// order: `set_state` (conditional), `set_behaviour` (conditional), `do_init`
+/// (conditional, genesis only), `do_start` (conditional). Returns the
+/// resulting [`Lifecycle`] — `Error` only if `do_init` (the one genesis-time
+/// hook a kind may use to reject creation) returns `[:error, reason]`.
+///
+/// Entity context is available via `extism_config_get` throughout; each
+/// export here receives only the specific argument documented in
+/// ma-runtime-v1.md §14.3.
+fn run_genesis_and_start(ts: &mut WasmThreadState, cfg: &WasmThreadCfg) -> Result<Lifecycle> {
+    if cfg.has_set_state && !cfg.init_state.is_empty() {
+        ts.plugin
+            .call::<&[u8], Vec<u8>>("set_state", cfg.init_state.as_slice())
+            .map_err(|e| anyhow!("set_state() failed for '{}': {e}", cfg.fragment))?;
+    }
+
+    if cfg.has_set_behaviour {
+        if let Some(text) = &cfg.behaviour_text {
+            ts.plugin
+                .call::<&[u8], Vec<u8>>("set_behaviour", text.as_slice())
+                .map_err(|e| anyhow!("set_behaviour() failed for '{}': {e}", cfg.fragment))?;
         }
-        Err(_) => Lifecycle::Running,
-    };
+    }
+
+    let mut lifecycle = Lifecycle::Running;
+    if cfg.is_genesis && cfg.has_do_init {
+        let payload = cfg.init_payload.as_deref().unwrap_or(&[]);
+        let result_bytes = ts
+            .plugin
+            .call::<&[u8], Vec<u8>>("do_init", payload)
+            .map_err(|e| anyhow!("do_init() failed for '{}': {e}", cfg.fragment))?;
+        if let Some(reason) = parse_error_reason(&result_bytes) {
+            warn!(fragment = %cfg.fragment, reason = %reason, "do_init() returned :error");
+            lifecycle = Lifecycle::Error;
+        }
+    }
+
+    if cfg.has_do_start {
+        let result_bytes = ts
+            .plugin
+            .call::<&[u8], Vec<u8>>("do_start", &[] as &[u8])
+            .map_err(|e| anyhow!("do_start() failed for '{}': {e}", cfg.fragment))?;
+        if let Some(reason) = parse_error_reason(&result_bytes) {
+            warn!(fragment = %cfg.fragment, reason = %reason, "do_start() returned :error");
+        }
+    }
+
     Ok(lifecycle)
 }
 
@@ -472,7 +637,7 @@ fn execute_dispatch(
     stateful: bool,
     input: &CastInput,
 ) -> Result<DispatchResult> {
-    let export = "handle_message";
+    let export = "on_message";
     let _ = stateful; // still tracked for PluginKind but export name is unified
     let mut input_bytes = Vec::new();
     ciborium::ser::into_writer(input, &mut input_bytes)
@@ -492,6 +657,15 @@ fn execute_dispatch(
         .lock()
         .map_err(|e| anyhow!("state poisoned: {e}"))?
         .pending
+        .take();
+
+    let pending_behaviour_cid = ts
+        .behaviour
+        .get()
+        .map_err(|e| anyhow!("behaviour error: {e}"))?
+        .lock()
+        .map_err(|e| anyhow!("behaviour poisoned: {e}"))?
+        .pending_cid
         .take();
 
     let create_requests = ts
@@ -523,6 +697,7 @@ fn execute_dispatch(
     Ok(DispatchResult {
         output,
         pending_state,
+        pending_behaviour_cid,
         create_requests,
         delete_requests,
     })
@@ -530,10 +705,11 @@ fn execute_dispatch(
 
 /// Entry point for a Wasm entity's dedicated worker thread.
 ///
-/// Builds the plugin, runs `init()`, reports the lifecycle back to
+/// Builds the plugin, drives it through the applicable genesis/start
+/// lifecycle stages, reports the resulting lifecycle back to
 /// [`EntityPlugin::load`], then serves dispatch / state messages until the
 /// channel closes.  The thread is a plain OS thread (never a Tokio worker),
-/// so blocking here — including `ma_call`'s `blocking_recv` — is safe.
+/// so blocking here is safe.
 #[allow(clippy::needless_pass_by_value)] // cfg is moved into and owned by the thread
 pub(super) fn run_wasm_thread(
     cfg: WasmThreadCfg,
@@ -547,7 +723,7 @@ pub(super) fn run_wasm_thread(
             return;
         }
     };
-    let lifecycle = match run_init(&mut ts, &cfg) {
+    let lifecycle = match run_genesis_and_start(&mut ts, &cfg) {
         Ok(lc) => lc,
         Err(e) => {
             let _ = life_tx.send(Err(e));
@@ -585,7 +761,17 @@ pub(super) fn run_wasm_thread(
                     }
                 }
             }
-            EntityMsg::Shutdown => break,
+            EntityMsg::Shutdown => {
+                if cfg.has_do_shutdown {
+                    if let Err(e) = ts
+                        .plugin
+                        .call::<&[u8], Vec<u8>>("do_shutdown", &[] as &[u8])
+                    {
+                        warn!(fragment = %cfg.fragment, error = %e, "do_shutdown() failed (best-effort, ignored)");
+                    }
+                }
+                break;
+            }
         }
     }
 }

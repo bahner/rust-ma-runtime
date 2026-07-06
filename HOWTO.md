@@ -331,11 +331,11 @@ The example bootstrap ships with these standard kinds out of the box:
 
 | Kind | Protocol | Description |
 |------|----------|-------------|
-| `root` | `/ma/root/0.0.1` | Entity lifecycle orchestrator |
-| `counter` | `/ma/counter/0.0.1` | Atomic integer with `:get/:inc/:dec/:set` |
-| `register` | `/ma/register/0.0.1` | Bijective key↔value map |
-| `set` | `/ma/set/0.0.1` | Unordered unique-value collection |
-| `fortune` | `/ma/stateless/python/0.0.1` | Stateless Python handler |
+| `root` | `/ma/python/root/0.0.1` | Entity lifecycle orchestrator |
+| `counter` | `/ma/python/counter/0.0.1` | Atomic integer with `:get/:inc/:dec/:set` |
+| `register` | `/ma/python/register/0.0.1` | Bijective key↔value map |
+| `set` | `/ma/python/set/0.0.1` | Unordered unique-value collection |
+| `fortune` | `/ma/python/actor/0.0.1` | Stateless-style Python handler (own Wasm via `behaviour`) |
 
 Kinds are the most important architectural decision in your runtime.  A
 kind defines the whole contract — changing a kind after entities use it is

@@ -42,7 +42,7 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
   an unsupported evaluator.
 - **ACL group resolution via local actors.** Groups in ACL maps use the
   `+#<fragment>` syntax to reference a local `ma-set` actor. Resolution is done
-  by sending `[:contains, caller]` to the actor via `handle_message`. This is a
+  by sending `[:contains, caller]` to the actor via `on_message`. This is a
   runtime-level infrastructure probe — it intentionally bypasses the per-entity
   queue since ACL must be resolved before dispatch. Single-member probe only;
   there is no `fetch_group_members`. Use
@@ -330,7 +330,7 @@ dot-path grammar rooted in four namespaces:
 | `:ping` | reply `:pong` |
 
 Fragment-addressed messages (`did:ma:<ipns>#<name>`) are routed directly to
-the named entity plugin (Wasm `handle_message`).
+the named entity plugin (Wasm `on_message`).
 
 ### `:edit` verb
 

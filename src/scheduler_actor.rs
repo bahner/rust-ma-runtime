@@ -106,6 +106,7 @@ pub fn make_native_dispatch(
         Ok(DispatchResult {
             output: out,
             pending_state: None,
+            pending_behaviour_cid: None,
             create_requests: vec![],
             delete_requests: vec![],
         })

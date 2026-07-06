@@ -10,7 +10,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::{info, warn};
 
-use crate::entity::{CastInput, LocalMessage, PluginKind, PluginMsg};
+use crate::entity::{CastInput, LocalMessage, PluginMsg};
 use crate::plugin::EntityRegistry;
 
 pub struct InboxHandlerCtx {
@@ -61,10 +61,7 @@ pub async fn handle_inbox_message(message: &ma_core::Message, ctx: &InboxHandler
         msg: PluginMsg::from(&local_msg),
     };
 
-    let result = match entity.kind {
-        PluginKind::Stateless => entity.handle_cast(&cast_input).await?,
-        PluginKind::Stateful => entity.handle_message(&cast_input).await?,
-    };
+    let result = entity.on_message(&cast_input).await?;
 
     // Persist state if the entity called ma_set_state during this dispatch.
     if let Some(state_bytes) = result.pending_state {

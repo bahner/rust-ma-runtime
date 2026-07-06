@@ -1,10 +1,17 @@
-protocol: /ma/house/0.0.1
+protocol: /ma/python/house/0.0.1
+cid:
+  "/": bafybeifbgwcfjgy6wey5ewm4cu2pshv3oek7vih64zufhizlnv3vieqwzu
+type: extism
 attributes:
   wasi: true
   stateful: true
 api:
-  - init
-  - handle_message
+  - set_state
+  - do_start
+  - on_message
+lifecycle:
+  - set_state
+  - do_start
 host_functions:
   - ma_reply
   - ma_set_state

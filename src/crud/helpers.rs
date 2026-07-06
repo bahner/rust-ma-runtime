@@ -216,6 +216,7 @@ pub(super) fn spawn_entity_reload(
             avatar_key,
             &iroh_node_id,
             started_at,
+            None, // reload after CRUD upsert, not a fresh creation
         )
         .await
         {

@@ -1,8 +1,11 @@
-protocol: /ma/stateless/ping/0.0.1
+protocol: /ma/python/ping/0.0.1
+cid:
+  "/": bafy...ping_wasm  # replace with the published ping.wasm CID
+type: extism
 attributes:
   stateful: false
   wasi: false
 api:
-  - handle_cast
+  - on_message
 host_functions:
   - ma_send

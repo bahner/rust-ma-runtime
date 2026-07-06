@@ -1,10 +1,17 @@
-protocol: /ma/room/0.0.1
+protocol: /ma/python/room/0.0.1
+cid:
+  "/": bafybeihwot7j6lxqiuzrfboyo4ie5olochmc7mgcu5xutbs2tscwxvfhhu
+type: extism
 attributes:
   wasi: true
   stateful: true
 api:
-  - init
-  - handle_message
+  - set_state
+  - do_start
+  - on_message
+lifecycle:
+  - set_state
+  - do_start
 host_functions:
   - ma_reply
   - ma_set_state

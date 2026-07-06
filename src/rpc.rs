@@ -11,9 +11,7 @@ use ma_core::{
 use tracing::{debug, info, warn};
 
 use crate::acl::{check_full, AclCache, AclMap, CAP_RPC};
-use crate::entity::{
-    CastInput, IpldLink, Lifecycle, LocalMessage, PluginKind, PluginMsg, SendEnvelope,
-};
+use crate::entity::{CastInput, IpldLink, Lifecycle, LocalMessage, PluginMsg, SendEnvelope};
 use crate::plugin::EntityRegistry;
 use crate::status::SharedStats;
 
@@ -226,10 +224,20 @@ async fn handle_entity_plugin_message(
     let cast_input = CastInput {
         msg: PluginMsg::from(&local_msg),
     };
-    let result = match entity.kind {
-        PluginKind::Stateless => entity.handle_cast(&cast_input).await?,
-        PluginKind::Stateful => entity.handle_message(&cast_input).await?,
-    };
+    // The underlying plugin error (`e`) can contain arbitrary internal detail —
+    // for Wasm/Python plugins this includes a full interpreter traceback with
+    // absolute build-machine file paths (venv layout, username, etc). That is
+    // never safe to hand to a remote RPC caller. Log the full detail locally
+    // and propagate only a sanitized, fragment-scoped reason on the wire.
+    let result = entity.on_message(&cast_input).await.map_err(|e| {
+        warn!(
+            fragment = %entity.fragment,
+            from = %message.from,
+            error = %e,
+            "plugin execution failed"
+        );
+        anyhow!("entity '{}' plugin execution failed", entity.fragment)
+    })?;
 
     // If the plugin called `ma_set_state` during this dispatch, persist to IPFS.
     // Spawned so the main event loop is not blocked by the IPFS round-trip.
@@ -244,6 +252,72 @@ async fn handle_entity_plugin_message(
                 }
                 Err(e) => {
                     warn!(fragment = %entity_arc.fragment, error = %e, "failed to persist plugin state");
+                }
+            }
+        });
+    }
+
+    // If the plugin called `ma_set_behaviour_cid` during this dispatch,
+    // republish this entity's `EntityNode` with the new behaviour reference
+    // (state untouched) and repoint the manifest entry. Spawned so the main
+    // event loop is not blocked by the IPFS round-trip.
+    if let Some(new_cid) = result.pending_behaviour_cid {
+        let fragment = entity.fragment.clone();
+        let kubo_url = ctx.kubo_rpc_url.to_string();
+        let manifest_writer = ctx.manifest_writer.clone();
+        let root_cid = ctx.stats.read().await.root_cid.clone();
+        tokio::spawn(async move {
+            let Some(root_cid) = root_cid else {
+                warn!(fragment = %fragment, "ma_set_behaviour_cid: no root CID available yet");
+                return;
+            };
+            let current_link = {
+                let manifest: crate::entity::RuntimeManifest = match crate::kubo::dag_get(
+                    &kubo_url, &root_cid,
+                )
+                .await
+                {
+                    Ok(m) => m,
+                    Err(e) => {
+                        warn!(fragment = %fragment, error = %e, "ma_set_behaviour_cid: failed to fetch manifest");
+                        return;
+                    }
+                };
+                manifest.entities.get(&fragment).cloned()
+            };
+            let Some(link) = current_link else {
+                warn!(fragment = %fragment, "ma_set_behaviour_cid: entity not found in manifest");
+                return;
+            };
+            let mut node: crate::entity::EntityNode = match crate::kubo::dag_get(
+                &kubo_url, &link.cid,
+            )
+            .await
+            {
+                Ok(n) => n,
+                Err(e) => {
+                    warn!(fragment = %fragment, error = %e, "ma_set_behaviour_cid: failed to fetch entity node");
+                    return;
+                }
+            };
+            node.behaviour = Some(IpldLink::new(&new_cid));
+            match crate::kubo::dag_put(&kubo_url, &node).await {
+                Ok(entity_cid) => {
+                    let fragment2 = fragment.clone();
+                    if let Err(e) = manifest_writer
+                        .mutate(move |m| {
+                            m.entities.insert(fragment2, IpldLink::new(&entity_cid));
+                            Ok(())
+                        })
+                        .await
+                    {
+                        warn!(fragment = %fragment, error = %e, "ma_set_behaviour_cid: failed to update manifest");
+                    } else {
+                        debug!(fragment = %fragment, cid = %new_cid, "behaviour reference updated via ma_set_behaviour_cid");
+                    }
+                }
+                Err(e) => {
+                    warn!(fragment = %fragment, error = %e, "ma_set_behaviour_cid: failed to publish updated entity node");
                 }
             }
         });
@@ -265,7 +339,7 @@ async fn handle_entity_plugin_message(
 
         let entity_node = crate::entity::EntityNode {
             kind: req.kind_protocol.clone(),
-            behaviour: Some(IpldLink::new(&req.behaviour_cid)),
+            behaviour: req.behaviour_cid.as_deref().map(IpldLink::new),
             acl: entity.acl.clone(),
             state: None,
             parent: Some(entity.fragment.clone()),
@@ -289,6 +363,7 @@ async fn handle_entity_plugin_message(
             ctx.avatar_key,
             &iroh_node_id,
             started_at,
+            req.init_payload.clone(),
         )
         .await
         {

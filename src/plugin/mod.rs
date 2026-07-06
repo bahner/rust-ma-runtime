@@ -8,9 +8,10 @@
 //!   [`EntityPlugin::new_native`]; [`EntityPlugin::load`] **must not** be
 //!   called for [`Evaluator::Native`] kinds.
 //!
-//! Both backends implement the same dispatch surface: [`EntityPlugin::handle_cast`]
-//! / [`EntityPlugin::handle_message`].  The [`PluginKind`] field determines which
-//! export is called (for Extism) or which path the closure takes (for Native).
+//! Both backends implement the same dispatch surface: [`EntityPlugin::on_message`].
+//! The [`PluginKind`] field determines whether state is threaded in/out (for
+//! Extism) or which path the closure takes (for Native) — the Wasm export
+//! called is always `on_message`, regardless of statefulness.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -39,10 +40,11 @@ use backend::{run_native_thread, run_wasm_thread, WasmThreadCfg};
 
 /// Messages sent to an entity's dedicated worker thread.
 enum EntityMsg {
-    /// Dispatch a message to `handle_message`.
+    /// Dispatch a message to the `on_message` export.
     Dispatch {
-        /// `true` → stateful (`handle_message` with state threading);
-        /// `false` → stateless (no state threading).
+        /// `true` → stateful (state threaded in/out around the call);
+        /// `false` → stateless (no state threading). The export called is
+        /// always `on_message` either way.
         stateful: bool,
         input: CastInput,
         reply: oneshot::Sender<Result<DispatchResult>>,
@@ -65,8 +67,8 @@ enum EntityMsg {
 /// Type of the compiled-in Rust closure used by native entity plugins.
 ///
 /// The closure receives a [`CastInput`] and returns a [`DispatchResult`],
-/// exactly like a Wasm `handle_message` export.
-/// [`EntityPlugin::handle_message`] routes through this closure for native
+/// exactly like a Wasm `on_message` export.
+/// [`EntityPlugin::on_message`] routes through this closure for native
 /// entities — native entities do not distinguish stateful vs stateless
 /// internally (the closure owns its own state via `Arc<Mutex<…>>` or similar).
 pub type NativeDispatch =
@@ -74,13 +76,16 @@ pub type NativeDispatch =
 
 // ── Dispatch result ─────────────────────────────────────────────────────────
 
-/// Return value from `handle_message`.
+/// Return value from `on_message`.
 pub struct DispatchResult {
     /// Raw CBOR bytes returned by the plugin export.
     pub output: Vec<u8>,
     /// State bytes queued by the plugin via `ma_set_state` host function.
     /// `None` if the plugin did not call `ma_set_state` during this invocation.
     pub pending_state: Option<Vec<u8>>,
+    /// New behaviour reference (single CID) queued by the plugin via
+    /// `ma_set_behaviour_cid` during this invocation, if any.
+    pub pending_behaviour_cid: Option<String>,
     /// Entity creation requests enqueued via `ma_create_entity` host function.
     pub create_requests: Vec<CreateEntityRequest>,
     /// Entity deletion requests enqueued via `ma_delete_entity` host function.
@@ -170,17 +175,25 @@ impl EntityPlugin {
         self.native
     }
 
-    /// Load a Wasm plugin from IPFS, spawn its worker thread, and initialise it.
+    /// Load a Wasm plugin from IPFS, spawn its worker thread, and drive it
+    /// through the applicable lifecycle stages (`set_state`/`set_behaviour`/
+    /// `do_init`/`do_start`) in order.
     ///
     /// The Wasm `Plugin` is created and driven entirely on the dedicated worker
     /// thread — it never crosses a thread boundary — so no `unsafe impl Send`
     /// is required and no Tokio worker is ever blocked by a Wasm call.
     ///
+    /// `init_payload` is the opaque creation payload for `do_init` (§14.2.1);
+    /// pass `None` for an ordinary reload (bootstrap/restart) of an
+    /// already-existing entity. It is only meaningful when `node.lifecycle`
+    /// is [`Lifecycle::New`] (this entity's very first load) — a kind
+    /// exporting `do_init` receives it exactly once, ever, for a given entity.
+    ///
     /// Returns `(handle, Lifecycle::Running)` on success, or
-    /// `(handle, Lifecycle::Error)` if `init()` returned `[:error, …]` (the
+    /// `(handle, Lifecycle::Error)` if `do_init` returned `[:error, …]` (the
     /// entity is still dispatchable for debugging).
     /// Returns `Err` for fatal errors (Wasm fetch / plugin instantiation), or
-    /// when `kind_node.evaluator == Evaluator::Native` (use
+    /// when `kind_node.kind_type == Evaluator::Native` (use
     /// [`EntityPlugin::new_native`] instead).
     #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     pub async fn load(
@@ -194,40 +207,75 @@ impl EntityPlugin {
         avatar_key: [u8; 32],
         iroh_node_id: &str,
         started_at: u64,
+        init_payload: Option<Vec<u8>>,
     ) -> Result<(Self, Lifecycle)> {
         let fragment = fragment.into();
-        let behaviour_cid = node.behaviour.as_ref().map(|l| l.cid.as_str());
         let kind = kind_node.plugin_kind();
         let wasi = kind_node.wasi();
 
         // Native entities must be registered via new_native(), not load().
-        if kind_node.evaluator == Evaluator::Native {
+        if kind_node.kind_type == Evaluator::Native {
             return Err(anyhow!(
-                "entity '{fragment}' has evaluator 'native': use EntityPlugin::new_native() instead of load()"
+                "entity '{fragment}' has kind type 'native': use EntityPlugin::new_native() instead of load()"
             ));
         }
 
         // Only Extism is supported beyond this point.
-        if kind_node.evaluator != Evaluator::Extism {
+        if kind_node.kind_type != Evaluator::Extism {
             return Err(anyhow!(
-                "unsupported evaluator {:?} for '{fragment}'",
-                kind_node.evaluator
+                "unsupported kind type {:?} for '{fragment}'",
+                kind_node.kind_type
             ));
         }
-        let behaviour_cid = behaviour_cid.ok_or_else(|| {
-            anyhow!("entity '{fragment}' has evaluator 'extism' but no behaviour CID")
-        })?;
 
-        debug!(fragment = %fragment, cid = %behaviour_cid, kind = ?kind, wasi = wasi, "loading entity plugin");
+        // Wasm bytes source depends on whether this kind shares one binary
+        // across all its entities (`cid` present) or lets each entity supply
+        // its own (`cid` absent — the entity's own Wasm bytes live on
+        // `EntityNode.behaviour` instead, instantiated as-is, never resolved
+        // as interpreted text).
+        let (wasm_cid, wasm_bytes, entity_behaviour_cid, behaviour_text) = if let Some(shared_cid) =
+            &kind_node.cid
+        {
+            let wasm_cid = shared_cid.cid.clone();
+            debug!(fragment = %fragment, cid = %wasm_cid, kind = ?kind, wasi = wasi, "loading entity plugin (shared binary)");
+            let wasm_bytes = cat_bytes(kubo_url, &wasm_cid)
+                .await
+                .with_context(|| format!("fetching wasm for '{fragment}' from {wasm_cid}"))?;
 
-        // 1. Fetch Wasm bytes from IPFS (async, before the thread is spawned).
-        let wasm_bytes = cat_bytes(kubo_url, behaviour_cid)
-            .await
-            .with_context(|| format!("fetching wasm for '{fragment}' from {behaviour_cid}"))?;
+            // If this kind declares a behaviour dialect and the entity
+            // carries its own behaviour source reference, resolve it to
+            // plain text for `set_behaviour`.
+            let entity_behaviour_cid = node.behaviour.as_ref().map(|l| l.cid.clone());
+            let behaviour_text: Option<Vec<u8>> = if kind_node.behaviour.is_some() {
+                match &entity_behaviour_cid {
+                    Some(cid) => Some(cat_bytes(kubo_url, cid).await.with_context(|| {
+                        format!("fetching behaviour for '{fragment}' from {cid}")
+                    })?),
+                    None => None,
+                }
+            } else {
+                None
+            };
+            (wasm_cid, wasm_bytes, entity_behaviour_cid, behaviour_text)
+        } else {
+            // No shared binary for this kind — the entity must supply its
+            // own Wasm bytes via `behaviour`.
+            let entity_cid = node.behaviour.as_ref().map(|l| l.cid.clone()).ok_or_else(|| {
+                    anyhow!(
+                        "entity '{fragment}' has kind '{}' with no shared cid: entity must supply its own Wasm via behaviour",
+                        kind_node.protocol
+                    )
+                })?;
+            debug!(fragment = %fragment, cid = %entity_cid, kind = ?kind, wasi = wasi, "loading entity plugin (own binary via behaviour)");
+            let wasm_bytes = cat_bytes(kubo_url, &entity_cid)
+                .await
+                .with_context(|| format!("fetching wasm for '{fragment}' from {entity_cid}"))?;
+            (entity_cid, wasm_bytes, None, None)
+        };
 
-        // 2. For stateful plugins: fetch persisted state so StateCtx has the
-        //    correct baseline and init() can restore it.  Stateless plugins
-        //    have no state; module-level code handles any one-time setup.
+        // For stateful plugins: fetch persisted state so StateCtx has the
+        // correct baseline and set_state can restore it.  Stateless plugins
+        // have no state; module-level code handles any one-time setup.
         let init_state: Vec<u8> = if kind == PluginKind::Stateful {
             match &node.state {
                 Some(link) => cat_bytes(kubo_url, &link.cid).await.unwrap_or_default(),
@@ -237,8 +285,10 @@ impl EntityPlugin {
             Vec::new()
         };
 
-        // 3. Assemble all Send-able data the worker thread needs.  The Wasm
-        //    Plugin and its host Functions are built *on* the thread.
+        let is_genesis = node.lifecycle == Lifecycle::New;
+
+        // Assemble all Send-able data the worker thread needs.  The Wasm
+        // Plugin and its host Functions are built *on* the thread.
         let cfg = WasmThreadCfg {
             fragment: fragment.clone(),
             our_did: our_did.to_string(),
@@ -246,11 +296,21 @@ impl EntityPlugin {
             init_state,
             wasi,
             host_functions: kind_node.host_functions.clone(),
-            has_init: kind_node.api.iter().any(|s| s == "init"),
+            has_set_state: kind_node.lifecycle.iter().any(|s| s == "set_state"),
+            has_set_behaviour: kind_node.lifecycle.iter().any(|s| s == "set_behaviour"),
+            has_do_init: kind_node.lifecycle.iter().any(|s| s == "do_init"),
+            has_do_start: kind_node.lifecycle.iter().any(|s| s == "do_start"),
+            has_do_shutdown: kind_node.api.iter().any(|s| s == "do_shutdown"),
+            is_genesis,
+            init_payload,
+            behaviour_text,
             node_kind: node.kind.clone(),
             envelope_tx,
             avatar_key,
-            behaviour_cid: behaviour_cid.to_string(),
+            wasm_cid,
+            entity_behaviour_cid,
+            kubo_url: kubo_url.to_string(),
+            tokio_handle: tokio::runtime::Handle::current(),
             iroh_node_id: iroh_node_id.to_string(),
             started_at,
             parent: node.parent.clone(),
@@ -264,24 +324,25 @@ impl EntityPlugin {
             .spawn(move || run_wasm_thread(cfg, rx, life_tx))
             .with_context(|| format!("spawning worker thread for '{fragment}'"))?;
 
-        // Wait for the thread to build the plugin and run init().  Bounded:
-        // Wasm *execution* is capped by the extism epoch timeout, but plugin
-        // *instantiation* (compilation) is not — a pathological module could
-        // otherwise hang bootstrap or a reload task forever.
+        // Wait for the thread to build the plugin and run the genesis/start
+        // lifecycle stages.  Bounded: Wasm *execution* is capped by the
+        // extism epoch timeout, but plugin *instantiation* (compilation) is
+        // not — a pathological module could otherwise hang bootstrap or a
+        // reload task forever.
         let load_timeout = backend::wasm_call_timeout() * 2;
         let lifecycle = match tokio::time::timeout(load_timeout, life_rx).await {
             Ok(Ok(Ok(lc))) => lc,
             Ok(Ok(Err(e))) => return Err(e),
             Ok(Err(_)) => {
                 return Err(anyhow!(
-                    "entity '{fragment}' worker thread exited before init completed"
+                    "entity '{fragment}' worker thread exited before genesis/start completed"
                 ))
             }
             Err(_) => {
                 // The worker thread is left to its fate: if it ever finishes
                 // building, it exits on its own because `life_tx.send` fails.
                 return Err(anyhow!(
-                    "entity '{fragment}' plugin build/init timed out after {}s",
+                    "entity '{fragment}' plugin build/genesis timed out after {}s",
                     load_timeout.as_secs()
                 ));
             }
@@ -298,14 +359,12 @@ impl EntityPlugin {
         Ok((ep, lifecycle))
     }
 
-    /// Dispatch to the `handle_message` export (stateless — no state threading).
-    pub async fn handle_cast(&self, input: &CastInput) -> Result<DispatchResult> {
-        self.dispatch(false, input).await
-    }
-
-    /// Dispatch to the `handle_message` export (stateful).
-    pub async fn handle_message(&self, input: &CastInput) -> Result<DispatchResult> {
-        self.dispatch(true, input).await
+    /// Dispatch to the `on_message` export. Threads state in/out around the
+    /// call automatically based on `self.kind` (stateful vs stateless) —
+    /// callers never need to branch on kind themselves.
+    pub async fn on_message(&self, input: &CastInput) -> Result<DispatchResult> {
+        self.dispatch(self.kind == PluginKind::Stateful, input)
+            .await
     }
 
     /// Send a dispatch to the worker thread and await the result.
@@ -349,7 +408,7 @@ impl EntityPlugin {
 
     /// Persist any state queued by `ma_set_state` during the last dispatch.
     ///
-    /// Plugins call `ma_set_state` reactively inside `handle_message`; this method
+    /// Plugins call `ma_set_state` reactively inside `on_message`; this method
     /// flushes whatever is still queued to IPFS and returns the resulting CID.
     /// Returns `Ok(None)` when there is no pending state (nothing to save).
     /// Always returns `Ok(None)` for native entities (they manage their own state).
@@ -411,35 +470,44 @@ mod hostile {
     const EVIL_WAT: &str = r#"
         (module
           (func $spin (result i32) (loop $l (br $l)) (i32.const 0))
-          (export "init" (func $spin))
-          (export "handle_message" (func $spin)))
+          (export "do_start" (func $spin))
+          (export "on_message" (func $spin)))
     "#;
 
     /// A module whose exports return immediately.
     const GOOD_WAT: &str = r#"
         (module
           (func $ok (result i32) (i32.const 0))
-          (export "handle_message" (func $ok)))
+          (export "on_message" (func $ok)))
     "#;
 
-    fn kind_node(api: &[&str]) -> KindNode {
+    fn kind_node(api: &[&str], wasm_cid: &str) -> KindNode {
         let mut attributes = BTreeMap::new();
         attributes.insert("stateful".to_string(), serde_json::Value::Bool(true));
         attributes.insert("wasi".to_string(), serde_json::Value::Bool(false));
+        const STAGES: &[&str] = &["set_state", "set_behaviour", "do_init", "do_start"];
+        let lifecycle = api
+            .iter()
+            .filter(|s| STAGES.contains(s))
+            .map(ToString::to_string)
+            .collect();
         KindNode {
             protocol: "/ma/test/0.0.1".to_string(),
+            cid: Some(IpldLink::new(wasm_cid)),
+            kind_type: Evaluator::Extism,
+            behaviour: None,
             api: api.iter().map(ToString::to_string).collect(),
+            lifecycle,
             host_functions: vec![],
-            evaluator: Evaluator::Extism,
             attributes,
             allow: vec![],
         }
     }
 
-    fn entity_node(cid: &str) -> EntityNode {
+    fn entity_node() -> EntityNode {
         EntityNode {
             kind: "/ma/test/0.0.1".to_string(),
-            behaviour: Some(IpldLink::new(cid)),
+            behaviour: None,
             acl: "open".to_string(),
             state: None,
             parent: None,
@@ -468,14 +536,14 @@ mod hostile {
         kubo_url: &str,
         fragment: &str,
         cid: &str,
-        kind: &KindNode,
+        api: &[&str],
         envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, SendEnvelope)>,
         registry: super::EntityRegistry,
     ) -> anyhow::Result<(EntityPlugin, Lifecycle)> {
         EntityPlugin::load(
             fragment,
-            &entity_node(cid),
-            kind,
+            &entity_node(),
+            &kind_node(api, cid),
             "did:ma:testrunner",
             kubo_url,
             envelope_tx,
@@ -483,6 +551,7 @@ mod hostile {
             [7u8; 32],
             "",
             0,
+            None,
         )
         .await
     }
@@ -508,7 +577,7 @@ mod hostile {
             kubo.url(),
             "garbage",
             &garbage_cid,
-            &kind_node(&["handle_message"]),
+            &["on_message"],
             envelope_tx.clone(),
             registry.clone(),
         )
@@ -520,41 +589,41 @@ mod hostile {
             t.elapsed()
         );
 
-        // ── 2. Infinite loop in init(): load fails within the bound. ────────
+        // ── 2. Infinite loop in do_start(): load fails within the bound. ────
         let t = Instant::now();
         let res = load(
             kubo.url(),
             "evil-init",
             &evil_cid,
-            &kind_node(&["init", "handle_message"]),
+            &["do_start", "on_message"],
             envelope_tx.clone(),
             registry.clone(),
         )
         .await;
-        assert!(res.is_err(), "infinite init must fail, not hang");
+        assert!(res.is_err(), "infinite do_start must fail, not hang");
         assert!(
             t.elapsed() < Duration::from_secs(10),
-            "infinite init not bounded: {:?}",
+            "infinite do_start not bounded: {:?}",
             t.elapsed()
         );
 
-        // ── 3. Infinite loop in handle_message: dispatch errors within the
+        // ── 3. Infinite loop in on_message: dispatch errors within the
         //       bound, and a healthy entity is fully responsive meanwhile. ────
         let (evil, _) = load(
             kubo.url(),
             "evil",
             &evil_cid,
-            &kind_node(&["handle_message"]), // no init → load succeeds
+            &["on_message"], // no do_start → load succeeds
             envelope_tx.clone(),
             registry.clone(),
         )
         .await
-        .expect("evil load (no init) should succeed");
+        .expect("evil load (no do_start) should succeed");
         let (good, _) = load(
             kubo.url(),
             "good",
             &good_cid,
-            &kind_node(&["handle_message"]),
+            &["on_message"],
             envelope_tx.clone(),
             registry.clone(),
         )
@@ -569,12 +638,12 @@ mod hostile {
         // Kick off the wedging dispatch.
         let evil_clone = evil.clone();
         let wedged =
-            tokio::spawn(async move { evil_clone.handle_message(&cast_input("wedge-1")).await });
+            tokio::spawn(async move { evil_clone.on_message(&cast_input("wedge-1")).await });
 
         // While evil spins, the good entity must answer immediately.
         tokio::time::sleep(Duration::from_millis(200)).await;
         let t = Instant::now();
-        good.handle_message(&cast_input("good-1"))
+        good.on_message(&cast_input("good-1"))
             .await
             .expect("good entity must not be affected by evil one");
         assert!(
@@ -586,7 +655,7 @@ mod hostile {
         // The wedged dispatch must come back as a bounded error.
         let t = Instant::now();
         let res = wedged.await.expect("join");
-        assert!(res.is_err(), "infinite handle_message must error, got Ok");
+        assert!(res.is_err(), "infinite on_message must error, got Ok");
         assert!(
             t.elapsed() < Duration::from_secs(10),
             "wedged dispatch not bounded: {:?}",
@@ -595,7 +664,7 @@ mod hostile {
 
         // ── 4. The evil worker survives the epoch abort and stays bounded. ───
         let t = Instant::now();
-        let res2 = evil.handle_message(&cast_input("wedge-2")).await;
+        let res2 = evil.on_message(&cast_input("wedge-2")).await;
         assert!(res2.is_err(), "second dispatch must also error");
         assert!(
             t.elapsed() < Duration::from_secs(10),
@@ -608,7 +677,7 @@ mod hostile {
             kubo.url(),
             "evil",
             &good_cid, // "fixed" version
-            &kind_node(&["handle_message"]),
+            &["on_message"],
             envelope_tx.clone(),
             registry.clone(),
         )
@@ -620,7 +689,7 @@ mod hostile {
             .insert("evil".to_string(), std::sync::Arc::new(evil2));
         let reloaded = registry.read().await.get("evil").cloned().unwrap();
         reloaded
-            .handle_message(&cast_input("post-reload"))
+            .on_message(&cast_input("post-reload"))
             .await
             .expect("reloaded (fixed) entity must dispatch fine");
 
@@ -656,21 +725,23 @@ mod wasm_repro {
 
         let kind_node = KindNode {
             protocol: "/ma/room/0.0.1".to_string(),
-            api: vec!["init".to_string(), "handle_message".to_string()],
+            cid: Some(IpldLink::new(&cid)),
+            kind_type: Evaluator::Extism,
+            behaviour: None,
+            api: vec!["do_start".to_string(), "on_message".to_string()],
+            lifecycle: vec!["do_start".to_string()],
             host_functions: vec![
                 "ma_reply".to_string(),
                 "ma_set_state".to_string(),
                 "ma_send".to_string(),
-                "ma_call".to_string(),
             ],
-            evaluator: Evaluator::Extism,
             attributes,
             allow: vec![],
         };
 
         let entity_node = EntityNode {
             kind: "/ma/room/0.0.1".to_string(),
-            behaviour: Some(IpldLink::new(&cid)),
+            behaviour: None,
             acl: "open".to_string(),
             state: None,
             parent: None,
@@ -694,6 +765,7 @@ mod wasm_repro {
             [7u8; 32],
             "",
             0,
+            None,
         )
         .await
         .expect("plugin load");
@@ -716,7 +788,7 @@ mod wasm_repro {
             };
 
             println!("\n=== dispatch {verb} ===");
-            match ep.handle_message(&CastInput { msg }).await {
+            match ep.on_message(&CastInput { msg }).await {
                 Ok(result) => {
                     println!("OK, output {} bytes", result.output.len());
                     while let Ok((frag, env)) = envelope_rx.try_recv() {
@@ -749,21 +821,23 @@ mod wasm_repro {
 
         let kind_node = KindNode {
             protocol: "/ma/room/0.0.1".to_string(),
-            api: vec!["init".to_string(), "handle_message".to_string()],
+            cid: Some(IpldLink::new(&cid)),
+            kind_type: Evaluator::Extism,
+            behaviour: None,
+            api: vec!["do_start".to_string(), "on_message".to_string()],
+            lifecycle: vec!["do_start".to_string()],
             host_functions: vec![
                 "ma_reply".to_string(),
                 "ma_set_state".to_string(),
                 "ma_send".to_string(),
-                "ma_call".to_string(),
             ],
-            evaluator: Evaluator::Extism,
             attributes,
             allow: vec![],
         };
 
         let entity_node = EntityNode {
             kind: "/ma/room/0.0.1".to_string(),
-            behaviour: Some(IpldLink::new(&cid)),
+            behaviour: None,
             acl: "open".to_string(),
             state: None,
             parent: None,
@@ -787,6 +861,7 @@ mod wasm_repro {
             [7u8; 32],
             "",
             0,
+            None,
         )
         .await
         .expect("initial plugin load");
@@ -811,7 +886,7 @@ mod wasm_repro {
                 content,
             };
             let ep = registry.read().await.get("room").cloned().unwrap();
-            ep.handle_message(&CastInput { msg }).await
+            ep.on_message(&CastInput { msg }).await
         };
         tokio::time::timeout(
             std::time::Duration::from_secs(40),
@@ -837,6 +912,7 @@ mod wasm_repro {
             [7u8; 32],
             "",
             0,
+            None,
         )
         .await
         .expect("reload plugin load");

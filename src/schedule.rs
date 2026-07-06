@@ -31,7 +31,7 @@ use ma_core::{ipfs_add, CONTENT_TYPE_TERM, MESSAGE_TYPE_RPC};
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::warn;
 
-use crate::entity::{CastInput, LocalMessage, PluginKind};
+use crate::entity::{CastInput, LocalMessage};
 use crate::plugin::EntityRegistry;
 
 // ── Schedule request ──────────────────────────────────────────────────────────
@@ -291,10 +291,7 @@ pub async fn dispatch_scheduled(
         msg: crate::entity::PluginMsg::from(&local_msg),
     };
 
-    let result = match plugin.kind {
-        PluginKind::Stateless => plugin.handle_cast(&cast_input).await,
-        PluginKind::Stateful => plugin.handle_message(&cast_input).await,
-    };
+    let result = plugin.on_message(&cast_input).await;
 
     let result = match result {
         Ok(r) => r,

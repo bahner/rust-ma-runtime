@@ -178,11 +178,12 @@ pub struct LocalMessage {
 /// Which ABI a plugin kind implements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginKind {
-    /// Stateless — exports `handle_cast`.  No state is passed in or out.
-    /// Replies are sent via the `ma_send` host function.
+    /// Stateless — no state is passed in or out. Replies are sent via the
+    /// `ma_send` host function. Exports `on_message`, same as `Stateful`.
     Stateless,
-    /// Stateful — exports `handle_call`.  Runtime passes current state in;
-    /// plugin returns new state bytes.  Replies via `ma_send` host function.
+    /// Stateful — runtime passes current state in around the call; plugin
+    /// may queue new state bytes via `ma_set_state`. Replies via `ma_send`.
+    /// Exports `on_message`, same as `Stateless`.
     Stateful,
 }
 
@@ -274,19 +275,55 @@ pub struct ReplyRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KindNode {
     pub protocol: String,
-    /// Wasm exports this kind must provide.
+    /// IPLD link to the compiled Wasm module bytes shared by every entity of
+    /// this kind. **Optional** — absent for kinds where each entity supplies
+    /// its *own*, distinct Wasm binary instead (e.g. a generic
+    /// "bring-your-own-compiled-actor" kind like `/ma/python/actor/0.0.1`):
+    /// for those, `EntityNode.behaviour` holds that entity's own Wasm bytes
+    /// directly (instantiated as-is, never interpreted as text) and this
+    /// field is omitted entirely. When present, `EntityNode.behaviour` (if
+    /// the kind also declares the `behaviour` dialect field below) instead
+    /// holds per-entity *interpreted source text* fed to the shared binary
+    /// named here (e.g. the ma-scheme case) — never raw Wasm bytes in that
+    /// case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cid: Option<IpldLink>,
+    /// How the runtime executes Wasm bytes for this kind. Serialised as
+    /// `type` (was `evaluator` in an earlier draft of this spec — same
+    /// field, renamed).
+    #[serde(rename = "type", default)]
+    pub kind_type: Evaluator,
+    /// Optional behaviour-dialect identifier (e.g. `/ma/scheme/actor/0.0.1`).
+    /// Only meaningful when `cid` (above) is `Some` — it declares that this
+    /// kind's entities each carry their own per-entity *interpreted source
+    /// text* in `EntityNode.behaviour`, resolved by the runtime according to
+    /// this dialect's rules and exposed to the plugin via the
+    /// `ma_get_behaviour`/`ma_get_behaviour_cid`/`ma_set_behaviour_cid` host
+    /// functions. Kinds with no per-entity scriptable behaviour (including
+    /// kinds with no shared `cid` at all) simply omit this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub behaviour: Option<String>,
+    /// Full list of every Wasm export this kind's plugin provides (e.g.
+    /// `[set_state, do_start, on_message, do_shutdown]`). `on_message` is
+    /// always mandatory; everything else is read from this list.
     pub api: Vec<String>,
+    /// Ordered **sub-list of `api`** naming just the load-time stages this
+    /// kind uses, drawn from `set_state`/`set_behaviour`/`do_init`/
+    /// `do_start` (never `on_message` or `do_shutdown` — those are handled
+    /// separately, not part of the ordered load sequence). The runtime
+    /// always drives these in the fixed canonical order regardless of the
+    /// order listed here; this field only controls *membership* (which
+    /// stages apply to this kind), not sequencing. Every entry here MUST
+    /// also appear in `api`.
+    #[serde(default)]
+    pub lifecycle: Vec<String>,
     /// Host functions the runtime makes available to plugins of this kind.
     /// Principle of least privilege: only register what the kind actually needs.
     pub host_functions: Vec<String>,
-    /// How the runtime executes plugin bytes for this kind.
-    /// Defaults to [`Evaluator::Extism`] when absent in serialised form.
-    #[serde(default)]
-    pub evaluator: Evaluator,
     /// Kind attributes. Required keys: `stateful` (bool), `wasi` (bool).
-    /// `stateful: true` means the runtime must call `init()`, pass persisted
-    /// state in and persist new state out after each call.  Never inferred
-    /// from the `api` list — the explicit attribute is the source of truth.
+    /// `stateful: true` means the runtime must load/persist state around
+    /// dispatch. Never inferred from the `api` list — the explicit
+    /// attribute is the source of truth.
     #[serde(default)]
     pub attributes: BTreeMap<String, serde_json::Value>,
     /// Which caller entity kinds are allowed to create instances of this kind.
@@ -368,7 +405,8 @@ impl std::fmt::Display for Lifecycle {
 
 /// How the runtime executes the plugin bytes for a [`KindNode`].
 ///
-/// Stored in `KindNode.evaluator`; defaults to [`Extism`](Evaluator::Extism).
+/// Stored in `KindNode.kind_type` (serialised as `type`); defaults to
+/// [`Extism`](Evaluator::Extism).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Evaluator {
@@ -386,9 +424,11 @@ pub enum Evaluator {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityNode {
     pub kind: String,
-    /// IPLD link to the Wasm plugin bytes stored on IPFS.
-    /// Absent for native entities (e.g. `#scheduler`) that have no Wasm.
-    /// Stored as `{"/": "bafy…"}` so Kubo's recursive pin follows it.
+    /// IPLD link to this entity's own behaviour-dialect source (a single
+    /// reference — no multi-piece composition). Present only for entities
+    /// of a kind that declares `KindNode.behaviour`; absent otherwise.
+    /// **Not** the Wasm binary — that now lives on `KindNode.cid`, shared
+    /// by every entity of the kind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub behaviour: Option<IpldLink>,
     /// Entity verb-ACL — name string resolved via `acls.<name>` in the root
@@ -407,7 +447,8 @@ pub struct EntityNode {
     /// Human-readable label for display purposes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// Lifecycle state: `New` until first successful `init()`, then `Running`.
+    /// Lifecycle state: `New` until first successful genesis load
+    /// (`set_state`/`set_behaviour`/`do_init`/`do_start`), then `Running`.
     #[serde(default)]
     pub lifecycle: Lifecycle,
 }
@@ -480,8 +521,12 @@ pub struct CreateEntityRequest {
     pub fragment: String,
     /// Protocol ID of the kind to instantiate (e.g. `/ma/stateless/ping/0.0.1`).
     pub kind_protocol: String,
-    /// IPFS CID of the Wasm plugin bytes — becomes `EntityNode.behaviour`.
-    pub behaviour_cid: String,
+    /// Optional per-entity behaviour source CID — becomes `EntityNode.behaviour`.
+    /// Only meaningful for kinds that declare `KindNode.behaviour`.
+    pub behaviour_cid: Option<String>,
+    /// Optional, opaque creation payload passed verbatim to `do_init` on this
+    /// entity's very first load. Not persisted — discarded after that call.
+    pub init_payload: Option<Vec<u8>>,
     /// Fragment of the creating (parent) entity.
     pub parent: String,
 }

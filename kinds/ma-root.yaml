@@ -1,10 +1,12 @@
-protocol: /ma/root/0.0.1
+protocol: /ma/python/root/0.0.1
+cid:
+  "/": bafybeige533l3uc6fc3e7ykoipn6knh3w5tafo7245z7sep7jnex6rnavm
+type: extism
 attributes:
   stateful: false
   wasi: true
 api:
-  - init
-  - handle_message
+  - on_message
 host_functions:
   - ma_reply
   - ma_set_state

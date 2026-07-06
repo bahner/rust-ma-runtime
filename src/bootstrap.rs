@@ -53,12 +53,28 @@ pub struct BootstrapRuntime {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BootstrapKind {
+    /// IPLD link to the compiled Wasm module bytes shared by every entity of
+    /// this kind. Absent for kinds where each entity supplies its own Wasm
+    /// via `EntityNode.behaviour` instead (see `KindNode.cid`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cid: Option<IpldLink>,
+    /// How the runtime executes Wasm bytes for this kind. YAML key is `type`
+    /// (was `evaluator` in an earlier draft — same field, renamed).
+    #[serde(rename = "type", default)]
+    pub kind_type: crate::entity::Evaluator,
+    /// Optional behaviour-dialect identifier (e.g. `/ma/scheme/actor/0.0.1`).
+    /// When present, entities of this kind each carry their own
+    /// `EntityNode.behaviour` source reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub behaviour: Option<String>,
     #[serde(default)]
     pub api: Vec<String>,
+    /// Ordered sub-list of `api` naming the load-time stages this kind uses
+    /// (`set_state`/`set_behaviour`/`do_init`/`do_start`). See `KindNode.lifecycle`.
+    #[serde(default)]
+    pub lifecycle: Vec<String>,
     #[serde(default)]
     pub host_functions: Vec<String>,
-    #[serde(default)]
-    pub evaluator: crate::entity::Evaluator,
     #[serde(default)]
     pub attributes: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
@@ -92,8 +108,10 @@ pub enum BootstrapEntity {
     Inline {
         /// Protocol ID of this entity's kind (e.g. `/ma/stateless/python/0.0.1`).
         kind: String,
-        /// IPLD link to the Wasm plugin bytes already stored on IPFS.
-        /// Absent for native entities (e.g. `evaluator: native`) that have no Wasm.
+        /// IPLD link to this entity's own behaviour-dialect source, if the
+        /// kind declares `BootstrapKind.behaviour`. **Not** the Wasm binary
+        /// — that lives on the kind's own `cid`, shared by every entity of
+        /// the kind.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         behaviour: Option<IpldLink>,
         /// Named ACL reference resolved via `acls.<name>` in the manifest.
@@ -203,9 +221,12 @@ async fn publish_kinds(cfg: &BootstrapRuntime, kubo_url: &str) -> Result<KindTre
     for (protocol, bk) in &cfg.kinds {
         let node = KindNode {
             protocol: protocol.clone(),
+            cid: bk.cid.clone(),
+            kind_type: bk.kind_type.clone(),
+            behaviour: bk.behaviour.clone(),
             api: bk.api.clone(),
+            lifecycle: bk.lifecycle.clone(),
             host_functions: bk.host_functions.clone(),
-            evaluator: bk.evaluator.clone(),
             attributes: bk.attributes.clone(),
             allow: bk.allow.clone(),
         };
@@ -303,9 +324,12 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
         kinds.insert(
             protocol,
             BootstrapKind {
+                cid: node.cid,
+                kind_type: node.kind_type,
+                behaviour: node.behaviour,
                 api: node.api,
+                lifecycle: node.lifecycle,
                 host_functions: node.host_functions,
-                evaluator: node.evaluator,
                 attributes: node.attributes,
                 allow: node.allow,
             },
@@ -421,6 +445,7 @@ pub async fn load_entities(
             avatar_key,
             iroh_node_id,
             started_at,
+            None, // reload/bootstrap, never genesis with a fresh creation payload
         )
         .await
         {
