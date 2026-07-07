@@ -83,6 +83,7 @@ config-key-not-manifest = khóa config '%key%' không phải là khóa manifest 
 wrong-crud-protocol = giao thức CRUD sai: %type%
 entity-name-invalid = tên entity phải là UTF-8 có thể in được
 reserved-entity-name = tên entity '%name%' đã được đặt trước
+genesis-kind-owner-only = Chỉ chủ sở hữu runtime mới có thể tạo entity loại genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 đã bật — đang liên kết cả IPv4 và IPv6

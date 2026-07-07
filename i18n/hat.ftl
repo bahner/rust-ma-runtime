@@ -83,6 +83,7 @@ config-key-not-manifest = kle config '%key%' la pa yon kle manifest config ki ko
 wrong-crud-protocol = move protokòl CRUD: %type%
 entity-name-invalid = non entity a dwe UTF-8 ki ka enprime
 reserved-entity-name = non entity '%name%' rezerve
+genesis-kind-owner-only = Se sèlman yon pwopriyetè runtime ki ka kreye yon entity kalite genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 aktive — konekte tou de IPv4 ak IPv6

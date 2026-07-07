@@ -83,6 +83,7 @@ config-key-not-manifest = config ki '%key%' i no wan manifest config ki we ol sa
 wrong-crud-protocol = CRUD protokol i rong: %type%
 entity-name-invalid = nem bilong entity i mas stap printable UTF-8
 reserved-entity-name = nem bilong entity '%name%' i reserved
+genesis-kind-owner-only = Ona bilong runtime tasol inap wokim entity bilong genesis kain
 
 # IPv6 config
 ipv6-enabled = IPv6 i wok — em i baindim IPv4 na IPv6 tupela

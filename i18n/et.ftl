@@ -83,6 +83,7 @@ config-key-not-manifest = konfiguratsioonivõti '%key%' ei ole teadaolev manifes
 wrong-crud-protocol = vale CRUD-protokoll: %type%
 entity-name-invalid = entity nimi peab olema prinditav UTF-8
 reserved-entity-name = entity nimi '%name%' on reserveeritud
+genesis-kind-owner-only = Ainult runtime omanik tohib luua genesis-tüüpi olemi
 
 # IPv6 config
 ipv6-enabled = IPv6 on lubatud — seob nii IPv4 kui ka IPv6

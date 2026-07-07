@@ -83,6 +83,7 @@ config-key-not-manifest = murtoo config '%key%' murtoo manifest config beekamaa 
 wrong-crud-protocol = protokoola CRUD dogoggoraa: %type%
 entity-name-invalid = maqaan entity UTF-8 maxxansuu danda'u ta'uu qaba
 reserved-entity-name = maqaan entity '%name%' kuufameera
+genesis-kind-owner-only = Abbaan runtime qofa entity gosa genesis uumuu danda'a
 
 # IPv6 config
 ipv6-enabled = IPv6 dandeessifame — IPv4 fi IPv6 lachuu walqabsiisa

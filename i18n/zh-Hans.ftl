@@ -83,6 +83,7 @@ config-key-not-manifest = config 键 '%key%' 不是已知的 manifest config 键
 wrong-crud-protocol = 错误的 CRUD 协议：%type%
 entity-name-invalid = entity 名称必须是可打印的 UTF-8
 reserved-entity-name = entity 名称 '%name%' 已被保留
+genesis-kind-owner-only = 只有 runtime 所有者才能创建 genesis 类型的 entity
 
 # IPv6 config
 ipv6-enabled = IPv6 已启用 — 同时绑定 IPv4 和 IPv6

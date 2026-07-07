@@ -83,6 +83,7 @@ config-key-not-manifest = konfiguračný kľúč '%key%' nie je známym kľúčo
 wrong-crud-protocol = nesprávny protokol CRUD: %type%
 entity-name-invalid = názov entity musí byť tlačiteľné UTF-8
 reserved-entity-name = názov entity '%name%' je rezervovaný
+genesis-kind-owner-only = Iba vlastník runtime môže vytvoriť entity typu genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 povolené — viaže sa na IPv4 aj IPv6

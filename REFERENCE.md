@@ -367,7 +367,7 @@ Entity behaviour lives in Wasm blobs stored on IPFS.
 
 ```
 RuntimeManifest { owner, kinds: {family→implementation→CID}, entities: {name→CID→EntityNode}, acl: CID?, acls: {name→CID} }
-KindNode        { protocol, api: [String] }
+KindNode        { protocol }
 EntityNode      { name, kind, behaviour: {"//":CID}, state: {"//":CID}?, owner, acl: {"//":CID}, wasi: bool }
 ```
 

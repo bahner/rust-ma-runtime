@@ -83,6 +83,7 @@ config-key-not-manifest = config కీ '%key%' తెలిసిన manifest c
 wrong-crud-protocol = తప్పు CRUD ప్రోటోకాల్: %type%
 entity-name-invalid = entity పేరు ముద్రించదగిన UTF-8 అయి ఉండాలి
 reserved-entity-name = entity పేరు '%name%' రిజర్వు చేయబడింది
+genesis-kind-owner-only = runtime యజమాని మాత్రమే genesis రకం entity‌ను సృష్టించగలరు
 
 # IPv6 config
 ipv6-enabled = IPv6 ప్రారంభించబడింది — IPv4 మరియు IPv6 రెండింటికీ బైండ్ చేయబడుతోంది

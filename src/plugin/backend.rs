@@ -128,7 +128,7 @@ struct CreateEntityCtx {
 //
 // Input is CBOR-encoded `{ "kind": "/ma/…/0.0.1", "behaviour": "bafyCID",
 // "init": <payload> }`. `behaviour` is only meaningful for kinds that
-// declare `KindNode.behaviour`; `init` is the opaque `do_init` creation
+// declare `KindNode.behaviour`; `init` is the opaque `:init` signal creation
 // payload (§14.2.1). Both are optional. The runtime generates a nanoid
 // fragment, queues the request, and returns the fragment string
 // (CBOR-encoded) to the plugin immediately. Actual plugin loading and
@@ -253,76 +253,55 @@ host_fn!(ma_end_fn(user_data: DeleteEntityCtx; _input: Vec<u8>) -> Vec<u8> {
     Ok(out)
 });
 
-// ── Behaviour management host functions ──────────────────────────────────────
+// ── ma-include-ipfs host function ─────────────────────────────────────────────
 //
 // Available only to kinds that declare `KindNode.behaviour` (a dialect
-// identifier). `EntityNode.behaviour` is a single CID reference, never a
-// list — see ma-runtime-v1.md §14.2.2.
+// identifier) whose dialect supports library composition (ma-scheme does,
+// via `ma-include-ipfs`, ma-scheme-v1.md §11.1).
+//
+// There is deliberately no `ma_get_behaviour`/`ma_get_behaviour_cid`/
+// `ma_set_behaviour_cid` here — an earlier draft had all three, plus a
+// queued-mutation-and-republish mechanism mirroring `ma_create_entity`/
+// `ma_delete_entity`. Removed entirely: an entity's behaviour reference is
+// immutable from within ma-scheme (ma-scheme-v1.md §11) — a script that
+// needs its own reference reads it from config instead (`"behaviour"` key,
+// see `build_plugin_config` below).
 
-// Context captured by `ma_get_behaviour`, `ma_get_behaviour_cid`, and
-// `ma_set_behaviour_cid` host functions.
+// Context captured by `ma_ipfs_include`.
 struct BehaviourCtx {
     kubo_url: String,
     /// Handle into the Tokio runtime, used to block on the (async) IPFS
     /// fetch from this synchronous host-function callback.
     handle: tokio::runtime::Handle,
-    /// Current behaviour reference (single CID), `None` if this entity has
-    /// none. Updated in place by `ma_set_behaviour_cid`.
-    current_cid: Option<String>,
-    /// New reference requested via `ma_set_behaviour_cid` during the current
-    /// dispatch, queued for the runtime to process (republish `EntityNode`)
-    /// after dispatch returns. `None` if not called during this dispatch.
-    pending_cid: Option<String>,
 }
 
-// `ma_get_behaviour` host function: resolves the entity's current behaviour
-// reference fresh, every call (MUST NOT be cached) and returns the resulting
-// plain text.
-host_fn!(ma_get_behaviour_fn(user_data: BehaviourCtx; _input: Vec<u8>) -> Vec<u8> {
-    let arc = user_data.get()?;
-    let (kubo_url, handle, cid) = {
+// `ma_ipfs_include` host function: resolves a single `ma-include-ipfs`
+// reference (ma-scheme-v1.md §11.1) -- a literal `#!/ipfs/<cid>` or
+// `#!/ipns/<key>` token -- to its raw content bytes. A single, flat fetch;
+// all recursion/depth/cycle tracking is the guest's own responsibility
+// (`rust-ma-scheme-actor`'s `src/include.rs`), not this host function's.
+//
+// Input is raw UTF-8 bytes, NOT CBOR: extism-pdk's `#[host_fn]` macro
+// sends a `String` argument via `ToBytes for String` (identity — the raw
+// bytes of the string), not through CBOR encoding. Unlike the
+// CBOR-encoded inputs elsewhere in this file (written to match Python
+// actors manually constructing CBOR payloads), this host function is
+// called only by the Rust ma-scheme-actor guest via that macro, so it
+// must match what the macro actually sends.
+host_fn!(ma_ipfs_include_fn(user_data: BehaviourCtx; input: Vec<u8>) -> Vec<u8> {
+    let reference = String::from_utf8(input)
+        .map_err(|e| extism::Error::msg(format!("ma_ipfs_include: reference is not valid UTF-8: {e}")))?;
+    let (kubo_url, handle) = {
+        let arc = user_data.get()?;
         let ctx = arc.lock().unwrap();
-        (ctx.kubo_url.clone(), ctx.handle.clone(), ctx.current_cid.clone())
-    };
-    let Some(cid) = cid else {
-        return Err(extism::Error::msg("ma_get_behaviour: entity has no behaviour reference"));
+        (ctx.kubo_url.clone(), ctx.handle.clone())
     };
     let bytes = handle
-        .block_on(ma_core::cat_bytes(&kubo_url, &cid))
-        .map_err(|e| extism::Error::msg(format!("ma_get_behaviour: fetch {cid}: {e}")))?;
+        .block_on(crate::behaviour::resolve_ipfs_include(&kubo_url, &reference))
+        .map_err(|e| extism::Error::msg(format!("ma_ipfs_include: {e}")))?;
     Ok(bytes)
 });
 
-// `ma_get_behaviour_cid` host function: returns the current behaviour
-// reference itself (a single CID), CBOR-encoded, no fetching/resolution
-// performed.
-host_fn!(ma_get_behaviour_cid_fn(user_data: BehaviourCtx; _input: Vec<u8>) -> Vec<u8> {
-    let arc = user_data.get()?;
-    let cid = arc.lock().unwrap().current_cid.clone();
-    let mut out = Vec::new();
-    ciborium::ser::into_writer(&cid, &mut out)
-        .map_err(|e| extism::Error::msg(format!("ma_get_behaviour_cid: CBOR encode: {e}")))?;
-    Ok(out)
-});
-
-// `ma_set_behaviour_cid` host function: plugin requests the runtime replace
-// `EntityNode.behaviour` with a new (single) reference. Queued during
-// dispatch and processed by the runtime after it returns (same pattern as
-// `ma_create_entity`/`ma_delete_entity`): the runtime validates the new
-// reference, republishes a new `EntityNode` (`state` untouched), and
-// repoints the manifest entry.
-host_fn!(ma_set_behaviour_cid_fn(user_data: BehaviourCtx; input: Vec<u8>) -> Vec<u8> {
-    let new_cid: String = from_cbor_bytes(&input)?;
-    let arc = user_data.get()?;
-    let mut ctx = arc.lock().unwrap();
-    ctx.current_cid = Some(new_cid.clone());
-    ctx.pending_cid = Some(new_cid);
-    drop(ctx);
-    let mut out = Vec::new();
-    ciborium::ser::into_writer(&ciborium::Value::Text(":ok".to_string()), &mut out)
-        .map_err(|e| extism::Error::msg(format!("ma_set_behaviour_cid: CBOR encode: {e}")))?;
-    Ok(out)
-});
 
 // ── Worker threads ────────────────────────────────────────────────────────────
 
@@ -335,19 +314,14 @@ pub(super) struct WasmThreadCfg {
     pub(super) init_state: Vec<u8>,
     pub(super) wasi: bool,
     pub(super) host_functions: Vec<String>,
-    /// Whether the kind's `api` declares each of the five optional
-    /// lifecycle exports (`on_message` is always mandatory and unconditional).
-    pub(super) has_set_state: bool,
-    pub(super) has_set_behaviour: bool,
-    pub(super) has_do_init: bool,
-    pub(super) has_do_start: bool,
-    pub(super) has_do_shutdown: bool,
     /// `true` only on this entity's very first ever load — gates whether
-    /// `do_init` runs at all, even if the kind declares it.
+    /// the `:init` signal fires at all.
     pub(super) is_genesis: bool,
-    /// Opaque creation payload for `do_init`, only `Some` when `is_genesis`.
+    /// Opaque creation payload for the `:init` signal, only `Some` when
+    /// `is_genesis`.
     pub(super) init_payload: Option<Vec<u8>>,
-    /// Pre-resolved behaviour source text for `set_behaviour`, if this kind
+    /// Pre-resolved behaviour source text for the `:set-behaviour` signal,
+    /// if this kind
     /// declares a behaviour dialect and the entity has a reference.
     pub(super) behaviour_text: Option<Vec<u8>>,
     pub(super) node_kind: String,
@@ -357,10 +331,11 @@ pub(super) struct WasmThreadCfg {
     pub(super) wasm_cid: String,
     /// This entity's own behaviour source reference, if any (`EntityNode.behaviour`).
     pub(super) entity_behaviour_cid: Option<String>,
-    /// Kubo RPC URL, needed to resolve `ma_get_behaviour` fresh on every call.
+    /// Kubo RPC URL, needed by `ma_ipfs_include` to resolve a reference on
+    /// demand.
     pub(super) kubo_url: String,
     /// Handle into the Tokio runtime, used to block on IPFS fetches from the
-    /// synchronous `ma_get_behaviour` host-function callback.
+    /// synchronous `ma_ipfs_include` host-function callback.
     pub(super) tokio_handle: tokio::runtime::Handle,
     /// iroh QUIC node ID of this runtime.
     pub(super) iroh_node_id: String,
@@ -375,7 +350,6 @@ pub(super) struct WasmThreadCfg {
 struct WasmThreadState {
     plugin: Plugin,
     state: UserData<StateCtx>,
-    behaviour: UserData<BehaviourCtx>,
     create_queue: UserData<CreateEntityCtx>,
     delete_queue: UserData<DeleteEntityCtx>,
 }
@@ -388,6 +362,7 @@ struct WasmThreadState {
 ///   `id`           bare fragment without `#`                               [always]
 ///   `kind`         kind protocol ID e.g. `/ma/root/0.0.1`                 [always]
 ///   `cid`          IPFS CID of the kind's shared Wasm binary              [always]
+///   `behaviour`    this entity's own `EntityNode.behaviour` reference     [if set]
 ///   `runtime`      runtime's own DID                                       [always]
 ///   `iroh_node_id` iroh QUIC node ID of this runtime                      [always]
 ///   `started_at`   Unix epoch seconds when the runtime started            [always]
@@ -401,6 +376,9 @@ fn build_plugin_config(cfg: &WasmThreadCfg) -> std::collections::BTreeMap<String
     config.insert("id".to_string(), cfg.fragment.clone());
     config.insert("kind".to_string(), cfg.node_kind.clone());
     config.insert("cid".to_string(), cfg.wasm_cid.clone());
+    if let Some(behaviour_cid) = &cfg.entity_behaviour_cid {
+        config.insert("behaviour".to_string(), behaviour_cid.clone());
+    }
     config.insert("runtime".to_string(), cfg.our_did.clone());
     config.insert("iroh_node_id".to_string(), cfg.iroh_node_id.clone());
     config.insert("started_at".to_string(), cfg.started_at.to_string());
@@ -436,8 +414,6 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
     let behaviour: UserData<BehaviourCtx> = UserData::new(BehaviourCtx {
         kubo_url: cfg.kubo_url.clone(),
         handle: cfg.tokio_handle.clone(),
-        current_cid: cfg.entity_behaviour_cid.clone(),
-        pending_cid: None,
     });
 
     // IMPORTANT: This order MUST match the @extism.import_fn declaration order
@@ -501,33 +477,13 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
             ),
         ),
         (
-            "ma_get_behaviour",
+            "ma_ipfs_include",
             Function::new(
-                "ma_get_behaviour",
+                "ma_ipfs_include",
                 [PTR],
                 [PTR],
                 behaviour.clone(),
-                ma_get_behaviour_fn,
-            ),
-        ),
-        (
-            "ma_get_behaviour_cid",
-            Function::new(
-                "ma_get_behaviour_cid",
-                [PTR],
-                [PTR],
-                behaviour.clone(),
-                ma_get_behaviour_cid_fn,
-            ),
-        ),
-        (
-            "ma_set_behaviour_cid",
-            Function::new(
-                "ma_set_behaviour_cid",
-                [PTR],
-                [PTR],
-                behaviour.clone(),
-                ma_set_behaviour_cid_fn,
+                ma_ipfs_include_fn,
             ),
         ),
     ];
@@ -548,7 +504,6 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
     Ok(WasmThreadState {
         plugin,
         state,
-        behaviour,
         create_queue,
         delete_queue,
     })
@@ -579,51 +534,71 @@ fn parse_error_reason(bytes: &[u8]) -> Option<String> {
     }
 }
 
-/// Drive the freshly built plugin through the applicable lifecycle stages, in
-/// order: `set_state` (conditional), `set_behaviour` (conditional), `do_init`
-/// (conditional, genesis only), `do_start` (conditional). Returns the
-/// resulting [`Lifecycle`] — `Error` only if `do_init` (the one genesis-time
-/// hook a kind may use to reject creation) returns `[:error, reason]`.
+/// Encode a bare-atom signal term (no associated data), e.g. `:start`,
+/// matching the wire shape `on_signal` expects (ma-runtime-v1.md §14.2).
+fn signal_atom(name: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(&ciborium::Value::Text(name.to_string()), &mut out)
+        .expect("encoding a signal atom cannot fail");
+    out
+}
+
+/// Encode a `[atom, bytes]` signal term (e.g. `:set-state`/`:set-behaviour`/
+/// `:init`), matching the wire shape `on_signal` expects.
+fn signal_with_data(name: &str, data: &[u8]) -> Vec<u8> {
+    let term = ciborium::Value::Array(vec![
+        ciborium::Value::Text(name.to_string()),
+        ciborium::Value::Bytes(data.to_vec()),
+    ]);
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(&term, &mut out).expect("encoding a signal term cannot fail");
+    out
+}
+
+/// Drive the freshly built plugin through the applicable lifecycle signals,
+/// in order: `:set-state` (only if state exists), `:set-behaviour` (only if
+/// a behaviour reference resolves), `:init` (only at genesis), `:start`
+/// (always) — all delivered through the single `on_signal` export
+/// (ma-runtime-v1.md §14.2). There is no per-kind declaration of which of
+/// these apply; firing is purely data-driven. Returns the resulting
+/// [`Lifecycle`] — `Error` only if `:init` (the one genesis-time signal a
+/// script may use to reject creation) returns `[:error, reason]`.
 ///
 /// Entity context is available via `extism_config_get` throughout; each
-/// export here receives only the specific argument documented in
-/// ma-runtime-v1.md §14.3.
+/// signal carries only the specific data documented in ma-runtime-v1.md
+/// §14.3.
 fn run_genesis_and_start(ts: &mut WasmThreadState, cfg: &WasmThreadCfg) -> Result<Lifecycle> {
-    if cfg.has_set_state && !cfg.init_state.is_empty() {
+    if !cfg.init_state.is_empty() {
         ts.plugin
-            .call::<&[u8], Vec<u8>>("set_state", cfg.init_state.as_slice())
-            .map_err(|e| anyhow!("set_state() failed for '{}': {e}", cfg.fragment))?;
+            .call::<&[u8], Vec<u8>>("on_signal", signal_with_data(":set-state", &cfg.init_state).as_slice())
+            .map_err(|e| anyhow!("on_signal(:set-state) failed for '{}': {e}", cfg.fragment))?;
     }
 
-    if cfg.has_set_behaviour {
-        if let Some(text) = &cfg.behaviour_text {
-            ts.plugin
-                .call::<&[u8], Vec<u8>>("set_behaviour", text.as_slice())
-                .map_err(|e| anyhow!("set_behaviour() failed for '{}': {e}", cfg.fragment))?;
-        }
+    if let Some(text) = &cfg.behaviour_text {
+        ts.plugin
+            .call::<&[u8], Vec<u8>>("on_signal", signal_with_data(":set-behaviour", text).as_slice())
+            .map_err(|e| anyhow!("on_signal(:set-behaviour) failed for '{}': {e}", cfg.fragment))?;
     }
 
     let mut lifecycle = Lifecycle::Running;
-    if cfg.is_genesis && cfg.has_do_init {
+    if cfg.is_genesis {
         let payload = cfg.init_payload.as_deref().unwrap_or(&[]);
         let result_bytes = ts
             .plugin
-            .call::<&[u8], Vec<u8>>("do_init", payload)
-            .map_err(|e| anyhow!("do_init() failed for '{}': {e}", cfg.fragment))?;
+            .call::<&[u8], Vec<u8>>("on_signal", signal_with_data(":init", payload).as_slice())
+            .map_err(|e| anyhow!("on_signal(:init) failed for '{}': {e}", cfg.fragment))?;
         if let Some(reason) = parse_error_reason(&result_bytes) {
-            warn!(fragment = %cfg.fragment, reason = %reason, "do_init() returned :error");
+            warn!(fragment = %cfg.fragment, reason = %reason, "on_signal(:init) returned :error");
             lifecycle = Lifecycle::Error;
         }
     }
 
-    if cfg.has_do_start {
-        let result_bytes = ts
-            .plugin
-            .call::<&[u8], Vec<u8>>("do_start", &[] as &[u8])
-            .map_err(|e| anyhow!("do_start() failed for '{}': {e}", cfg.fragment))?;
-        if let Some(reason) = parse_error_reason(&result_bytes) {
-            warn!(fragment = %cfg.fragment, reason = %reason, "do_start() returned :error");
-        }
+    let result_bytes = ts
+        .plugin
+        .call::<&[u8], Vec<u8>>("on_signal", signal_atom(":start").as_slice())
+        .map_err(|e| anyhow!("on_signal(:start) failed for '{}': {e}", cfg.fragment))?;
+    if let Some(reason) = parse_error_reason(&result_bytes) {
+        warn!(fragment = %cfg.fragment, reason = %reason, "on_signal(:start) returned :error");
     }
 
     Ok(lifecycle)
@@ -659,15 +634,6 @@ fn execute_dispatch(
         .pending
         .take();
 
-    let pending_behaviour_cid = ts
-        .behaviour
-        .get()
-        .map_err(|e| anyhow!("behaviour error: {e}"))?
-        .lock()
-        .map_err(|e| anyhow!("behaviour poisoned: {e}"))?
-        .pending_cid
-        .take();
-
     let create_requests = ts
         .create_queue
         .get()
@@ -697,7 +663,6 @@ fn execute_dispatch(
     Ok(DispatchResult {
         output,
         pending_state,
-        pending_behaviour_cid,
         create_requests,
         delete_requests,
     })
@@ -762,13 +727,11 @@ pub(super) fn run_wasm_thread(
                 }
             }
             EntityMsg::Shutdown => {
-                if cfg.has_do_shutdown {
-                    if let Err(e) = ts
-                        .plugin
-                        .call::<&[u8], Vec<u8>>("do_shutdown", &[] as &[u8])
-                    {
-                        warn!(fragment = %cfg.fragment, error = %e, "do_shutdown() failed (best-effort, ignored)");
-                    }
+                if let Err(e) = ts
+                    .plugin
+                    .call::<&[u8], Vec<u8>>("on_signal", signal_atom(":shutdown").as_slice())
+                {
+                    warn!(fragment = %cfg.fragment, error = %e, "on_signal(:shutdown) failed (best-effort, ignored)");
                 }
                 break;
             }

@@ -68,12 +68,6 @@ pub struct BootstrapKind {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub behaviour: Option<String>,
     #[serde(default)]
-    pub api: Vec<String>,
-    /// Ordered sub-list of `api` naming the load-time stages this kind uses
-    /// (`set_state`/`set_behaviour`/`do_init`/`do_start`). See `KindNode.lifecycle`.
-    #[serde(default)]
-    pub lifecycle: Vec<String>,
-    #[serde(default)]
     pub host_functions: Vec<String>,
     #[serde(default)]
     pub attributes: BTreeMap<String, serde_json::Value>,
@@ -121,6 +115,14 @@ pub enum BootstrapEntity {
         /// IPLD link to persisted initial state (stateful entities only).
         #[serde(default)]
         state: Option<IpldLink>,
+        /// Entity-level attribute overrides, merged over the kind's own
+        /// attributes (entity wins) — see `EntityNode::attributes`. E.g.
+        /// `{"genesis": true}` marks this as a tree-root entity.
+        #[serde(default)]
+        attributes: std::collections::BTreeMap<String, serde_json::Value>,
+        /// Opaque, persisted creation payload — see `EntityNode::init`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        init: Option<String>,
     },
 }
 
@@ -224,8 +226,6 @@ async fn publish_kinds(cfg: &BootstrapRuntime, kubo_url: &str) -> Result<KindTre
             cid: bk.cid.clone(),
             kind_type: bk.kind_type.clone(),
             behaviour: bk.behaviour.clone(),
-            api: bk.api.clone(),
-            lifecycle: bk.lifecycle.clone(),
             host_functions: bk.host_functions.clone(),
             attributes: bk.attributes.clone(),
             allow: bk.allow.clone(),
@@ -255,6 +255,8 @@ async fn publish_entities(
                 behaviour,
                 acl,
                 state,
+                attributes,
+                init,
             } => {
                 let node = EntityNode {
                     kind: kind.clone(),
@@ -263,7 +265,9 @@ async fn publish_entities(
                     state: state.clone(),
                     parent: None,
                     label: None,
-                    lifecycle: crate::entity::Lifecycle::New,
+                    attributes: attributes.clone(),
+                    init: init.clone(),
+                    initialized: false,
                 };
                 let cid = kubo::dag_put(kubo_url, &node)
                     .await
@@ -327,8 +331,6 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
                 cid: node.cid,
                 kind_type: node.kind_type,
                 behaviour: node.behaviour,
-                api: node.api,
-                lifecycle: node.lifecycle,
                 host_functions: node.host_functions,
                 attributes: node.attributes,
                 allow: node.allow,
@@ -349,6 +351,8 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
                 behaviour: node.behaviour,
                 acl: node.acl,
                 state: node.state,
+                attributes: node.attributes,
+                init: node.init,
             },
         );
     }
@@ -434,6 +438,7 @@ pub async fn load_entities(
                 continue;
             }
         };
+        let init_payload = node.init.as_ref().map(|s| s.as_bytes().to_vec());
         match plugin::EntityPlugin::load(
             name.clone(),
             &node,
@@ -445,16 +450,18 @@ pub async fn load_entities(
             avatar_key,
             iroh_node_id,
             started_at,
-            None, // reload/bootstrap, never genesis with a fresh creation payload
+            init_payload, // EntityNode.init (genesis-via-CRUD/bootstrap), only fires if genesis
         )
         .await
         {
             Ok((ep, lifecycle)) => {
                 tracing::info!(name = %name, lifecycle = %lifecycle, "{}", crate::i18n::t("entity-loaded"));
-                // Persist lifecycle transition (e.g. new/stopped → running) to IPFS.
-                if node.lifecycle != lifecycle {
+                // Persist the initialized transition (false → true) to IPFS,
+                // in the background — never something a caller declares or
+                // manages by hand (see `EntityNode::initialized`'s doc comment).
+                if !node.initialized && lifecycle == crate::entity::Lifecycle::Running {
                     let mut updated = node.clone();
-                    updated.lifecycle = lifecycle;
+                    updated.initialized = true;
                     match kubo::dag_put(kubo_url, &updated).await {
                         Ok(new_cid) => {
                             tracing::debug!(name = %name, cid = %new_cid, "Updated entity lifecycle in IPFS");
@@ -555,11 +562,6 @@ pub async fn save_all_entity_states(
             }
         }
 
-        // Mark lifecycle = stopped on clean shutdown (only if it was running).
-        if entity_node.lifecycle == crate::entity::Lifecycle::Running {
-            entity_node.lifecycle = crate::entity::Lifecycle::Stopped;
-        }
-
         match kubo::dag_put(kubo_url, &entity_node).await {
             Ok(new_cid) => {
                 tracing::info!(name = %name, cid = %new_cid, "Updated entity node on shutdown");
@@ -588,4 +590,22 @@ pub async fn save_all_entity_states(
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::BootstrapYaml;
+
+    #[test]
+    fn example_yaml_parses() {
+        let raw = std::fs::read_to_string(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/bootstrap.example.yaml"),
+        )
+        .unwrap();
+        let yaml: BootstrapYaml = serde_yaml::from_str(&raw).expect("bootstrap.example.yaml must parse");
+        let kind = yaml
+            .runtime
+            .kinds
+            .get("/ma/scheme/actor/0.0.1")
+            .expect("/ma/scheme/actor/0.0.1 kind must be present");
+        assert_eq!(kind.behaviour.as_deref(), Some("/ma/scheme/actor/0.0.1"));
+        assert!(kind.cid.is_some());
+    }
+}

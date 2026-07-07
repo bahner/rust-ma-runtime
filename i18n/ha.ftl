@@ -83,6 +83,7 @@ config-key-not-manifest = maɓallin config '%key%' ba shi ne maɓallin manifest 
 wrong-crud-protocol = kuskuren CRUD protocol: %type%
 entity-name-invalid = sunan entity dole ne ya kasance UTF-8 da za a buga
 reserved-entity-name = sunan entity '%name%' ya keɓe
+genesis-kind-owner-only = Sai mai shi na runtime zai iya ƙirƙiri entity na nau'in genesis
 
 # IPv6 config
 ipv6-enabled = An kunna IPv6 — yana ɗaurewa IPv4 da IPv6

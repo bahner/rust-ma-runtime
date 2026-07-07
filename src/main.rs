@@ -1,4 +1,5 @@
 mod acl;
+mod behaviour;
 mod bootstrap;
 mod crud;
 mod entity;

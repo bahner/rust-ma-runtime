@@ -85,6 +85,7 @@ config-key-not-manifest = config key '%key%' nah known manifest config key
 wrong-crud-protocol = CRUD protocol nuh right: %type%
 entity-name-invalid = di entity name must be clean printable UTF-8
 reserved-entity-name = di entity name '%name%' ital, it reserved
+genesis-kind-owner-only = Only a runtime Owner can create a entity of a genesis kind
 
 # IPv6 config
 ipv6-enabled = IPv6 lively up — holdin both IPv4 an IPv6 inna oneness

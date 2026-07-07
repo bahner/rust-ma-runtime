@@ -83,6 +83,7 @@ config-key-not-manifest = cheia de config '%key%' nu este o cheie de manifest co
 wrong-crud-protocol = protocol CRUD greșit: %type%
 entity-name-invalid = numele entității trebuie să fie UTF-8 imprimabil
 reserved-entity-name = numele entității '%name%' este rezervat
+genesis-kind-owner-only = Doar un proprietar runtime poate crea un entity de tip genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 activat — leagă atât IPv4, cât și IPv6

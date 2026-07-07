@@ -83,6 +83,7 @@ config-key-not-manifest = config key '%key%' nuh known manifest config key
 wrong-crud-protocol = rong CRUD protokol: %type%
 entity-name-invalid = di entity name haffi be printable UTF-8
 reserved-entity-name = di entity name '%name%' reserved
+genesis-kind-owner-only = Ongle a runtime Owner can mek a entity a genesis kind
 
 # IPv6 config
 ipv6-enabled = IPv6 enable — a bind IPv4 an IPv6 baat

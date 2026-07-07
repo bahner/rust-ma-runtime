@@ -1,0 +1,32 @@
+# Generic "bring-your-own-compiled-actor" template for Python.
+#
+# Unlike avatar/house/room/root/counter/register/set (which each share ONE
+# published Wasm binary across every entity of the kind), this kind has NO
+# shared `cid` — every entity you create from it supplies its OWN,
+# independently compiled Wasm binary via `EntityNode.behaviour` (see
+# ma-runtime-v1.md §11.2/§14.1). `behaviour` here is raw Wasm bytes,
+# instantiated as-is — never interpreted as text (that's the ma-scheme
+# kind's job, /ma/scheme/actor/0.0.1).
+#
+# Copy this file, rename the protocol, and adjust attributes.stateful /
+# api / lifecycle / host_functions to match your own actor's exports.
+#
+# `attributes.stateful: true` example (adjust api/lifecycle/host_functions
+# to `false`/`[on_message]`/`[]`/`[ma_send, ma_reply]` for a stateless
+# actor instead):
+protocol: /ma/python/actor/0.0.1
+type: extism
+attributes:
+  wasi: true
+  stateful: true
+api:
+  - set_state
+  - do_start
+  - on_message
+lifecycle:
+  - set_state
+  - do_start
+host_functions:
+  - ma_reply
+  - ma_set_state
+  - ma_send

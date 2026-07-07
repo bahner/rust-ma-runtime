@@ -83,6 +83,7 @@ config-key-not-manifest = config-avain '%key%' ei ole tunnettu manifest config -
 wrong-crud-protocol = väärä CRUD-protokolla: %type%
 entity-name-invalid = entity-nimen täytyy olla tulostettavaa UTF-8
 reserved-entity-name = entity-nimi '%name%' on varattu
+genesis-kind-owner-only = Vain runtime-omistaja voi luoda genesis-tyyppisen entityn
 
 # IPv6 config
 ipv6-enabled = IPv6 käytössä — sitoo sekä IPv4:n että IPv6:n

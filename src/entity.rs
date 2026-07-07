@@ -163,8 +163,10 @@ pub struct LocalMessage {
     pub to: String,
     /// Unix epoch seconds.
     pub created_at: u64,
-    /// Expiry as Unix epoch seconds (0 = never expires).
-    pub expires: u64,
+    /// Expiry as Unix epoch seconds (0 = never expires). Field name matches
+    /// the canonical wire format (ma-messaging-format-v1.md §2, `exp`) and
+    /// `ma_core::Message.exp` exactly — not spelled out as `expires`.
+    pub exp: u64,
     pub reply_to: Option<String>,
     pub message_type: String,
     pub content_type: String,
@@ -188,16 +190,28 @@ pub enum PluginKind {
 }
 
 /// Plugin-facing message — the subset of `LocalMessage` that plugins
-/// actually use.  Excludes `created_at` and `expires` (epoch-second integers
-/// in the uint32 range) which trigger a broken `struct.unpack_from('>I',…)`
-/// code path in extism-py WASM builds and cause every `handle_call` to crash.
-/// Serde ignores unknown fields on deserialise, so existing WASMs that send
-/// the full `LocalMessage` map continue to work without rebuilding.
+/// actually use.
+///
+/// `created_at`/`exp` were historically excluded here (epoch-second
+/// integers in the uint32 range triggered a broken
+/// `struct.unpack_from('>I',…)` code path in **extism-py** WASM builds,
+/// crashing every `handle_call`). That was a Python-guest-specific bug —
+/// the reference Rust guest (`rust-ma-scheme-actor`, via `ciborium`) has no
+/// such issue, and ma-scheme-v1.md §4 requires `msg-created-at`/`msg-exp`
+/// accessors, so both fields are reinstated here. A Python plugin built
+/// against the old extism-py would need its own fix on that side before
+/// relying on these two fields again; unknown fields are otherwise ignored
+/// by serde on deserialise either way.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginMsg {
     pub id: String,
     pub from: String,
     pub to: String,
+    /// Unix epoch seconds.
+    pub created_at: u64,
+    /// Expiry as Unix epoch seconds (0 = never expires). Matches the wire
+    /// format's `exp` field name exactly.
+    pub exp: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
     pub message_type: String,
@@ -213,6 +227,8 @@ impl From<&LocalMessage> for PluginMsg {
             id: m.id.clone(),
             from: m.from.clone(),
             to: m.to.clone(),
+            created_at: m.created_at,
+            exp: m.exp,
             reply_to: m.reply_to.clone(),
             message_type: m.message_type.clone(),
             content_type: m.content_type.clone(),
@@ -223,9 +239,6 @@ impl From<&LocalMessage> for PluginMsg {
 
 /// Input passed (CBOR-encoded) to both `handle_cast` (stateless) and
 /// `handle_call` (stateful) exports.
-///
-/// Uses `PluginMsg` (no timestamps) so plugins never receive uint32 epoch
-/// values that crash cbor2's WASM decoder via `struct.unpack_from('>I',…)`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CastInput {
     pub msg: PluginMsg,
@@ -272,6 +285,17 @@ pub struct ReplyRequest {
 // ── IPLD schema types ─────────────────────────────────────────────────────────
 
 /// IPLD node representing a kind (Wasm ABI contract).
+///
+/// Every kind's Wasm module exports exactly two functions, always:
+/// `on_message` (incoming messages) and `on_signal` (every
+/// runtime-originated lifecycle event — `:set-state`/`:set-behaviour`/
+/// `:init`/`:start`/`:shutdown`, ma-scheme-v1.md §3). There is
+/// deliberately no field here declaring which exports a kind provides or
+/// which lifecycle stages it uses (an earlier draft had `api`/`lifecycle`
+/// fields for exactly that) — whether a given signal does anything for a
+/// given entity is determined purely by data availability (does state
+/// exist? does a behaviour reference exist? is this genesis?), never by
+/// anything a `KindNode` declares.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KindNode {
     pub protocol: String,
@@ -296,27 +320,14 @@ pub struct KindNode {
     /// Optional behaviour-dialect identifier (e.g. `/ma/scheme/actor/0.0.1`).
     /// Only meaningful when `cid` (above) is `Some` — it declares that this
     /// kind's entities each carry their own per-entity *interpreted source
-    /// text* in `EntityNode.behaviour`, resolved by the runtime according to
-    /// this dialect's rules and exposed to the plugin via the
-    /// `ma_get_behaviour`/`ma_get_behaviour_cid`/`ma_set_behaviour_cid` host
-    /// functions. Kinds with no per-entity scriptable behaviour (including
-    /// kinds with no shared `cid` at all) simply omit this field.
+    /// text* in `EntityNode.behaviour`, fetched by the runtime as a single,
+    /// flat blob (no scanning/composition of any kind) and passed to
+    /// `set_behaviour`. Composition (e.g. ma-scheme's `ma-include-ipfs`) is
+    /// entirely the dialect's own concern, via `ma_ipfs_include` — see
+    /// `crate::behaviour`. Kinds with no per-entity scriptable behaviour
+    /// (including kinds with no shared `cid` at all) simply omit this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub behaviour: Option<String>,
-    /// Full list of every Wasm export this kind's plugin provides (e.g.
-    /// `[set_state, do_start, on_message, do_shutdown]`). `on_message` is
-    /// always mandatory; everything else is read from this list.
-    pub api: Vec<String>,
-    /// Ordered **sub-list of `api`** naming just the load-time stages this
-    /// kind uses, drawn from `set_state`/`set_behaviour`/`do_init`/
-    /// `do_start` (never `on_message` or `do_shutdown` — those are handled
-    /// separately, not part of the ordered load sequence). The runtime
-    /// always drives these in the fixed canonical order regardless of the
-    /// order listed here; this field only controls *membership* (which
-    /// stages apply to this kind), not sequencing. Every entry here MUST
-    /// also appear in `api`.
-    #[serde(default)]
-    pub lifecycle: Vec<String>,
     /// Host functions the runtime makes available to plugins of this kind.
     /// Principle of least privilege: only register what the kind actually needs.
     pub host_functions: Vec<String>,
@@ -372,33 +383,31 @@ pub fn new_kind_registry() -> KindRegistry {
 
 /// Entity fragment names reserved by the runtime system.
 /// These names cannot be used as entity names.
-pub const RESERVED_ENTITY_NAMES: &[&str] = &["root", "acl", "scheduler", "runtime"];
+/// `genesis` is reserved for the one-time, owner-only `:genesis` RPC verb
+/// (rpc.rs) — ordinary CRUD upsert must never create or overwrite it;
+/// other entities of a genesis-attribute kind may still be created under
+/// other names via CRUD/`ma_create_entity`.
+pub const RESERVED_ENTITY_NAMES: &[&str] = &["root", "acl", "scheduler", "runtime", "genesis"];
 
-/// Lifecycle state of an entity, persisted in [`EntityNode`].
-///
-/// | State | Meaning |
-/// |-------|---------|
-/// | `new` | Created but `init()` not yet completed |
-/// | `running` | `init()` completed OK — normal dispatch |
-/// | `error` | `init()` failed on restart — plugin still dispatchable for `:debug`/`:dump` |
-/// | `stopped` | Clean shutdown via runtime signal |
+/// Outcome of a plugin load — **not** persisted anywhere. Purely the
+/// transient result `EntityPlugin::load` hands back to its caller so it
+/// knows whether to keep the loaded entity or discard/report it (e.g.
+/// `ma_create_entity` discards a brand-new entity whose `:init` signal
+/// returned `[:error, …]`). Genesis-ness itself is tracked in the
+/// background via `EntityNode.initialized` (below) — never via this type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Lifecycle {
-    New,
     #[default]
     Running,
     Error,
-    Stopped,
 }
 
 impl std::fmt::Display for Lifecycle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::New => write!(f, "new"),
             Self::Running => write!(f, "running"),
             Self::Error => write!(f, "error"),
-            Self::Stopped => write!(f, "stopped"),
         }
     }
 }
@@ -447,10 +456,64 @@ pub struct EntityNode {
     /// Human-readable label for display purposes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// Lifecycle state: `New` until first successful genesis load
-    /// (`set_state`/`set_behaviour`/`do_init`/`do_start`), then `Running`.
+    /// Entity-level attribute overrides — merged over `KindNode.attributes`
+    /// at read time (entity wins on key collision), never persisted
+    /// merged. Lets a single generic kind (e.g. `/ma/scheme/actor/0.0.1`)
+    /// serve special-purpose entities without a dedicated kind
+    /// registration — e.g. `{"genesis": true}` marks this entity as a
+    /// tree root: creating it requires an owner and forces `parent` to
+    /// `None`, regardless of what the kind itself declares. See
+    /// [`effective_attribute`].
     #[serde(default)]
-    pub lifecycle: Lifecycle,
+    pub attributes: BTreeMap<String, serde_json::Value>,
+    /// Opaque, persisted creation payload — raw ma-scheme source text,
+    /// evaluated verbatim via the `:init` signal on this entity's very
+    /// first load only (gated by `initialized`, not by this field's
+    /// presence). Unlike `CreateEntityRequest.init_payload` (the
+    /// `ma_create_entity`/`ma-create-actor` transient argument), this is
+    /// part of the entity's own published document, so entities created
+    /// directly via CRUD/bootstrap (which have no calling actor to supply
+    /// a transient payload) can still seed instance-specific data. Left
+    /// in place after use — harmless, since `:init` only ever fires once
+    /// regardless of whether this field is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub init: Option<String>,
+    /// Whether this entity has ever completed a successful genesis load
+    /// (the `:set-state`/`:set-behaviour`/`:init`/`:start` signal
+    /// sequence, all delivered through `on_signal`). Defaults to `false`
+    /// — never something a caller needs to declare when authoring an
+    /// `EntityNode`; omitting it entirely means "brand new", which is
+    /// exactly the common case. The runtime flips it to `true` and
+    /// republishes the node itself, in the background, immediately after
+    /// a successful genesis load — never something a caller manages by
+    /// hand. Not a status/history field: once `true` it never reverts
+    /// (there is no `Stopped`/`Error` tracked here) — that information is
+    /// purely transient, see [`Lifecycle`].
+    #[serde(default)]
+    pub initialized: bool,
+}
+
+/// Read attribute `key`, checking `entity.attributes` first and falling
+/// back to `kind.attributes` — the entity-over-kind override mechanism
+/// described on [`EntityNode::attributes`]. Neither map is mutated; the
+/// merge happens only at read time.
+pub fn effective_attribute<'a>(
+    kind: &'a KindNode,
+    entity: &'a EntityNode,
+    key: &str,
+) -> Option<&'a serde_json::Value> {
+    entity.attributes.get(key).or_else(|| kind.attributes.get(key))
+}
+
+/// Whether `entity` (of `kind`) is marked as a genesis/tree-root entity —
+/// `true` if either the entity or its kind declares `"genesis": true`
+/// (entity wins on conflict). Genesis entities require an owner to create
+/// and always get `parent: None`, enforced at CRUD upsert time
+/// (`crud/entities.rs`) regardless of what the caller supplied.
+pub fn is_genesis_entity(kind: &KindNode, entity: &EntityNode) -> bool {
+    effective_attribute(kind, entity, "genesis")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// Root IPLD node for this runtime.
@@ -524,8 +587,9 @@ pub struct CreateEntityRequest {
     /// Optional per-entity behaviour source CID — becomes `EntityNode.behaviour`.
     /// Only meaningful for kinds that declare `KindNode.behaviour`.
     pub behaviour_cid: Option<String>,
-    /// Optional, opaque creation payload passed verbatim to `do_init` on this
-    /// entity's very first load. Not persisted — discarded after that call.
+    /// Optional, opaque creation payload passed verbatim via the `:init`
+    /// signal on this entity's very first load. Not persisted — discarded
+    /// after that call.
     pub init_payload: Option<Vec<u8>>,
     /// Fragment of the creating (parent) entity.
     pub parent: String,
@@ -533,8 +597,11 @@ pub struct CreateEntityRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::{EntityNode, IpldLink, KindTree};
+    use super::{
+        effective_attribute, is_genesis_entity, EntityNode, Evaluator, IpldLink, KindNode,
+        KindTree,
+    };
+    use std::collections::BTreeMap;
 
     #[test]
     fn kind_tree_nested_serialization() {
@@ -590,7 +657,9 @@ mod tests {
             state: None,
             parent: None,
             label: None,
-            lifecycle: Lifecycle::default(),
+            attributes: BTreeMap::new(),
+            init: None,
+            initialized: false,
         };
 
         let value = serde_json::to_value(&node).expect("serialize entity node");
@@ -611,13 +680,113 @@ mod tests {
             state: None,
             parent: None,
             label: None,
-            lifecycle: Lifecycle::default(),
+            attributes: BTreeMap::new(),
+            init: None,
+            initialized: false,
         };
         let value = serde_json::to_value(&node).expect("serialize entity node");
         assert!(
             value.get("acl").is_some(),
             "acl must always be present in serialized form"
         );
+    }
+
+    fn plain_kind_node() -> KindNode {
+        KindNode {
+            protocol: "/ma/test/0.0.1".to_string(),
+            cid: None,
+            kind_type: Evaluator::Extism,
+            behaviour: None,
+            host_functions: vec![],
+            attributes: BTreeMap::new(),
+            allow: vec![],
+        }
+    }
+
+    fn plain_entity_node() -> EntityNode {
+        EntityNode {
+            kind: "/ma/test/0.0.1".to_string(),
+            behaviour: None,
+            acl: String::new(),
+            state: None,
+            parent: None,
+            label: None,
+            attributes: BTreeMap::new(),
+            init: None,
+            initialized: false,
+        }
+    }
+
+    #[test]
+    fn effective_attribute_falls_back_to_kind_when_entity_absent() {
+        let mut kind = plain_kind_node();
+        kind.attributes
+            .insert("genesis".to_string(), serde_json::Value::Bool(true));
+        let entity = plain_entity_node();
+        assert_eq!(
+            effective_attribute(&kind, &entity, "genesis"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn effective_attribute_entity_overrides_kind() {
+        let mut kind = plain_kind_node();
+        kind.attributes
+            .insert("genesis".to_string(), serde_json::Value::Bool(false));
+        let mut entity = plain_entity_node();
+        entity
+            .attributes
+            .insert("genesis".to_string(), serde_json::Value::Bool(true));
+        assert_eq!(
+            effective_attribute(&kind, &entity, "genesis"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn effective_attribute_absent_on_both_is_none() {
+        let kind = plain_kind_node();
+        let entity = plain_entity_node();
+        assert_eq!(effective_attribute(&kind, &entity, "genesis"), None);
+    }
+
+    #[test]
+    fn is_genesis_entity_true_via_kind_attribute() {
+        let mut kind = plain_kind_node();
+        kind.attributes
+            .insert("genesis".to_string(), serde_json::Value::Bool(true));
+        let entity = plain_entity_node();
+        assert!(is_genesis_entity(&kind, &entity));
+    }
+
+    #[test]
+    fn is_genesis_entity_true_via_entity_attribute_overriding_generic_kind() {
+        let kind = plain_kind_node();
+        let mut entity = plain_entity_node();
+        entity
+            .attributes
+            .insert("genesis".to_string(), serde_json::Value::Bool(true));
+        assert!(is_genesis_entity(&kind, &entity));
+    }
+
+    #[test]
+    fn is_genesis_entity_false_by_default() {
+        let kind = plain_kind_node();
+        let entity = plain_entity_node();
+        assert!(!is_genesis_entity(&kind, &entity));
+    }
+
+    #[test]
+    fn is_genesis_entity_entity_can_override_kind_to_false() {
+        let mut kind = plain_kind_node();
+        kind.attributes
+            .insert("genesis".to_string(), serde_json::Value::Bool(true));
+        let mut entity = plain_entity_node();
+        entity
+            .attributes
+            .insert("genesis".to_string(), serde_json::Value::Bool(false));
+        assert!(!is_genesis_entity(&kind, &entity));
     }
 
     #[test]

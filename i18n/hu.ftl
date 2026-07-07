@@ -83,6 +83,7 @@ config-key-not-manifest = a '%key%' config kulcs nem ismert manifest config kulc
 wrong-crud-protocol = helytelen CRUD protokoll: %type%
 entity-name-invalid = az entity neve nyomtatható UTF-8 legyen
 reserved-entity-name = az entity neve '%name%' foglalt
+genesis-kind-owner-only = Genesis típusú entity-t csak a runtime tulajdonosa hozhat létre
 
 # IPv6 config
 ipv6-enabled = IPv6 engedélyezve — IPv4 és IPv6 egyaránt kötve

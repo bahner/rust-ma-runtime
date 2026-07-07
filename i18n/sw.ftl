@@ -83,6 +83,7 @@ config-key-not-manifest = funguo ya config '%key%' si funguo inayojulikana ya ma
 wrong-crud-protocol = itifaki mbaya ya CRUD: %type%
 entity-name-invalid = jina la entity lazima liwe UTF-8 linaloweza kuchapishwa
 reserved-entity-name = jina la entity '%name%' limehifadhiwa
+genesis-kind-owner-only = Ni mmiliki wa runtime pekee anayeweza kuunda entity ya aina ya genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 imewezeshwa — inaunganisha IPv4 na IPv6 zote mbili

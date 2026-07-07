@@ -83,6 +83,7 @@ config-key-not-manifest = stillingarlykillinn '%key%' er ekki þekktur manifest-
 wrong-crud-protocol = rangur CRUD-samskiptaregla: %type%
 entity-name-invalid = entity-nafnið verður að vera prentanlegt UTF-8
 reserved-entity-name = entity-nafnið '%name%' er frátekið
+genesis-kind-owner-only = Aðeins eigandi runtime má búa til entity af tegundinni genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 virkjað — bindar bæði IPv4 og IPv6

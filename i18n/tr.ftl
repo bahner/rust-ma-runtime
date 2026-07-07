@@ -83,6 +83,7 @@ config-key-not-manifest = config anahtarı '%key%' bilinen bir manifest config a
 wrong-crud-protocol = yanlış CRUD protokolü: %type%
 entity-name-invalid = entity adı yazdırılabilir UTF-8 olmalıdır
 reserved-entity-name = entity adı '%name%' ayrılmıştır
+genesis-kind-owner-only = Yalnızca runtime sahibi genesis türünde bir entity oluşturabilir
 
 # IPv6 config
 ipv6-enabled = IPv6 etkin — hem IPv4 hem de IPv6 üzerinde dinleniyor

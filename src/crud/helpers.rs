@@ -6,7 +6,7 @@ use ma_core::{
     Did, DidDocumentResolver, IpfsGatewayResolver, Ipld, CONTENT_TYPE_TERM, CONTENT_TYPE_TERM_CBOR,
     CONTENT_TYPE_TERM_DAG_CBOR, CONTENT_TYPE_TERM_YAML,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::entity::{EntityNode, KindNode, RuntimeManifest};
 
@@ -146,6 +146,13 @@ pub(super) async fn acl_cache_update(ctx: &CrudHandlerCtx, cache_key: &str, cid:
 ///
 /// Returns immediately — the reload happens asynchronously so the CRUD event
 /// loop is never blocked by WASM fetching, instantiation, or `init()`.
+///
+/// Mirrors `bootstrap::load_entities`'s lifecycle-persistence step: if the
+/// load transitions `lifecycle` (typically `new` → `running` on first
+/// genesis), the updated `EntityNode` is republished to IPFS and the
+/// manifest is updated to point at the new CID — otherwise a later daemon
+/// restart would re-read the stale `lifecycle: new` node and incorrectly
+/// re-fire the `:init` signal a second time.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_entity_reload(
     name: String,
@@ -157,6 +164,7 @@ pub(super) fn spawn_entity_reload(
     envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, crate::entity::SendEnvelope)>,
     entity_registry: crate::plugin::EntityRegistry,
     avatar_key: [u8; 32],
+    manifest_writer: crate::manifest::ManifestWriter,
 ) {
     tokio::spawn(async move {
         // Look up the KindNode from the kind registry.
@@ -205,6 +213,7 @@ pub(super) fn spawn_entity_reload(
             (s.endpoint_id.clone(), s.started_at)
         };
 
+        let init_payload = entity_node.init.as_ref().map(|s| s.as_bytes().to_vec());
         match crate::plugin::EntityPlugin::load(
             name.clone(),
             &entity_node,
@@ -216,16 +225,50 @@ pub(super) fn spawn_entity_reload(
             avatar_key,
             &iroh_node_id,
             started_at,
-            None, // reload after CRUD upsert, not a fresh creation
+            init_payload, // EntityNode.init (§ genesis-via-CRUD), only fires if genesis
         )
         .await
         {
-            Ok((ep, _lifecycle)) => {
+            Ok((ep, lifecycle)) => {
                 entity_registry
                     .write()
                     .await
                     .insert(name.clone(), Arc::new(ep));
-                info!(name = %name, "{}", crate::i18n::t("entity-reloaded"));
+                info!(name = %name, lifecycle = %lifecycle, "{}", crate::i18n::t("entity-reloaded"));
+                // Persist the initialized transition (false → true) to IPFS,
+                // exactly like bootstrap::load_entities does at startup —
+                // otherwise a later daemon restart re-reads the stale
+                // `initialized: false` node and incorrectly re-fires `:init`.
+                if !entity_node.initialized && lifecycle == crate::entity::Lifecycle::Running {
+                    let mut updated = entity_node.clone();
+                    updated.initialized = true;
+                    match crate::kubo::dag_put(&kubo_rpc_url, &updated).await {
+                        Ok(new_cid) => {
+                            let name_for_mutation = name.clone();
+                            let new_cid_for_mutation = new_cid.clone();
+                            match manifest_writer
+                                .mutate(move |m| {
+                                    m.entities.insert(
+                                        name_for_mutation,
+                                        crate::entity::IpldLink::new(new_cid_for_mutation),
+                                    );
+                                    Ok(())
+                                })
+                                .await
+                            {
+                                Ok(root_cid) => {
+                                    debug!(name = %name, cid = %new_cid, root_cid = %root_cid, "updated entity lifecycle in manifest");
+                                }
+                                Err(e) => {
+                                    warn!(name = %name, error = %e, "failed to update manifest with new entity lifecycle CID");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!(name = %name, error = %e, "failed to persist updated entity lifecycle to IPFS");
+                        }
+                    }
+                }
             }
             Err(e) => {
                 warn!(

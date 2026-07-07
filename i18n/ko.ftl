@@ -83,6 +83,7 @@ config-key-not-manifest = config 키 '%key%'은 알려진 manifest config 키가
 wrong-crud-protocol = 잘못된 CRUD 프로토콜: %type%
 entity-name-invalid = entity 이름은 출력 가능한 UTF-8이어야 합니다
 reserved-entity-name = entity 이름 '%name%'은 예약되어 있습니다
+genesis-kind-owner-only = genesis 종류의 entity는 runtime 소유자만 생성할 수 있습니다
 
 # IPv6 config
 ipv6-enabled = IPv6 활성화됨 — IPv4 및 IPv6 모두 바인딩 중

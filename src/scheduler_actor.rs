@@ -38,7 +38,7 @@ use anyhow::{anyhow, Result};
 use ciborium::Value as CborValue;
 use tracing::warn;
 
-use crate::entity::{CastInput, EntityNode, Lifecycle};
+use crate::entity::{CastInput, EntityNode};
 use crate::plugin::{DispatchResult, NativeDispatch};
 use crate::schedule::{parse_duration, register_schedule, ScheduleRequest, SchedulerCtx};
 
@@ -57,7 +57,8 @@ pub const SCHEDULER_ACL: &str = "scheduler";
 /// Build the [`EntityNode`] for `#scheduler`.
 ///
 /// `behaviour` is `None` — native entities have no Wasm.
-/// The lifecycle starts as `Running`; `new_native()` sets this immediately.
+/// `initialized: true` — native entities have no genesis `:init` signal to
+/// fire (see `EntityPlugin::new_native`), so there is nothing to gate.
 pub fn entity_node() -> EntityNode {
     EntityNode {
         kind: SCHEDULER_KIND.to_string(),
@@ -66,7 +67,9 @@ pub fn entity_node() -> EntityNode {
         state: None,
         parent: None,
         label: Some("Scheduler".to_string()),
-        lifecycle: Lifecycle::Running,
+        attributes: std::collections::BTreeMap::new(),
+        init: None,
+        initialized: true,
     }
 }
 
@@ -106,7 +109,6 @@ pub fn make_native_dispatch(
         Ok(DispatchResult {
             output: out,
             pending_state: None,
-            pending_behaviour_cid: None,
             create_requests: vec![],
             delete_requests: vec![],
         })

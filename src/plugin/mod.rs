@@ -83,9 +83,6 @@ pub struct DispatchResult {
     /// State bytes queued by the plugin via `ma_set_state` host function.
     /// `None` if the plugin did not call `ma_set_state` during this invocation.
     pub pending_state: Option<Vec<u8>>,
-    /// New behaviour reference (single CID) queued by the plugin via
-    /// `ma_set_behaviour_cid` during this invocation, if any.
-    pub pending_behaviour_cid: Option<String>,
     /// Entity creation requests enqueued via `ma_create_entity` host function.
     pub create_requests: Vec<CreateEntityRequest>,
     /// Entity deletion requests enqueued via `ma_delete_entity` host function.
@@ -176,21 +173,22 @@ impl EntityPlugin {
     }
 
     /// Load a Wasm plugin from IPFS, spawn its worker thread, and drive it
-    /// through the applicable lifecycle stages (`set_state`/`set_behaviour`/
-    /// `do_init`/`do_start`) in order.
+    /// through the applicable lifecycle signals (`:set-state`/
+    /// `:set-behaviour`/`:init`/`:start`) via the single `on_signal` export,
+    /// in order.
     ///
     /// The Wasm `Plugin` is created and driven entirely on the dedicated worker
     /// thread — it never crosses a thread boundary — so no `unsafe impl Send`
     /// is required and no Tokio worker is ever blocked by a Wasm call.
     ///
-    /// `init_payload` is the opaque creation payload for `do_init` (§14.2.1);
-    /// pass `None` for an ordinary reload (bootstrap/restart) of an
-    /// already-existing entity. It is only meaningful when `node.lifecycle`
-    /// is [`Lifecycle::New`] (this entity's very first load) — a kind
-    /// exporting `do_init` receives it exactly once, ever, for a given entity.
+    /// `init_payload` is the opaque creation payload for the `:init` signal
+    /// (§14.2.1); pass `None` for an ordinary reload (bootstrap/restart) of
+    /// an already-existing entity. It is only meaningful when
+    /// `node.initialized` is `false` (this entity's very first load) —
+    /// `:init` fires exactly once, ever, for a given entity.
     ///
     /// Returns `(handle, Lifecycle::Running)` on success, or
-    /// `(handle, Lifecycle::Error)` if `do_init` returned `[:error, …]` (the
+    /// `(handle, Lifecycle::Error)` if `:init` returned `[:error, …]` (the
     /// entity is still dispatchable for debugging).
     /// Returns `Err` for fatal errors (Wasm fetch / plugin instantiation), or
     /// when `kind_node.kind_type == Evaluator::Native` (use
@@ -243,14 +241,21 @@ impl EntityPlugin {
                 .with_context(|| format!("fetching wasm for '{fragment}' from {wasm_cid}"))?;
 
             // If this kind declares a behaviour dialect and the entity
-            // carries its own behaviour source reference, resolve it to
-            // plain text for `set_behaviour`.
+            // carries its own behaviour source reference, fetch it as
+            // plain text for `set_behaviour` — a single, flat fetch, no
+            // recursion/directive scanning of any kind (that is entirely
+            // a ma-scheme-level concern now, handled by the dialect's own
+            // `ma-include-ipfs`, ma-scheme-v1.md §11.1).
             let entity_behaviour_cid = node.behaviour.as_ref().map(|l| l.cid.clone());
             let behaviour_text: Option<Vec<u8>> = if kind_node.behaviour.is_some() {
                 match &entity_behaviour_cid {
-                    Some(cid) => Some(cat_bytes(kubo_url, cid).await.with_context(|| {
-                        format!("fetching behaviour for '{fragment}' from {cid}")
-                    })?),
+                    Some(cid) => Some(
+                        crate::behaviour::fetch_behaviour(kubo_url, cid)
+                            .await
+                            .with_context(|| {
+                                format!("fetching behaviour for '{fragment}' from {cid}")
+                            })?,
+                    ),
                     None => None,
                 }
             } else {
@@ -285,7 +290,7 @@ impl EntityPlugin {
             Vec::new()
         };
 
-        let is_genesis = node.lifecycle == Lifecycle::New;
+        let is_genesis = !node.initialized;
 
         // Assemble all Send-able data the worker thread needs.  The Wasm
         // Plugin and its host Functions are built *on* the thread.
@@ -296,11 +301,6 @@ impl EntityPlugin {
             init_state,
             wasi,
             host_functions: kind_node.host_functions.clone(),
-            has_set_state: kind_node.lifecycle.iter().any(|s| s == "set_state"),
-            has_set_behaviour: kind_node.lifecycle.iter().any(|s| s == "set_behaviour"),
-            has_do_init: kind_node.lifecycle.iter().any(|s| s == "do_init"),
-            has_do_start: kind_node.lifecycle.iter().any(|s| s == "do_start"),
-            has_do_shutdown: kind_node.api.iter().any(|s| s == "do_shutdown"),
             is_genesis,
             init_payload,
             behaviour_text,
@@ -466,11 +466,26 @@ mod hostile {
 
     use super::{new_entity_registry, EntityPlugin};
 
-    /// A module whose every export spins forever.
+    /// A module whose every export spins forever — used to prove that an
+    /// infinite loop in `on_signal` (fired unconditionally at load time for
+    /// the `:start` signal) fails within the timeout bound instead of
+    /// hanging the load.
     const EVIL_WAT: &str = r#"
         (module
           (func $spin (result i32) (loop $l (br $l)) (i32.const 0))
-          (export "do_start" (func $spin))
+          (export "on_signal" (func $spin))
+          (export "on_message" (func $spin)))
+    "#;
+
+    /// A module whose `on_signal` returns immediately but whose
+    /// `on_message` spins forever — used to prove that a load succeeds
+    /// (since `on_signal` is fast) while dispatches to that entity hang in
+    /// isolation, without affecting any other entity.
+    const EVIL_ON_MESSAGE_ONLY_WAT: &str = r#"
+        (module
+          (func $ok (result i32) (i32.const 0))
+          (func $spin (result i32) (loop $l (br $l)) (i32.const 0))
+          (export "on_signal" (func $ok))
           (export "on_message" (func $spin)))
     "#;
 
@@ -478,26 +493,19 @@ mod hostile {
     const GOOD_WAT: &str = r#"
         (module
           (func $ok (result i32) (i32.const 0))
+          (export "on_signal" (func $ok))
           (export "on_message" (func $ok)))
     "#;
 
-    fn kind_node(api: &[&str], wasm_cid: &str) -> KindNode {
+    fn kind_node(wasm_cid: &str) -> KindNode {
         let mut attributes = BTreeMap::new();
         attributes.insert("stateful".to_string(), serde_json::Value::Bool(true));
         attributes.insert("wasi".to_string(), serde_json::Value::Bool(false));
-        const STAGES: &[&str] = &["set_state", "set_behaviour", "do_init", "do_start"];
-        let lifecycle = api
-            .iter()
-            .filter(|s| STAGES.contains(s))
-            .map(ToString::to_string)
-            .collect();
         KindNode {
             protocol: "/ma/test/0.0.1".to_string(),
             cid: Some(IpldLink::new(wasm_cid)),
             kind_type: Evaluator::Extism,
             behaviour: None,
-            api: api.iter().map(ToString::to_string).collect(),
-            lifecycle,
             host_functions: vec![],
             attributes,
             allow: vec![],
@@ -512,7 +520,9 @@ mod hostile {
             state: None,
             parent: None,
             label: None,
-            lifecycle: Lifecycle::New,
+            attributes: BTreeMap::new(),
+            init: None,
+            initialized: false,
         }
     }
 
@@ -524,6 +534,8 @@ mod hostile {
                 id: id.to_string(),
                 from: "did:ma:tester".to_string(),
                 to: "did:ma:testrunner#x".to_string(),
+                created_at: 0,
+                exp: 0,
                 reply_to: None,
                 message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),
                 content_type: "application/x-ma-term".to_string(),
@@ -536,14 +548,13 @@ mod hostile {
         kubo_url: &str,
         fragment: &str,
         cid: &str,
-        api: &[&str],
         envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, SendEnvelope)>,
         registry: super::EntityRegistry,
     ) -> anyhow::Result<(EntityPlugin, Lifecycle)> {
         EntityPlugin::load(
             fragment,
             &entity_node(),
-            &kind_node(api, cid),
+            &kind_node(cid),
             "did:ma:testrunner",
             kubo_url,
             envelope_tx,
@@ -568,6 +579,9 @@ mod hostile {
         let registry = new_entity_registry();
 
         let evil_cid = kubo.add_bytes(wat::parse_str(EVIL_WAT).unwrap()).await;
+        let evil_message_cid = kubo
+            .add_bytes(wat::parse_str(EVIL_ON_MESSAGE_ONLY_WAT).unwrap())
+            .await;
         let good_cid = kubo.add_bytes(wat::parse_str(GOOD_WAT).unwrap()).await;
         let garbage_cid = kubo.add_bytes(b"this is not wasm at all".to_vec()).await;
 
@@ -577,7 +591,6 @@ mod hostile {
             kubo.url(),
             "garbage",
             &garbage_cid,
-            &["on_message"],
             envelope_tx.clone(),
             registry.clone(),
         )
@@ -589,41 +602,40 @@ mod hostile {
             t.elapsed()
         );
 
-        // ── 2. Infinite loop in do_start(): load fails within the bound. ────
+        // ── 2. Infinite loop in on_signal(:start): load fails within the
+        //       bound. `:start` fires unconditionally on every load. ────────
         let t = Instant::now();
         let res = load(
             kubo.url(),
             "evil-init",
             &evil_cid,
-            &["do_start", "on_message"],
             envelope_tx.clone(),
             registry.clone(),
         )
         .await;
-        assert!(res.is_err(), "infinite do_start must fail, not hang");
+        assert!(res.is_err(), "infinite on_signal(:start) must fail, not hang");
         assert!(
             t.elapsed() < Duration::from_secs(10),
-            "infinite do_start not bounded: {:?}",
+            "infinite on_signal(:start) not bounded: {:?}",
             t.elapsed()
         );
 
-        // ── 3. Infinite loop in on_message: dispatch errors within the
-        //       bound, and a healthy entity is fully responsive meanwhile. ────
+        // ── 3. Infinite loop in on_message only: load succeeds quickly
+        //       (on_signal is fast), dispatch errors within the bound, and a
+        //       healthy entity is fully responsive meanwhile. ────────────────
         let (evil, _) = load(
             kubo.url(),
             "evil",
-            &evil_cid,
-            &["on_message"], // no do_start → load succeeds
+            &evil_message_cid,
             envelope_tx.clone(),
             registry.clone(),
         )
         .await
-        .expect("evil load (no do_start) should succeed");
+        .expect("evil load (fast on_signal, spinning on_message) should succeed");
         let (good, _) = load(
             kubo.url(),
             "good",
             &good_cid,
-            &["on_message"],
             envelope_tx.clone(),
             registry.clone(),
         )
@@ -677,7 +689,6 @@ mod hostile {
             kubo.url(),
             "evil",
             &good_cid, // "fixed" version
-            &["on_message"],
             envelope_tx.clone(),
             registry.clone(),
         )
@@ -728,8 +739,6 @@ mod wasm_repro {
             cid: Some(IpldLink::new(&cid)),
             kind_type: Evaluator::Extism,
             behaviour: None,
-            api: vec!["do_start".to_string(), "on_message".to_string()],
-            lifecycle: vec!["do_start".to_string()],
             host_functions: vec![
                 "ma_reply".to_string(),
                 "ma_set_state".to_string(),
@@ -746,7 +755,9 @@ mod wasm_repro {
             state: None,
             parent: None,
             label: Some("Test Room".to_string()),
-            lifecycle: Lifecycle::New,
+            attributes: BTreeMap::new(),
+            init: None,
+            initialized: false,
         };
 
         let (envelope_tx, mut envelope_rx) =
@@ -781,6 +792,8 @@ mod wasm_repro {
                 from: "did:ma:k51qzi5uqu5dlgh2drt9od7f7fmfe1u6rf5j2s2acfp9olltfx51oqhnl048xm"
                     .to_string(),
                 to: "did:ma:testrunner#room".to_string(),
+                created_at: 0,
+                exp: 0,
                 reply_to: None,
                 message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),
                 content_type: "application/x-ma-term".to_string(),
@@ -824,8 +837,6 @@ mod wasm_repro {
             cid: Some(IpldLink::new(&cid)),
             kind_type: Evaluator::Extism,
             behaviour: None,
-            api: vec!["do_start".to_string(), "on_message".to_string()],
-            lifecycle: vec!["do_start".to_string()],
             host_functions: vec![
                 "ma_reply".to_string(),
                 "ma_set_state".to_string(),
@@ -842,7 +853,9 @@ mod wasm_repro {
             state: None,
             parent: None,
             label: Some("Test Room".to_string()),
-            lifecycle: Lifecycle::New,
+            attributes: BTreeMap::new(),
+            init: None,
+            initialized: false,
         };
 
         let (envelope_tx, mut envelope_rx) =
@@ -880,6 +893,8 @@ mod wasm_repro {
                 from: "did:ma:k51qzi5uqu5dlgh2drt9od7f7fmfe1u6rf5j2s2acfp9olltfx51oqhnl048xm"
                     .to_string(),
                 to: "did:ma:testrunner#room".to_string(),
+                created_at: 0,
+                exp: 0,
                 reply_to: None,
                 message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),
                 content_type: "application/x-ma-term".to_string(),
@@ -941,4 +956,155 @@ mod wasm_repro {
         .expect("BUG REPRODUCED: second dispatch to reloaded entity hung")
         .expect("second post-reload dispatch failed");
     }
+
+    /// End-to-end proof that the reference `/ma/scheme/actor/0.0.1` host
+    /// (`rust-ma-scheme-actor`) builds, publishes, and loads correctly
+    /// through the real six-stage lifecycle (ma-scheme-v1.md §3), and that
+    /// real `ma-include-ipfs` library composition (ma-scheme-v1.md §11.1,
+    /// via the real `ma_ipfs_include` host function, ma-runtime-v1.md
+    /// §14.2.2) works against a real Kubo daemon — not just the
+    /// `include.rs`/`behaviour.rs` unit tests, which use fakes/mocks.
+    ///
+    /// Fixtures: `rust-ma-scheme-actor/tests/fixtures/{helper,main}.ma`.
+    /// `main.ma` composes `helper.ma` via a genuine top-level
+    /// `(ma-include-ipfs #!/ipfs/<cid>)` form (not hand-spliced text) and
+    /// defines `on-signal` and `on-message` using only core builtins and the
+    /// unprefixed props primitives (§9) — no other `ma-`-prefixed
+    /// (host-crossing) primitive is used, since Phase 5
+    /// (messaging/behaviour management/logging) isn't otherwise
+    /// implemented yet.
+    ///
+    /// Regenerate the default CIDs below with (from `rust-ma-scheme-actor`):
+    /// ```sh
+    /// make actor.wasm
+    /// ipfs add --quieter actor.wasm                  # -> SCHEME_ACTOR_WASM_CID
+    /// ipfs add --quieter tests/fixtures/helper.ma     # -> spliced into main.ma below
+    /// # update the (ma-include-ipfs #!/ipfs/<cid>) reference in main.ma
+    /// # with the helper CID printed above, then:
+    /// ipfs add --quieter tests/fixtures/main.ma       # -> SCHEME_ACTOR_BEHAVIOUR_CID
+    /// ```
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "requires local Kubo with the ma-scheme-actor fixture CIDs"]
+    async fn dispatch_scheme_actor() {
+        let wasm_cid = std::env::var("SCHEME_ACTOR_WASM_CID").unwrap_or_else(|_| {
+            "bafkreie35ubx3zapzthdsjnjdu4yepufnrzyczlwn66fgxsws3npjnknqm".into()
+        });
+        let behaviour_cid = std::env::var("SCHEME_ACTOR_BEHAVIOUR_CID").unwrap_or_else(|_| {
+            "bafkreiflpjnofoe4e5oln5cixpub6xkrzsweeqtjxwut6p7iblkbrq62cm".into()
+        });
+        let kubo = "http://127.0.0.1:5001";
+
+        let mut attributes = BTreeMap::new();
+        attributes.insert("stateful".to_string(), serde_json::Value::Bool(true));
+        attributes.insert("wasi".to_string(), serde_json::Value::Bool(false));
+
+        let kind_node = KindNode {
+            protocol: "/ma/scheme/actor/0.0.1".to_string(),
+            cid: Some(IpldLink::new(&wasm_cid)),
+            kind_type: Evaluator::Extism,
+            behaviour: Some("/ma/scheme/actor/0.0.1".to_string()),
+            // Conformance (ma-scheme-v1.md §16) requires at least these
+            // three, plus ma_ipfs_include for kinds whose scripts may use
+            // ma-include-ipfs (§11.1) -- this fixture's main.ma does. There
+            // is deliberately no ma_get_behaviour/ma_get_behaviour_cid/
+            // ma_set_behaviour_cid -- removed from the spec entirely.
+            // ma_create_entity is also mandatory here: `new_full_env`
+            // unconditionally installs `ma-create-actor`, which the
+            // compiled actor.wasm binary imports unconditionally too (a
+            // Wasm module's import section is fixed at compile time,
+            // independent of whether a given entity's own script ever
+            // calls it) -- every kind sharing this binary must declare
+            // it, or plugin instantiation itself fails, not just a call.
+            host_functions: vec![
+                "ma_reply".to_string(),
+                "ma_set_state".to_string(),
+                "ma_send".to_string(),
+                "ma_ipfs_include".to_string(),
+                "ma_create_entity".to_string(),
+            ],
+            attributes,
+            allow: vec![],
+        };
+
+        let entity_node = EntityNode {
+            kind: "/ma/scheme/actor/0.0.1".to_string(),
+            behaviour: Some(IpldLink::new(&behaviour_cid)),
+            acl: "open".to_string(),
+            state: None,
+            parent: None,
+            label: Some("Test Scheme Actor".to_string()),
+            attributes: BTreeMap::new(),
+            init: None,
+            initialized: false,
+        };
+
+        let (envelope_tx, _envelope_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(String, SendEnvelope)>();
+        let registry = new_entity_registry();
+
+        // :init signal payload (§14.2.1): host-mechanical, evaluated as
+        // ma-scheme source directly into the same environment :set-behaviour
+        // populated.
+        let init_payload = br#"(set-prop! "name" "fido")"#.to_vec();
+
+        println!("Loading ma-scheme-actor wasm from {wasm_cid}, behaviour from {behaviour_cid} ...");
+        let (ep, lifecycle) = EntityPlugin::load(
+            "scheme-actor-test",
+            &entity_node,
+            &kind_node,
+            "did:ma:testrunner",
+            kubo,
+            envelope_tx,
+            registry.clone(),
+            [7u8; 32],
+            "",
+            0,
+            Some(init_payload),
+        )
+        .await
+        .expect("scheme actor plugin load");
+        println!("Loaded. lifecycle = {lifecycle}");
+        assert_eq!(
+            lifecycle,
+            Lifecycle::Running,
+            "on_signal(:init)/on_signal(:start) must succeed"
+        );
+
+        // Dispatch a couple of messages through on_message — this proves
+        // :set-behaviour's directive-composed text (helper.ma spliced in via
+        // a real #!/ipfs/<cid> directive) was parsed/evaluated correctly,
+        // :init's payload was evaluated into the same environment, and
+        // on-message (which calls the composed-in bump-counter! helper) runs
+        // without error.
+        for (verb, id) in [(":tick", "msg-1"), (":poke", "msg-2")] {
+            let mut content = Vec::new();
+            ciborium::ser::into_writer(&ciborium::Value::Text(verb.to_string()), &mut content)
+                .unwrap();
+            let msg = PluginMsg {
+                id: id.to_string(),
+                from: "did:ma:tester".to_string(),
+                to: "did:ma:testrunner#scheme-actor-test".to_string(),
+                created_at: 0,
+                exp: 0,
+                reply_to: None,
+                message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),
+                content_type: "application/x-ma-term".to_string(),
+                content,
+            };
+            println!("\n=== dispatch {verb} ===");
+            let result = ep
+                .on_message(&CastInput { msg })
+                .await
+                .unwrap_or_else(|e| panic!("dispatch {verb} failed: {e}"));
+            println!("OK, output {} bytes", result.output.len());
+        }
+
+        // Note: the `:shutdown` signal is not exercised here —
+        // `EntityMsg::Shutdown` has no public trigger method yet in this
+        // runtime (dead code by design until graceful-shutdown wiring
+        // lands), so there is currently no way to invoke it from outside
+        // the entity's own worker thread in an integration test like this
+        // one.
+    }
 }
+

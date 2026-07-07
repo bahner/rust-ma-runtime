@@ -83,6 +83,7 @@ config-key-not-manifest = konfigurācijas atslēga '%key%' nav zināma manifest 
 wrong-crud-protocol = nepareizs CRUD protokols: %type%
 entity-name-invalid = entity nosaukumam jābūt drukājamam UTF-8
 reserved-entity-name = entity nosaukums '%name%' ir rezervēts
+genesis-kind-owner-only = Tikai runtime īpašnieks var izveidot genesis tipa entity
 
 # IPv6 config
 ipv6-enabled = IPv6 iespējots — saista gan IPv4, gan IPv6

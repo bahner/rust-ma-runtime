@@ -39,13 +39,40 @@ runtime:
   # IPLD path traversal works:
   #   ipfs dag get .../kinds/ma/python/actor/0.0.1
   kinds:
-  # FIXME: vi trenger ikke kinds for alle typer actors lenger. Vi skal se om vi
-  # kan klare oss med færre, kanskje bare /ma/scheme/actor/0.0.1 ?
+    # Generic "bring-your-own-behaviour" ma-scheme actor. One shared Wasm
+    # binary (`cid`) interprets every entity's own `.ma` source, supplied
+    # per-entity via `EntityNode.behaviour` (ma-runtime-v1.md §11.2/§14.1).
+    # There is no `api`/`lifecycle` field — every kind exports exactly
+    # `on_message` + `on_signal`, always (ma-scheme-v1.md §3, §16).
+    # Regenerate the `cid` below with (from rust-ma-scheme-actor):
+    #   make actor.wasm && ipfs add --quieter actor.wasm
+    /ma/scheme/actor/0.0.1:
+      cid:
+        "/": bafkreie35ubx3zapzthdsjnjdu4yepufnrzyczlwn66fgxsws3npjnknqm
+      type: extism
+      behaviour: /ma/scheme/actor/0.0.1
+      attributes:
+        wasi: false
+        stateful: true
+      host_functions:
+        - ma_reply
+        - ma_set_state
+        - ma_send
+        - ma_ipfs_include
+        # Temporary: lets any scheme-actor entity create new entities
+        # directly via `(ma-create-actor kind behaviour init)` — a
+        # pragmatic stand-in until a #root orchestrator exists. Governing
+        # *who* may call this is an ACL concern (KindNode.allow / entity
+        # ACLs), not a host_functions concern.
+        - ma_create_entity
   
   # Entities — two forms are accepted:
   #
   #   inline:   bootstrap builds and publishes the EntityNode from the descriptor.
-  #             `behaviour` is an IPLD link to the Wasm bytes already on IPFS.
+  #             `behaviour` is an IPLD link to the entity's own content — Wasm
+  #             bytes for a kind with no shared `cid`, or `.ma` source text for
+  #             a kind (like /ma/scheme/actor/0.0.1) that declares `behaviour`.
   #             `acl` references a named ACL from `acls:` above (empty = deny-all).
   entities:
-  #FIXME: add scheme actors for root and avatar
+  # #root, #house, #avatar deferred — add scheme-actor entities here later
+  # (each needs its own published .ma source CID; see HOWTO.md Step 10).

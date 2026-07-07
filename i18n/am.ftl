@@ -82,6 +82,7 @@ config-key-not-manifest = የ config ቁልፍ '%key%' የሚታወቅ manifest 
 wrong-crud-protocol = ስህተት CRUD ፕሮቶኮል: %type%
 entity-name-invalid = የ entity ስም ሊታተም የሚችል UTF-8 መሆን አለበት
 reserved-entity-name = የ entity ስም '%name%' የተጠበቀ ነው
+genesis-kind-owner-only = የ ma runtime ባለቤት ብቻ ነው የ genesis ዓይነት ሀ/ሰ መፍጠር የሚችለው
 
 # IPv6 config
 ipv6-enabled = IPv6 ነቅቷል — IPv4 እና IPv6 ሁለቱንም እያያዘ

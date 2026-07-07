@@ -83,6 +83,7 @@ config-key-not-manifest = kunci config '%key%' bukan kunci manifest config yang 
 wrong-crud-protocol = protokol CRUD salah: %type%
 entity-name-invalid = nama entity harus berupa UTF-8 yang dapat dicetak
 reserved-entity-name = nama entity '%name%' sudah dicadangkan
+genesis-kind-owner-only = Hanya pemilik runtime yang boleh membuat entity berjenis genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 diaktifkan — mengikat IPv4 maupun IPv6

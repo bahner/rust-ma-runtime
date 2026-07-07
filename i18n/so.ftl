@@ -83,6 +83,7 @@ config-key-not-manifest = furaha config '%key%' maaha furah manifest config la g
 wrong-crud-protocol = protokoolka CRUD ee khaldan: %type%
 entity-name-invalid = magaca entity waa inuu noqdaa UTF-8 la daabici karo
 reserved-entity-name = magaca entity '%name%' waa la kaydiyay
+genesis-kind-owner-only = Kaliya milkiilaha runtime ayaa abuuri kara entity nooca genesis ah
 
 # IPv6 config
 ipv6-enabled = IPv6 waxa la shiday — waxay xidhaa IPv4 iyo IPv6 labadaba

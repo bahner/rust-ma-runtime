@@ -83,6 +83,7 @@ config-key-not-manifest = مفتاح config '%key%' ليس مفتاح manifest c
 wrong-crud-protocol = بروتوكول CRUD خاطئ: %type%
 entity-name-invalid = يجب أن يكون اسم الكيان UTF-8 قابلاً للطباعة
 reserved-entity-name = اسم الكيان '%name%' محجوز
+genesis-kind-owner-only = فقط مالك ma runtime يمكنه إنشاء كيان من نوع genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 مُفعَّل — ربط IPv4 و IPv6 معاً

@@ -83,6 +83,7 @@ config-key-not-manifest = config-nøkkelen '%key%' er ikkje ein kjend manifest c
 wrong-crud-protocol = feil CRUD-protokoll: %type%
 entity-name-invalid = entity-namn må vere skrivbart UTF-8
 reserved-entity-name = entity-namn '%name%' er reservert
+genesis-kind-owner-only = Berre ein runtime-eigar kan opprette ein entity av typen genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 aktivert — bind til både IPv4 og IPv6

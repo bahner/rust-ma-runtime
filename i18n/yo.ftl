@@ -82,8 +82,7 @@ config-key-no-delete = bọtini config '%key%' ti daemon ko le parẹ
 config-key-not-manifest = bọtini config '%key%' kii ṣe bọtini manifest config ti a mọ
 wrong-crud-protocol = ilana CRUD ti ko tọ: %type%
 entity-name-invalid = orúkọ entity gbọdọ jẹ UTF-8 tí a lè tẹ
-reserved-entity-name = orúkọ entity '%name%' jẹ ìpamọ́
-
+reserved-entity-name = orúkọ entity '%name%' jẹ ìpamọ́genesis-kind-owner-only = Onígọ̀wọ́ runtime nìkan ló lè ṣẹ̀dá entity onírúurun genesis
 # IPv6 config
 ipv6-enabled = IPv6 ti ṣiṣẹ — n so IPv4 àti IPv6 papọ̀
 ipv6-disabled = A ti pa IPv6 — IPv4 nikan ni a n sopọ (restart nilo lati mu pada wọle)

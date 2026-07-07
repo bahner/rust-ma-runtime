@@ -83,6 +83,7 @@ config-key-not-manifest = xavi di config '%key%' ka é un xavi di manifest confi
 wrong-crud-protocol = protokolu CRUD eradu: %type%
 entity-name-invalid = nomi di entity ten di ser UTF-8 imprimivel
 reserved-entity-name = nomi di entity '%name%' ta rezervadu
+genesis-kind-owner-only = Sô proprietáriu di runtime ta pode kria un entity di tipu genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 ativadu — ligadu a IPv4 i IPv6 na mes ora

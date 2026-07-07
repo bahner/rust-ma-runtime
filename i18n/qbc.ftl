@@ -85,6 +85,7 @@ config-key-not-manifest = config keyit '%key%' nuk kowl manifest config keyit
 wrong-crud-protocol = wrong CRUD protokowl: %type%
 entity-name-invalid = fo name entity printable UTF-8 tenye
 reserved-entity-name = fo name entity '%name%' reserved da
+genesis-kind-owner-only = Onlee jom runtime can mek huunde bilong genesis kind
 
 # IPv6 config
 ipv6-enabled = IPv6 go aktiv — konet bote IPv4 en IPv6

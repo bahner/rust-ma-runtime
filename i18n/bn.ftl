@@ -83,6 +83,7 @@ config-key-not-manifest = config কী '%key%' একটি পরিচিত 
 wrong-crud-protocol = ভুল CRUD প্রোটোকল: %type%
 entity-name-invalid = entity নামটি অবশ্যই মুদ্রণযোগ্য UTF-8 হতে হবে
 reserved-entity-name = entity নাম '%name%' সংরক্ষিত
+genesis-kind-owner-only = শুধুমাত্র ma runtime-এর মালিক genesis ধরনের entity তৈরি করতে পারেন
 
 # IPv6 config
 ipv6-enabled = IPv6 সক্রিয় — IPv4 এবং IPv6 উভয়ই বাঁধা হচ্ছে

@@ -83,6 +83,7 @@ config-key-not-manifest = config ključ '%key%' nije poznati manifest config klj
 wrong-crud-protocol = pogrešan CRUD protokol: %type%
 entity-name-invalid = naziv entity mora biti ispisivi UTF-8
 reserved-entity-name = naziv entity '%name%' je rezerviran
+genesis-kind-owner-only = Samo vlasnik runtimea može stvoriti entity vrste genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 omogućen — vezuje IPv4 i IPv6 istovremeno

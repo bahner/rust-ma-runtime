@@ -51,7 +51,7 @@ pub async fn handle_inbox_message(message: &ma_core::Message, ctx: &InboxHandler
         from: message.from.clone(),
         to: message.to.clone(),
         created_at: message.created_at,
-        expires: message.exp,
+        exp: message.exp,
         reply_to: message.reply_to.clone(),
         message_type: message.message_type.clone(),
         content_type: message.content_type.clone(),

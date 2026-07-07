@@ -83,6 +83,7 @@ config-key-not-manifest = ukhiye we-config '%key%' akuyona inqolobane ye-manifes
 wrong-crud-protocol = iphrothokholi ye-CRUD engalungile: %type%
 entity-name-invalid = igama le-entity kufanele libe yi-UTF-8 elingashicilelwa
 reserved-entity-name = igama le-entity '%name%' ligcinelwe
+genesis-kind-owner-only = Ngumnikazi we-runtime kuphela ongadala i-entity ohlotsheni lwe-genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 iyasebenza — ibophezela IPv4 ne IPv6 zombili

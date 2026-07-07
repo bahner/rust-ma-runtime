@@ -297,6 +297,27 @@ The JSON object contains:
 The one exception: Kubo's HTTP RPC API (`/api/v0/…`) speaks JSON. That is an
 internal implementation detail of `crate::kubo` and is invisible to peers.
 
+**Extism host-function traffic is a separate wire boundary from the above,
+and is just raw bytes — not CBOR by default.** `extism-pdk`'s `#[host_fn]`
+macro (guest side) serializes `String`/`Vec<u8>` arguments and return values
+via `ToBytes`/`FromBytes`, both **identity** for those two types (raw UTF-8
+bytes / raw bytes, no envelope of any kind). Any CBOR seen on a host
+function's `input`/return bytes (e.g. `ma_set_state`) is a **calling-
+convention choice made by that specific guest library** (Python actors
+manually CBOR-encode via `cbor2` to match what `python-ma-actors`' actor
+library expects), not something Extism or this runtime imposes. A Rust
+guest calling a host function via the `#[host_fn]` macro (e.g.
+`rust-ma-scheme-actor`) gets raw bytes both ways unless it manually
+CBOR-encodes/decodes itself — **the host-side implementation of any given
+host function must match whatever encoding its actual callers use**, not
+assume CBOR uniformly. Mixing this up (host expects CBOR, guest sends raw
+bytes, or vice versa) produces a wasm trap at call time with a generic
+"error while executing" backtrace, not a clear encoding-mismatch error —
+confirmed by hitting this exact bug once with `ma_ipfs_include` (host
+originally assumed CBOR input; the Rust guest macro sends raw UTF-8; fixed
+by reading `input` as `String::from_utf8` on the host side instead of
+`from_cbor_bytes`).
+
 ## RPC protocol
 
 Content types are defined in ma-spec, not ma-core — they are string literals:

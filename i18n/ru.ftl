@@ -83,6 +83,7 @@ config-key-not-manifest = ключ config '%key%' не является изве
 wrong-crud-protocol = неверный протокол CRUD: %type%
 entity-name-invalid = имя entity должно быть печатным UTF-8
 reserved-entity-name = имя entity '%name%' зарезервировано
+genesis-kind-owner-only = Только владелец runtime может создать entity типа genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 включён — привязка к IPv4 и IPv6 одновременно

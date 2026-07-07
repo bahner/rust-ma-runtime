@@ -83,6 +83,7 @@ config-key-not-manifest = sorol config '%key%' alaa e sorol manifest config gann
 wrong-crud-protocol = protokol CRUD moƴƴi alaa: %type%
 entity-name-invalid = innde entity ngoodha UTF-8 e bindateji
 reserved-entity-name = innde entity '%name%' ndi dokkaa
+genesis-kind-owner-only = Ko jom runtime tan waawi tagude huunde e juuɗe genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 heɓii — jokku IPv4 e IPv6 ɗiɗi

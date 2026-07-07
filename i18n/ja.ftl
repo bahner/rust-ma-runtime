@@ -83,6 +83,7 @@ config-key-not-manifest = configキー '%key%' は既知のmanifest configキー
 wrong-crud-protocol = 不正なCRUDプロトコル: %type%
 entity-name-invalid = entity名は印刷可能なUTF-8でなければなりません
 reserved-entity-name = entity名 '%name%' は予約済みです
+genesis-kind-owner-only = genesis 種別の entity を作成できるのは runtime の所有者のみです
 
 # IPv6 config
 ipv6-enabled = IPv6 有効 — IPv4 と IPv6 の両方にバインド中

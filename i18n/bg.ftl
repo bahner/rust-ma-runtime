@@ -83,6 +83,7 @@ config-key-not-manifest = конфигурационният ключ '%key%' н
 wrong-crud-protocol = грешен CRUD протокол: %type%
 entity-name-invalid = Името на entity трябва да бъде отпечатваем UTF-8
 reserved-entity-name = Името на entity '%name%' е запазено
+genesis-kind-owner-only = Само собственик на ma runtime може да създаде entity от тип genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 е активиран — свързва се с IPv4 и IPv6 едновременно

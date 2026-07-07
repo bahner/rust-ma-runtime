@@ -83,6 +83,7 @@ config-key-not-manifest = la chiave config '%key%' non è una chiave manifest co
 wrong-crud-protocol = protocollo CRUD errato: %type%
 entity-name-invalid = il nome entity deve essere UTF-8 stampabile
 reserved-entity-name = il nome entity '%name%' è riservato
+genesis-kind-owner-only = Solo un proprietario del runtime può creare un entity di tipo genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 abilitato — in ascolto su IPv4 e IPv6

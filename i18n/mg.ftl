@@ -83,6 +83,7 @@ config-key-not-manifest = ny fanalahidin'ny config '%key%' dia tsy fanalahidy ma
 wrong-crud-protocol = diso ny CRUD protocol: %type%
 entity-name-invalid = ny anaran'ny entity dia tsy maintsy UTF-8 azo atonta
 reserved-entity-name = ny anaran'ny entity '%name%' dia voatokana
+genesis-kind-owner-only = Ny tompon'andraikitry ny runtime ihany no afaka mamorona entity amin'ny karazana genesis
 
 # IPv6 config
 ipv6-enabled = IPv6 voalefaka — mampifandray IPv4 sy IPv6

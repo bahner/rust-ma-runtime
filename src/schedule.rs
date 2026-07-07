@@ -280,7 +280,7 @@ pub async fn dispatch_scheduled(
         from: format!("{}#scheduler", ctx.our_did),
         to: format!("{}#{}", ctx.our_did, fragment),
         created_at: now_secs,
-        expires: 0,
+        exp: 0,
         reply_to: None,
         message_type: MESSAGE_TYPE_RPC.to_string(),
         content_type: CONTENT_TYPE_TERM.to_string(),

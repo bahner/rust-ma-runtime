@@ -116,11 +116,38 @@ async fn handle_single_entity(
                 return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await;
             };
             let cid = cid.as_str();
-            let entity_node: EntityNode = crate::kubo::dag_get(&ctx.kubo_rpc_url, cid)
+            let mut entity_node: EntityNode = crate::kubo::dag_get(&ctx.kubo_rpc_url, cid)
                 .await
                 .with_context(|| format!("fetching entity node from {cid}"))?;
             // ACL gate: caller must hold the entity's kind protocol ID as a capability.
             check_entity_management_cap(message, ctx, &[entity_node.kind.as_str()]).await?;
+            // Genesis rule (hardcoded, cross-cutting — see
+            // `entity::is_genesis_entity`'s doc comment): entity-level
+            // `attributes.genesis` overrides the kind's own, merged at
+            // read time. Either way it's true, only owners may create the
+            // instance, and it always gets `parent: None`, regardless of
+            // what the caller's published EntityNode requested.
+            let kind_node = ctx
+                .kind_registry
+                .read()
+                .await
+                .get(entity_node.kind.as_str())
+                .cloned();
+            if let Some(kind_node) = &kind_node {
+                if crate::entity::is_genesis_entity(kind_node, &entity_node) {
+                    let owners = ctx.stats.read().await.owners.clone();
+                    if !crate::acl::is_owner(&owners, &message.from) {
+                        return send_crud_i18n_error(
+                            message,
+                            reply_type,
+                            ctx,
+                            "genesis-kind-owner-only",
+                        )
+                        .await;
+                    }
+                    entity_node.parent = None;
+                }
+            }
             with_manifest_crud(ctx, |m| {
                 m.entities.insert(name.to_string(), IpldLink::new(cid));
                 Ok(())
@@ -136,6 +163,7 @@ async fn handle_single_entity(
                 ctx.envelope_tx.clone(),
                 ctx.entity_registry.clone(),
                 ctx.avatar_key,
+                ctx.manifest_writer.clone(),
             );
             info!(name = %name, cid = %cid, "{}", crate::i18n::t("entity-created"));
             send_crud_ok_cid(message, reply_type, ctx, cid).await

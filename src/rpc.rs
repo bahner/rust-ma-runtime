@@ -214,7 +214,7 @@ async fn handle_entity_plugin_message(
         from: message.from.clone(),
         to: message.to.clone(),
         created_at: message.created_at,
-        expires: message.exp,
+        exp: message.exp,
         reply_to: message.reply_to.clone(),
         message_type: message.message_type.clone(),
         content_type: message.content_type.clone(),
@@ -257,72 +257,6 @@ async fn handle_entity_plugin_message(
         });
     }
 
-    // If the plugin called `ma_set_behaviour_cid` during this dispatch,
-    // republish this entity's `EntityNode` with the new behaviour reference
-    // (state untouched) and repoint the manifest entry. Spawned so the main
-    // event loop is not blocked by the IPFS round-trip.
-    if let Some(new_cid) = result.pending_behaviour_cid {
-        let fragment = entity.fragment.clone();
-        let kubo_url = ctx.kubo_rpc_url.to_string();
-        let manifest_writer = ctx.manifest_writer.clone();
-        let root_cid = ctx.stats.read().await.root_cid.clone();
-        tokio::spawn(async move {
-            let Some(root_cid) = root_cid else {
-                warn!(fragment = %fragment, "ma_set_behaviour_cid: no root CID available yet");
-                return;
-            };
-            let current_link = {
-                let manifest: crate::entity::RuntimeManifest = match crate::kubo::dag_get(
-                    &kubo_url, &root_cid,
-                )
-                .await
-                {
-                    Ok(m) => m,
-                    Err(e) => {
-                        warn!(fragment = %fragment, error = %e, "ma_set_behaviour_cid: failed to fetch manifest");
-                        return;
-                    }
-                };
-                manifest.entities.get(&fragment).cloned()
-            };
-            let Some(link) = current_link else {
-                warn!(fragment = %fragment, "ma_set_behaviour_cid: entity not found in manifest");
-                return;
-            };
-            let mut node: crate::entity::EntityNode = match crate::kubo::dag_get(
-                &kubo_url, &link.cid,
-            )
-            .await
-            {
-                Ok(n) => n,
-                Err(e) => {
-                    warn!(fragment = %fragment, error = %e, "ma_set_behaviour_cid: failed to fetch entity node");
-                    return;
-                }
-            };
-            node.behaviour = Some(IpldLink::new(&new_cid));
-            match crate::kubo::dag_put(&kubo_url, &node).await {
-                Ok(entity_cid) => {
-                    let fragment2 = fragment.clone();
-                    if let Err(e) = manifest_writer
-                        .mutate(move |m| {
-                            m.entities.insert(fragment2, IpldLink::new(&entity_cid));
-                            Ok(())
-                        })
-                        .await
-                    {
-                        warn!(fragment = %fragment, error = %e, "ma_set_behaviour_cid: failed to update manifest");
-                    } else {
-                        debug!(fragment = %fragment, cid = %new_cid, "behaviour reference updated via ma_set_behaviour_cid");
-                    }
-                }
-                Err(e) => {
-                    warn!(fragment = %fragment, error = %e, "ma_set_behaviour_cid: failed to publish updated entity node");
-                }
-            }
-        });
-    }
-
     // Process entity creation requests queued by `ma_create_entity` host function.
     for req in result.create_requests {
         let maybe_kind = ctx
@@ -344,7 +278,9 @@ async fn handle_entity_plugin_message(
             state: None,
             parent: Some(entity.fragment.clone()),
             label: None,
-            lifecycle: Lifecycle::New,
+            attributes: std::collections::BTreeMap::new(),
+            init: None,
+            initialized: false,
         };
 
         let (iroh_node_id, started_at) = {
@@ -380,7 +316,7 @@ async fn handle_entity_plugin_message(
                 // writer serialises this against all other manifest mutations,
                 // so concurrent creates can no longer clobber each other.
                 let mut running_node = entity_node.clone();
-                running_node.lifecycle = Lifecycle::Running;
+                running_node.initialized = true;
                 let kubo_url = ctx.kubo_rpc_url.to_string();
                 let fragment = req.fragment.clone();
                 let writer = ctx.manifest_writer.clone();
@@ -420,10 +356,6 @@ async fn handle_entity_plugin_message(
                         reply_to: None,
                     },
                 ));
-            }
-            Ok((_, lc)) => {
-                warn!(fragment = %req.fragment, lifecycle = %lc,
-                    "ma_create_entity: unexpected lifecycle after load");
             }
             Err(e) => {
                 warn!(fragment = %req.fragment, kind = %req.kind_protocol,

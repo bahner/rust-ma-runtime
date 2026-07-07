@@ -84,8 +84,32 @@ fn extract_json(body: &[u8]) -> Vec<u8> {
 fn query_arg(raw: Option<String>, key: &str) -> Option<String> {
     raw?.split('&').find_map(|kv| {
         let (k, v) = kv.split_once('=')?;
-        (k == key).then(|| v.to_string())
+        (k == key).then(|| percent_decode(v))
     })
+}
+
+/// Minimal percent-decoder for query values (e.g. `%2F` -> `/`). Real HTTP
+/// clients (reqwest) percent-encode query arguments containing reserved
+/// characters like `/`; axum's `RawQuery` extractor hands back the raw,
+/// still-encoded string, so callers must decode it themselves.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                    out.push(byte);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 async fn dag_put(State(store): State<Store>, body: Bytes) -> String {
@@ -107,7 +131,18 @@ async fn cat(State(store): State<Store>, RawQuery(q): RawQuery) -> Vec<u8> {
 
 async fn dag_resolve(RawQuery(q): RawQuery) -> String {
     let arg = query_arg(q, "arg").unwrap_or_default();
-    format!("{{\"Cid\":{{\"/\":\"{arg}\"}}}}")
+    // Real Kubo resolves `/ipfs/<cid>[/sub/path]` down to the bare CID, and
+    // `/ipns/<key>` similarly after name resolution. The mock has no real
+    // IPNS name resolution to perform, so it treats an `/ipns/<key>` path
+    // the same as `/ipfs/<cid>`: strip the prefix and pass the rest
+    // through as-is (tests that need a genuinely mutable pointer publish
+    // fresh content under the same "key" string instead). Anything else
+    // (e.g. an already-bare CID) passes through unchanged.
+    let cid = arg
+        .strip_prefix("/ipfs/")
+        .or_else(|| arg.strip_prefix("/ipns/"))
+        .unwrap_or(&arg);
+    format!("{{\"Cid\":{{\"/\":\"{cid}\"}}}}")
 }
 
 async fn pin_ok() -> &'static str {
