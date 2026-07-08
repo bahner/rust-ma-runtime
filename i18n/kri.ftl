@@ -80,6 +80,7 @@ cidv1-required = di value mus bi bare CIDv1 (e stat wid 'b'; CIDv0 'Qm…' no de
 config-key-protected = config ki '%key%' na pɔtɛkt
 config-key-no-delete = daemon config ki '%key%' kɛn nɔt bi dilit
 config-key-not-manifest = config ki '%key%' na nɔ nɔ manifest config ki
+owners-value-not-list = di owners value mus bi list of DIDs, nɔ wan sinɔgul value
 wrong-crud-protocol = rɔng CRUD protokɔl: %type%
 entity-name-invalid = di entity nem fɔ bi printable UTF-8
 reserved-entity-name = di entity nem '%name%' reserved

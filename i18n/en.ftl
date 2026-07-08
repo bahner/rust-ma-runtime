@@ -79,6 +79,7 @@ kind-not-found = Kind not found
 config-key-protected = config key '%key%' is protected
 config-key-no-delete = daemon config key '%key%' cannot be deleted
 config-key-not-manifest = config key '%key%' is not a known manifest config key
+owners-value-not-list = owners value must be a list of DIDs, not a single value
 wrong-crud-protocol = wrong CRUD protocol: %type%
 entity-name-invalid = entity name must be printable UTF-8
 reserved-entity-name = entity name '%name%' is reserved

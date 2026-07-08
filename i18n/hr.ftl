@@ -80,6 +80,7 @@ cidv1-required = vrijednost mora biti goli CIDv1 (počinje s 'b'; CIDv0 'Qm…' 
 config-key-protected = config ključ '%key%' je zaštićen
 config-key-no-delete = daemon config ključ '%key%' ne može se brisati
 config-key-not-manifest = config ključ '%key%' nije poznati manifest config ključ
+owners-value-not-list = vrijednost owners mora biti popis DID-ova, a ne jedna vrijednost
 wrong-crud-protocol = pogrešan CRUD protokol: %type%
 entity-name-invalid = naziv entity mora biti ispisivi UTF-8
 reserved-entity-name = naziv entity '%name%' je rezerviran

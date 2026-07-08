@@ -613,7 +613,10 @@ mod hostile {
             registry.clone(),
         )
         .await;
-        assert!(res.is_err(), "infinite on_signal(:start) must fail, not hang");
+        assert!(
+            res.is_err(),
+            "infinite on_signal(:start) must fail, not hang"
+        );
         assert!(
             t.elapsed() < Duration::from_secs(10),
             "infinite on_signal(:start) not bounded: {:?}",
@@ -1047,7 +1050,9 @@ mod wasm_repro {
         // populated.
         let init_payload = br#"(set-prop! "name" "fido")"#.to_vec();
 
-        println!("Loading ma-scheme-actor wasm from {wasm_cid}, behaviour from {behaviour_cid} ...");
+        println!(
+            "Loading ma-scheme-actor wasm from {wasm_cid}, behaviour from {behaviour_cid} ..."
+        );
         let (ep, lifecycle) = EntityPlugin::load(
             "scheme-actor-test",
             &entity_node,
@@ -1107,4 +1112,3 @@ mod wasm_repro {
         // one.
     }
 }
-

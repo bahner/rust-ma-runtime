@@ -80,6 +80,7 @@ cidv1-required = reikšmė turi būti gryna CIDv1 (prasideda 'b'; CIDv0 'Qm…' 
 config-key-protected = konfigūracijos raktas '%key%' yra apsaugotas
 config-key-no-delete = daemon konfigūracijos rakto '%key%' negalima ištrinti
 config-key-not-manifest = konfigūracijos raktas '%key%' nėra žinomas manifest config raktas
+owners-value-not-list = owners reikšmė turi būti DID sąrašas, o ne pavienė reikšmė
 wrong-crud-protocol = neteisingas CRUD protokolas: %type%
 entity-name-invalid = entity pavadinimas turi būti spausdinamas UTF-8
 reserved-entity-name = entity pavadinimas '%name%' yra rezervuotas

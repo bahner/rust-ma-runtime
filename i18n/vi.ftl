@@ -80,6 +80,7 @@ cidv1-required = giá trị phải là CIDv1 thuần túy (bắt đầu bằng '
 config-key-protected = khóa config '%key%' được bảo vệ
 config-key-no-delete = khóa config '%key%' của daemon không thể xóa
 config-key-not-manifest = khóa config '%key%' không phải là khóa manifest config đã biết
+owners-value-not-list = giá trị owners phải là danh sách các DID, không phải một giá trị đơn lẻ
 wrong-crud-protocol = giao thức CRUD sai: %type%
 entity-name-invalid = tên entity phải là UTF-8 có thể in được
 reserved-entity-name = tên entity '%name%' đã được đặt trước

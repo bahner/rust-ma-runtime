@@ -80,6 +80,7 @@ cidv1-required = gildi skal vera eitt reint CIDv1 (byrjar við 'b'; CIDv0 'Qm…
 config-key-protected = config-lykillinn '%key%' er verndaður
 config-key-no-delete = daemon-config-lykillinn '%key%' kann ikki slettast
 config-key-not-manifest = config-lykillinn '%key%' er ikki ein kendur manifest-config-lykill
+owners-value-not-list = owners-gildið skal vera ein listi av DIDs, ikki eitt einstakt gildi
 wrong-crud-protocol = rang CRUD-protokoll: %type%
 entity-name-invalid = entity-navnið skal vera prentbært UTF-8
 reserved-entity-name = entity-navnið '%name%' er fyrirvara

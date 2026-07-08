@@ -82,6 +82,7 @@ cidv1-required = da felota nok kowl CIDv1 (starta fo 'b'; CIDv0 'Qm…' no bosco
 config-key-protected = config keyit '%key%' iz setanyeng
 config-key-no-delete = daemon config keyit '%key%' du bik delowda
 config-key-not-manifest = config keyit '%key%' nuk kowl manifest config keyit
+owners-value-not-list = da owners felota mus kowl lista fu DIDs, no wan felota solo
 wrong-crud-protocol = wrong CRUD protokowl: %type%
 entity-name-invalid = fo name entity printable UTF-8 tenye
 reserved-entity-name = fo name entity '%name%' reserved da

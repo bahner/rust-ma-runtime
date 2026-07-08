@@ -26,7 +26,11 @@ runtime:
     open:
       "*": ["*"]
   acl:
-    +/owners: ["*"]
+    # NOTE: owners never need an explicit ACL entry here. The runtime always
+    # auto-injects a cosmetic `+owners: ["*"]` group into every loaded ACL
+    # document purely for human visibility when editing — real owner access
+    # is granted independently via the `owners:` list above, never through
+    # this ACL document. Do not add a `+owners`/`+/owners` line here.
     "*":
       - ipfs
       - rpc

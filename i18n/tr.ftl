@@ -80,6 +80,7 @@ cidv1-required = değer ham bir CIDv1 olmalıdır ('b' ile başlar; CIDv0 'Qm…
 config-key-protected = config anahtarı '%key%' korunmaktadır
 config-key-no-delete = daemon config anahtarı '%key%' silinemez
 config-key-not-manifest = config anahtarı '%key%' bilinen bir manifest config anahtarı değil
+owners-value-not-list = owners değeri bir DID listesi olmalıdır, tek bir değer olmamalıdır
 wrong-crud-protocol = yanlış CRUD protokolü: %type%
 entity-name-invalid = entity adı yazdırılabilir UTF-8 olmalıdır
 reserved-entity-name = entity adı '%name%' ayrılmıştır

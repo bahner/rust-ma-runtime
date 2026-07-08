@@ -80,6 +80,7 @@ cidv1-required = arvo täytyy olla puhdas CIDv1 (alkaa 'b':llä; CIDv0 'Qm…' e
 config-key-protected = config-avain '%key%' on suojattu
 config-key-no-delete = daemon-config-avainta '%key%' ei voi poistaa
 config-key-not-manifest = config-avain '%key%' ei ole tunnettu manifest config -avain
+owners-value-not-list = owners-arvon täytyy olla luettelo DID-tunnisteista, ei yksittäinen arvo
 wrong-crud-protocol = väärä CRUD-protokolla: %type%
 entity-name-invalid = entity-nimen täytyy olla tulostettavaa UTF-8
 reserved-entity-name = entity-nimi '%name%' on varattu

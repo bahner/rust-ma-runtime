@@ -80,6 +80,7 @@ cidv1-required = ny sanda dia tokony ho CIDv1 tsotra (manomboka amin'ny 'b'; CID
 config-key-protected = ny fanalahidin'ny config '%key%' dia voaro
 config-key-no-delete = ny fanalahidin'ny daemon config '%key%' dia tsy azo esorina
 config-key-not-manifest = ny fanalahidin'ny config '%key%' dia tsy fanalahidy manifest config fantatra
+owners-value-not-list = ny sandan'ny owners dia tokony ho lisitry ny DIDs, fa tsy sanda tokana
 wrong-crud-protocol = diso ny CRUD protocol: %type%
 entity-name-invalid = ny anaran'ny entity dia tsy maintsy UTF-8 azo atonta
 reserved-entity-name = ny anaran'ny entity '%name%' dia voatokana

@@ -283,7 +283,10 @@ async fn handle_claim(
 ///
 /// The file is read as a raw YAML mapping, the key is inserted or updated,
 /// and the result is written back with mode 0600.
-fn persist_owners_to_config(path: &std::path::Path, owners: &[String]) -> anyhow::Result<()> {
+pub(crate) fn persist_owners_to_config(
+    path: &std::path::Path,
+    owners: &[String],
+) -> anyhow::Result<()> {
     let yaml_text = if path.exists() {
         std::fs::read_to_string(path)?
     } else {

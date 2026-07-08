@@ -80,6 +80,7 @@ cidv1-required = inani kufanele libe i-CIDv1 nje ('b' iqala ngayo; CIDv0 'Qm…'
 config-key-protected = ukhiye we-config '%key%' ukhuselelwe
 config-key-no-delete = ukhiye we-config we-daemon '%key%' awukwazi ukususwa
 config-key-not-manifest = ukhiye we-config '%key%' akuyona inqolobane ye-manifest config eyaziwa
+owners-value-not-list = inani le-owners kufanele libe uhlu lwee-DID, hhayi inani elilodwa
 wrong-crud-protocol = iphrothokholi ye-CRUD engalungile: %type%
 entity-name-invalid = igama le-entity kufanele libe yi-UTF-8 elingashicilelwa
 reserved-entity-name = igama le-entity '%name%' ligcinelwe

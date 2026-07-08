@@ -82,6 +82,7 @@ cidv1-required = di value mus be a bare CIDv1 (start wid 'b'; CIDv0 'Qm…' nah 
 config-key-protected = config key '%key%' is inna protection
 config-key-no-delete = daemon config key '%key%' cyan delete
 config-key-not-manifest = config key '%key%' nah known manifest config key
+owners-value-not-list = di owners value mus be a list a DIDs, nah one single value
 wrong-crud-protocol = CRUD protocol nuh right: %type%
 entity-name-invalid = di entity name must be clean printable UTF-8
 reserved-entity-name = di entity name '%name%' ital, it reserved

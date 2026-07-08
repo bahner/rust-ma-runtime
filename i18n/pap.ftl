@@ -80,6 +80,7 @@ cidv1-required = e balor mester ta un CIDv1 puur (kuminsá ku 'b'; CIDv0 'Qm…'
 config-key-protected = e yabi di config '%key%' ta protehá
 config-key-no-delete = e yabi di config '%key%' di daemon no por wòrdu borá
 config-key-not-manifest = e yabi di config '%key%' no ta un yabi di manifest config konosí
+owners-value-not-list = e balor di owners mester ta un lista di DIDs, no un balor unko
 wrong-crud-protocol = protokòl CRUD rong: %type%
 entity-name-invalid = number di entity mester ta UTF-8 printabel
 reserved-entity-name = number di entity '%name%' ta reserva

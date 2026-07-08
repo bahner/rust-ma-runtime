@@ -80,6 +80,7 @@ cidv1-required = thamani lazima iwe CIDv1 safi (inaanza na 'b'; CIDv0 'Qm…' ha
 config-key-protected = funguo ya config '%key%' inalindwa
 config-key-no-delete = funguo ya config ya daemon '%key%' haiwezi kufutwa
 config-key-not-manifest = funguo ya config '%key%' si funguo inayojulikana ya manifest config
+owners-value-not-list = thamani ya owners lazima iwe orodha ya DID, si thamani moja
 wrong-crud-protocol = itifaki mbaya ya CRUD: %type%
 entity-name-invalid = jina la entity lazima liwe UTF-8 linaloweza kuchapishwa
 reserved-entity-name = jina la entity '%name%' limehifadhiwa

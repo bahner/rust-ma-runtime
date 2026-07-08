@@ -80,6 +80,7 @@ cidv1-required = η τιμή πρέπει να είναι ακατέργαστη
 config-key-protected = το κλειδί config '%key%' είναι προστατευμένο
 config-key-no-delete = το κλειδί config '%key%' του daemon δεν μπορεί να διαγραφεί
 config-key-not-manifest = το κλειδί config '%key%' δεν είναι γνωστό κλειδί manifest config
+owners-value-not-list = η τιμή owners πρέπει να είναι λίστα από DIDs, όχι μία μόνο τιμή
 wrong-crud-protocol = λανθασμένο πρωτόκολλο CRUD: %type%
 entity-name-invalid = το όνομα entity πρέπει να είναι εκτυπώσιμο UTF-8
 reserved-entity-name = το όνομα entity '%name%' είναι δεσμευμένο

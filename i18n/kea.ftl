@@ -80,6 +80,7 @@ cidv1-required = valór ten k'es un CIDv1 pur (kumesa ku 'b'; CIDv0 'Qm…' ka t
 config-key-protected = xavi di config '%key%' sta protejidu
 config-key-no-delete = ka da eliminá xavi di config '%key%' di daemon
 config-key-not-manifest = xavi di config '%key%' ka é un xavi di manifest config konxidu
+owners-value-not-list = valór di owners ten ki ser un lista di DIDs, ka un valór sô
 wrong-crud-protocol = protokolu CRUD eradu: %type%
 entity-name-invalid = nomi di entity ten di ser UTF-8 imprimivel
 reserved-entity-name = nomi di entity '%name%' ta rezervadu

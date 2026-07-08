@@ -80,6 +80,7 @@ cidv1-required = haddi na faa CIDv1 cokoyel (fuuta 'b'; CIDv0 'Qm…' acceppaaka
 config-key-protected = sorol config '%key%' nder keerol
 config-key-no-delete = sorol config daemon '%key%' waawaa wanaa
 config-key-not-manifest = sorol config '%key%' alaa e sorol manifest config gannduɗi
+owners-value-not-list = keerol owners foti wonde doggol DIDs, wanaa hono gootel
 wrong-crud-protocol = protokol CRUD moƴƴi alaa: %type%
 entity-name-invalid = innde entity ngoodha UTF-8 e bindateji
 reserved-entity-name = innde entity '%name%' ndi dokkaa

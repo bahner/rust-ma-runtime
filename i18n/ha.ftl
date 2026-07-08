@@ -80,6 +80,7 @@ cidv1-required = ƙima dole ne ta zama CIDv1 na asali (tana farawa da 'b'; CIDv0
 config-key-protected = maɓallin config '%key%' yana ƙarƙashin kariya
 config-key-no-delete = ba za a iya share maɓallin config '%key%' na daemon ba
 config-key-not-manifest = maɓallin config '%key%' ba shi ne maɓallin manifest config da aka sani ba
+owners-value-not-list = ƙimar owners dole ne ta zama jerin DIDs, ba ƙima ɗaya ba
 wrong-crud-protocol = kuskuren CRUD protocol: %type%
 entity-name-invalid = sunan entity dole ne ya kasance UTF-8 da za a buga
 reserved-entity-name = sunan entity '%name%' ya keɓe

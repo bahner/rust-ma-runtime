@@ -302,7 +302,6 @@ host_fn!(ma_ipfs_include_fn(user_data: BehaviourCtx; input: Vec<u8>) -> Vec<u8> 
     Ok(bytes)
 });
 
-
 // ── Worker threads ────────────────────────────────────────────────────────────
 
 /// Everything a Wasm entity's worker thread needs to build and run its plugin.
@@ -570,14 +569,25 @@ fn signal_with_data(name: &str, data: &[u8]) -> Vec<u8> {
 fn run_genesis_and_start(ts: &mut WasmThreadState, cfg: &WasmThreadCfg) -> Result<Lifecycle> {
     if !cfg.init_state.is_empty() {
         ts.plugin
-            .call::<&[u8], Vec<u8>>("on_signal", signal_with_data(":set-state", &cfg.init_state).as_slice())
+            .call::<&[u8], Vec<u8>>(
+                "on_signal",
+                signal_with_data(":set-state", &cfg.init_state).as_slice(),
+            )
             .map_err(|e| anyhow!("on_signal(:set-state) failed for '{}': {e}", cfg.fragment))?;
     }
 
     if let Some(text) = &cfg.behaviour_text {
         ts.plugin
-            .call::<&[u8], Vec<u8>>("on_signal", signal_with_data(":set-behaviour", text).as_slice())
-            .map_err(|e| anyhow!("on_signal(:set-behaviour) failed for '{}': {e}", cfg.fragment))?;
+            .call::<&[u8], Vec<u8>>(
+                "on_signal",
+                signal_with_data(":set-behaviour", text).as_slice(),
+            )
+            .map_err(|e| {
+                anyhow!(
+                    "on_signal(:set-behaviour) failed for '{}': {e}",
+                    cfg.fragment
+                )
+            })?;
     }
 
     let mut lifecycle = Lifecycle::Running;

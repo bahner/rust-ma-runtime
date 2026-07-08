@@ -80,6 +80,7 @@ cidv1-required = värdet måste vara en ren CIDv1 (börjar med 'b'; CIDv0 'Qm…
 config-key-protected = config-nyckeln '%key%' är skyddad
 config-key-no-delete = daemon-config-nyckeln '%key%' kan inte tas bort
 config-key-not-manifest = config-nyckeln '%key%' är inte en känd manifest config-nyckel
+owners-value-not-list = owners-värdet måste vara en lista med DID:er, inte ett enskilt värde
 wrong-crud-protocol = fel CRUD-protokoll: %type%
 entity-name-invalid = entity-namn måste vara utskrivbart UTF-8
 reserved-entity-name = entity-namn '%name%' är reserverat

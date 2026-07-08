@@ -80,6 +80,7 @@ cidv1-required = la valeur doit être un CIDv1 brut (commence par 'b' ; CIDv0 'Q
 config-key-protected = la clé de config '%key%' est protégée
 config-key-no-delete = la clé de config '%key%' du démon ne peut pas être supprimée
 config-key-not-manifest = la clé de config '%key%' n'est pas une clé de manifest config connue
+owners-value-not-list = la valeur owners doit être une liste de DIDs, pas une valeur unique
 wrong-crud-protocol = mauvais protocole CRUD : %type%
 entity-name-invalid = le nom d'entity doit être en UTF-8 imprimable
 reserved-entity-name = le nom d'entity '%name%' est réservé

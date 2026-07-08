@@ -80,6 +80,7 @@ cidv1-required = il valore deve essere un CIDv1 puro (inizia con 'b'; CIDv0 'Qm�
 config-key-protected = la chiave config '%key%' è protetta
 config-key-no-delete = la chiave config '%key%' del daemon non può essere eliminata
 config-key-not-manifest = la chiave config '%key%' non è una chiave manifest config nota
+owners-value-not-list = il valore owners deve essere un elenco di DID, non un valore singolo
 wrong-crud-protocol = protocollo CRUD errato: %type%
 entity-name-invalid = il nome entity deve essere UTF-8 stampabile
 reserved-entity-name = il nome entity '%name%' è riservato

@@ -350,6 +350,12 @@ pub(super) async fn handle_config_ns(
                 )
                 .await;
             }
+            // Owners must be a sequence — reject early with an explicit error
+            // instead of silently no-op'ing while still replying `:ok` below.
+            if key == "owners" && !matches!(yaml_val, serde_yaml::Value::Sequence(_)) {
+                return send_crud_i18n_error(message, reply_type, ctx, "owners-value-not-list")
+                    .await;
+            }
             let new_root = with_manifest_crud(ctx, |m| {
                 if key == "owners" {
                     if let serde_yaml::Value::Sequence(ref seq) = yaml_val {

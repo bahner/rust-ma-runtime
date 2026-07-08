@@ -80,6 +80,7 @@ cidv1-required = يجب أن تكون القيمة CIDv1 خام (تبدأ بـ '
 config-key-protected = مفتاح config '%key%' محمي
 config-key-no-delete = لا يمكن حذف مفتاح config '%key%' للخادم
 config-key-not-manifest = مفتاح config '%key%' ليس مفتاح manifest config معروفاً
+owners-value-not-list = يجب أن تكون قيمة owners قائمة من DIDs، وليست قيمة واحدة
 wrong-crud-protocol = بروتوكول CRUD خاطئ: %type%
 entity-name-invalid = يجب أن يكون اسم الكيان UTF-8 قابلاً للطباعة
 reserved-entity-name = اسم الكيان '%name%' محجوز

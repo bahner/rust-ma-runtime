@@ -80,6 +80,7 @@ cidv1-required = di value suppose be bare CIDv1 (e dey start wit 'b'; CIDv0 'Qmâ
 config-key-protected = config key '%key%' dey protected
 config-key-no-delete = daemon config key '%key%' no fit delete
 config-key-not-manifest = config key '%key%' no be known manifest config key
+owners-value-not-list = di owners value suppose be list of DIDs, e no suppose be one value
 wrong-crud-protocol = CRUD protocol no correct: %type%
 entity-name-invalid = entity name suppose be printable UTF-8
 reserved-entity-name = entity name '%name%' don reserve

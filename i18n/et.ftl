@@ -80,6 +80,7 @@ cidv1-required = väärtus peab olema puhas CIDv1 (algab 'b'-ga; CIDv0 'Qm…' e
 config-key-protected = konfiguratsioonivõti '%key%' on kaitstud
 config-key-no-delete = deemoni konfiguratsioonivõtit '%key%' ei saa kustutada
 config-key-not-manifest = konfiguratsioonivõti '%key%' ei ole teadaolev manifest config võti
+owners-value-not-list = owners väärtus peab olema DID-ide loend, mitte üksik väärtus
 wrong-crud-protocol = vale CRUD-protokoll: %type%
 entity-name-invalid = entity nimi peab olema prinditav UTF-8
 reserved-entity-name = entity nimi '%name%' on reserveeritud

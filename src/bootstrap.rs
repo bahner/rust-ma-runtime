@@ -383,7 +383,7 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
             acl,
             entities,
             acls,
-            owners: vec![],
+            owners: manifest.owners.clone(),
         },
     };
     serde_yaml::to_string(&yaml).context("serializing bootstrap YAML")
@@ -595,11 +595,13 @@ mod tests {
 
     #[test]
     fn example_yaml_parses() {
-        let raw = std::fs::read_to_string(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/bootstrap.example.yaml"),
-        )
+        let raw = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/bootstrap.example.yaml"
+        ))
         .unwrap();
-        let yaml: BootstrapYaml = serde_yaml::from_str(&raw).expect("bootstrap.example.yaml must parse");
+        let yaml: BootstrapYaml =
+            serde_yaml::from_str(&raw).expect("bootstrap.example.yaml must parse");
         let kind = yaml
             .runtime
             .kinds

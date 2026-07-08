@@ -80,6 +80,7 @@ cidv1-required = namba i mas baim CIDv1 nating ('b' i kirap long en; CIDv0 'Qmâ€
 config-key-protected = config ki '%key%' i gat banis
 config-key-no-delete = i no inap rausim daemon config ki '%key%'
 config-key-not-manifest = config ki '%key%' i no wan manifest config ki we ol save
+owners-value-not-list = ownas velu i mas wanpela lista bilong ol DID, i no wanpela velu tasol
 wrong-crud-protocol = CRUD protokol i rong: %type%
 entity-name-invalid = nem bilong entity i mas stap printable UTF-8
 reserved-entity-name = nem bilong entity '%name%' i reserved

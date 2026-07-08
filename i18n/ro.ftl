@@ -80,6 +80,7 @@ cidv1-required = valoarea trebuie să fie un CIDv1 pur (începe cu 'b'; CIDv0 'Q
 config-key-protected = cheia de config '%key%' este protejată
 config-key-no-delete = cheia de config '%key%' a daemon-ului nu poate fi ștearsă
 config-key-not-manifest = cheia de config '%key%' nu este o cheie de manifest config cunoscută
+owners-value-not-list = valoarea owners trebuie să fie o listă de DID-uri, nu o singură valoare
 wrong-crud-protocol = protocol CRUD greșit: %type%
 entity-name-invalid = numele entității trebuie să fie UTF-8 imprimabil
 reserved-entity-name = numele entității '%name%' este rezervat

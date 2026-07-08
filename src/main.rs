@@ -435,11 +435,15 @@ async fn main() -> Result<()> {
 
     // ── Load named ACLs into cache ─────────────────────────────────────────────
     let acl_cache = acl::new_acl_cache();
+    // Populated from `manifest.owners` below, reused when resolving owners
+    // (see "Resolve owners" further down) so the manifest is only fetched once.
+    let mut manifest_owners: Vec<String> = Vec::new();
     if let Some(ref rc) = root_cid {
         let manifest: Result<entity::RuntimeManifest, _> =
             kubo::dag_get(&config.kubo_rpc_url, rc).await;
         match manifest {
             Ok(m) => {
+                manifest_owners = m.owners.clone();
                 // Load the manifest ACL as the transport gate.
                 if let Some(ref link) = m.acl {
                     match acl::load_acl_from_cid(&config.kubo_rpc_url, &link.cid).await {
@@ -482,21 +486,44 @@ async fn main() -> Result<()> {
         .signing_key()
         .context("failed to derive signing key")?;
 
-    // ── Resolve owners: --owner CLI + config.extra["owner"] (list or string) ──
-    let mut resolved_owners: Vec<String> = {
-        let from_config = match config.extra.get("owners") {
-            Some(serde_yaml::Value::Sequence(seq)) => seq
-                .iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect(),
-            Some(serde_yaml::Value::String(s)) => vec![s.clone()],
-            _ => vec![],
-        };
-        from_config
+    // ── Resolve owners: config.yaml + --owner CLI + manifest.owners (union) ──
+    // The manifest is the source of truth for owners; config.yaml and
+    // --owner are additional seed sources reconciled into it here so a
+    // restart never silently forgets owners set only via CRUD (see
+    // AGENTS.md "Manifest is the source of truth; ACLs are derivatives").
+    let owners_from_config: Vec<String> = match config.extra.get("owners") {
+        Some(serde_yaml::Value::Sequence(seq)) => seq
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect(),
+        Some(serde_yaml::Value::String(s)) => vec![s.clone()],
+        _ => vec![],
     };
+    let mut resolved_owners: Vec<String> = owners_from_config.clone();
     for o in &cli.owner {
         if !resolved_owners.contains(o) {
             resolved_owners.push(o.clone());
+        }
+    }
+    for o in &manifest_owners {
+        if !resolved_owners.contains(o) {
+            resolved_owners.push(o.clone());
+        }
+    }
+
+    // If config.yaml/--owner introduced an owner not already in the
+    // manifest, the manifest needs reconciling once the manifest writer
+    // exists (further down) — the manifest is the durable source of truth.
+    let owners_need_manifest_sync = resolved_owners.iter().any(|o| !manifest_owners.contains(o));
+
+    // Best-effort persist the reconciled list back to config.yaml so a
+    // future restart has the right fallback even if Kubo/the manifest is
+    // briefly unreachable.
+    if resolved_owners != owners_from_config {
+        if let Some(ref path) = config.config_path {
+            if let Err(e) = status::persist_owners_to_config(path, &resolved_owners) {
+                warn!(error = %e, "failed to persist reconciled owners to config.yaml");
+            }
         }
     }
 
@@ -530,6 +557,28 @@ async fn main() -> Result<()> {
         config.kubo_rpc_url.clone(),
         stats.clone(),
     );
+
+    // Reconcile owners into the manifest if config.yaml/--owner introduced
+    // any that weren't already there (see "Resolve owners" above).
+    if owners_need_manifest_sync {
+        let merged_owners = stats.read().await.owners.clone();
+        if !merged_owners.is_empty() {
+            match manifest_writer
+                .mutate(move |m| {
+                    m.owners = merged_owners;
+                    Ok(())
+                })
+                .await
+            {
+                Ok(cid) => {
+                    info!(cid = %cid, "owners reconciled from config.yaml/--owner into manifest at startup");
+                }
+                Err(e) => {
+                    warn!(error = %e, "failed to reconcile owners into manifest at startup");
+                }
+            }
+        }
+    }
 
     // Periodic DID-document republishing from the in-memory runtime head.
     let did_publish_cache_warm_secs =

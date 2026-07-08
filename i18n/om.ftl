@@ -80,6 +80,7 @@ cidv1-required = gatiin CIDv1 qulqulluu ta'uu qaba ('b' irraa jalqaba; CIDv0 'Qm
 config-key-protected = murtoo config '%key%' eeggama
 config-key-no-delete = murtoo config daemon '%key%' haqamuu hin danda'amu
 config-key-not-manifest = murtoo config '%key%' murtoo manifest config beekamaa miti
+owners-value-not-list = gatiin owners tarreeffama DIDs ta'uu qaba, gatii tokko ta'uu hin qabu
 wrong-crud-protocol = protokoola CRUD dogoggoraa: %type%
 entity-name-invalid = maqaan entity UTF-8 maxxansuu danda'u ta'uu qaba
 reserved-entity-name = maqaan entity '%name%' kuufameera

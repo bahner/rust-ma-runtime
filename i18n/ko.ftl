@@ -80,6 +80,7 @@ cidv1-required = 값은 순수한 CIDv1이어야 합니다 ('b'로 시작; CIDv0
 config-key-protected = config 키 '%key%'은 보호되어 있습니다
 config-key-no-delete = daemon config 키 '%key%'은 삭제할 수 없습니다
 config-key-not-manifest = config 키 '%key%'은 알려진 manifest config 키가 아닙니다
+owners-value-not-list = owners 값은 DID 목록이어야 하며 단일 값이어서는 안 됩니다
 wrong-crud-protocol = 잘못된 CRUD 프로토콜: %type%
 entity-name-invalid = entity 이름은 출력 가능한 UTF-8이어야 합니다
 reserved-entity-name = entity 이름 '%name%'은 예약되어 있습니다

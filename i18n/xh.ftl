@@ -80,6 +80,7 @@ cidv1-required = ixabiso kufuneka libe yiCIDv1 enjani (iqala ngo-'b'; CIDv0 'Qmâ
 config-key-protected = isitshixo se-config '%key%' sikhuselelwe
 config-key-no-delete = isitshixo se-config se-daemon '%key%' asinakufinywa
 config-key-not-manifest = isitshixo se-config '%key%' asiyositshixo se-manifest config esaziwa
+owners-value-not-list = ixabiso le-owners kufuneka libe luhlu lwee-DID, hayi ixabiso elinye
 wrong-crud-protocol = iphrothokholi ye-CRUD engalunganga: %type%
 entity-name-invalid = igama le-entity kufuneka libe yi-UTF-8 enokuncinwa
 reserved-entity-name = igama le-entity '%name%' ligciniwe

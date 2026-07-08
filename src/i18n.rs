@@ -133,6 +133,7 @@ const MESSAGE_IDS: &[&str] = &[
     "config-key-protected",
     "config-key-no-delete",
     "config-key-not-manifest",
+    "owners-value-not-list",
     "wrong-crud-protocol",
 ];
 

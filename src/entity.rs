@@ -502,7 +502,10 @@ pub fn effective_attribute<'a>(
     entity: &'a EntityNode,
     key: &str,
 ) -> Option<&'a serde_json::Value> {
-    entity.attributes.get(key).or_else(|| kind.attributes.get(key))
+    entity
+        .attributes
+        .get(key)
+        .or_else(|| kind.attributes.get(key))
 }
 
 /// Whether `entity` (of `kind`) is marked as a genesis/tree-root entity —
@@ -598,8 +601,7 @@ pub struct CreateEntityRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        effective_attribute, is_genesis_entity, EntityNode, Evaluator, IpldLink, KindNode,
-        KindTree,
+        effective_attribute, is_genesis_entity, EntityNode, Evaluator, IpldLink, KindNode, KindTree,
     };
     use std::collections::BTreeMap;
 

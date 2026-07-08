@@ -80,6 +80,7 @@ cidv1-required = valè a dwe se yon CIDv1 tou nèf (kòmanse ak 'b'; CIDv0 'Qm�
 config-key-protected = kle config '%key%' la pwoteje
 config-key-no-delete = yo pa ka efase kle config '%key%' daemon an
 config-key-not-manifest = kle config '%key%' la pa yon kle manifest config ki konnen
+owners-value-not-list = valè owners dwe se yon lis DIDs, pa yon sèl valè
 wrong-crud-protocol = move protokòl CRUD: %type%
 entity-name-invalid = non entity a dwe UTF-8 ki ka enprime
 reserved-entity-name = non entity '%name%' rezerve

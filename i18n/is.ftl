@@ -80,6 +80,7 @@ cidv1-required = gildið verður að vera hreint CIDv1 (byrjar á 'b'; CIDv0 'Qm
 config-key-protected = stillingarlykillinn '%key%' er varinn
 config-key-no-delete = ekki er hægt að eyða stillingarlykli '%key%' þjónustunnar
 config-key-not-manifest = stillingarlykillinn '%key%' er ekki þekktur manifest-stillingarlykill
+owners-value-not-list = owners-gildið verður að vera listi af DIDs, ekki stakt gildi
 wrong-crud-protocol = rangur CRUD-samskiptaregla: %type%
 entity-name-invalid = entity-nafnið verður að vera prentanlegt UTF-8
 reserved-entity-name = entity-nafnið '%name%' er frátekið

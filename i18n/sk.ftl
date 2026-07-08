@@ -80,6 +80,7 @@ cidv1-required = hodnota musí byť holý CIDv1 (začína 'b'; CIDv0 'Qm…' nie
 config-key-protected = konfiguračný kľúč '%key%' je chránený
 config-key-no-delete = konfiguračný kľúč '%key%' démona nie je možné odstrániť
 config-key-not-manifest = konfiguračný kľúč '%key%' nie je známym kľúčom manifest config
+owners-value-not-list = hodnota owners musí byť zoznam DID, nie jediná hodnota
 wrong-crud-protocol = nesprávny protokol CRUD: %type%
 entity-name-invalid = názov entity musí byť tlačiteľné UTF-8
 reserved-entity-name = názov entity '%name%' je rezervovaný

@@ -80,6 +80,7 @@ cidv1-required = di value haffi be a bare CIDv1 (start wid 'b'; CIDv0 'Qm…' nu
 config-key-protected = config key '%key%' protect
 config-key-no-delete = daemon config key '%key%' cyaan delete
 config-key-not-manifest = config key '%key%' nuh known manifest config key
+owners-value-not-list = di owners value haffi be a list a DIDs, nuh one single value
 wrong-crud-protocol = rong CRUD protokol: %type%
 entity-name-invalid = di entity name haffi be printable UTF-8
 reserved-entity-name = di entity name '%name%' reserved

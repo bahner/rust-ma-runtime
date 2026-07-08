@@ -80,6 +80,7 @@ cidv1-required = значение должно быть голым CIDv1 (нач
 config-key-protected = ключ config '%key%' защищён
 config-key-no-delete = ключ config '%key%' демона не может быть удалён
 config-key-not-manifest = ключ config '%key%' не является известным ключом manifest config
+owners-value-not-list = значение owners должно быть списком DID, а не одиночным значением
 wrong-crud-protocol = неверный протокол CRUD: %type%
 entity-name-invalid = имя entity должно быть печатным UTF-8
 reserved-entity-name = имя entity '%name%' зарезервировано

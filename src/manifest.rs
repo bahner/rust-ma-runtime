@@ -78,9 +78,11 @@ impl ManifestWriter {
         {
             let mut stats = inner.stats.write().await;
             stats.root_cid = Some(new_cid.clone());
-            if !manifest.owners.is_empty() {
-                stats.owners.clone_from(&manifest.owners);
-            }
+            // Always mirror the published manifest's owners, including the
+            // (legitimate) empty case — previously an empty list here was
+            // silently ignored, leaving stale in-memory owners after a
+            // successful clear.
+            stats.owners.clone_from(&manifest.owners);
         }
         Ok(new_cid)
     }

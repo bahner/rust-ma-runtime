@@ -80,6 +80,7 @@ cidv1-required = nilai harus berupa CIDv1 mentah (dimulai dengan 'b'; CIDv0 'Qmâ
 config-key-protected = kunci config '%key%' dilindungi
 config-key-no-delete = kunci config daemon '%key%' tidak dapat dihapus
 config-key-not-manifest = kunci config '%key%' bukan kunci manifest config yang dikenal
+owners-value-not-list = nilai owners harus berupa daftar DID, bukan nilai tunggal
 wrong-crud-protocol = protokol CRUD salah: %type%
 entity-name-invalid = nama entity harus berupa UTF-8 yang dapat dicetak
 reserved-entity-name = nama entity '%name%' sudah dicadangkan

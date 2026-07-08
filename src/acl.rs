@@ -20,6 +20,12 @@ pub use ma_core::{
 /// which checks the in-memory owner list directly without IPFS group resolution.
 /// This guarantees that owners can never be locked out even if the ACL document
 /// is empty or wrong.
+///
+/// **This is not a `+#<fragment>` actor-group reference** and must never be
+/// treated as one — it is unrelated to [`query_actor_group`] resolution
+/// (which only understands `+#<fragment>`, referencing a local `ma-set`
+/// actor). `+owners` is purely a cosmetic/visual marker; nothing ever
+/// resolves it to real members, by design.
 pub const OWNERS_PRINCIPAL: &str = "+owners";
 
 /// In-memory cache of named ACLs.
