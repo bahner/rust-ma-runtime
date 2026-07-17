@@ -149,31 +149,30 @@ async fn handle_single_entity(
                 .await
                 .get(entity_node.kind.as_str())
                 .cloned();
-            let kind_node = match cached_kind {
-                Some(k) => Some(k.as_ref().clone()),
-                None => {
-                    let manifest = load_manifest(ctx).await?;
-                    if let Some(link) = manifest.kinds.get_protocol(entity_node.kind.as_str()) {
-                        let raw_kind: crate::entity::KindNode =
-                            crate::kubo::dag_get(&ctx.kubo_rpc_url, &link.cid)
-                                .await
-                                .with_context(|| {
-                                    format!("fetching kind node for '{}'", entity_node.kind)
-                                })?;
-                        let resolved = if raw_kind.extends.is_some() {
-                            crate::entity::resolve_kind_extends(
-                                &ctx.kubo_rpc_url,
-                                &manifest,
-                                raw_kind,
-                            )
-                            .await?
-                        } else {
-                            raw_kind
-                        };
-                        Some(resolved)
+            let kind_node = if let Some(k) = cached_kind {
+                Some(k.as_ref().clone())
+            } else {
+                let manifest = load_manifest(ctx).await?;
+                if let Some(link) = manifest.kinds.get_protocol(entity_node.kind.as_str()) {
+                    let raw_kind: crate::entity::KindNode =
+                        crate::kubo::dag_get(&ctx.kubo_rpc_url, &link.cid)
+                            .await
+                            .with_context(|| {
+                                format!("fetching kind node for '{}'", entity_node.kind)
+                            })?;
+                    let resolved = if raw_kind.extends.is_some() {
+                        crate::entity::resolve_kind_extends(
+                            &ctx.kubo_rpc_url,
+                            &manifest,
+                            raw_kind,
+                        )
+                        .await?
                     } else {
-                        None
-                    }
+                        raw_kind
+                    };
+                    Some(resolved)
+                } else {
+                    None
                 }
             };
             if let Some(kind_node) = &kind_node {

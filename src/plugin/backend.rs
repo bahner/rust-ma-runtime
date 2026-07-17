@@ -481,7 +481,7 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
                 "ma_ipfs_include",
                 [PTR],
                 [PTR],
-                behaviour.clone(),
+                behaviour,
                 ma_ipfs_include_fn,
             ),
         ),

@@ -283,7 +283,7 @@ async fn handle_claim(
 ///
 /// The file is read as a raw YAML mapping, the key is inserted or updated,
 /// and the result is written back with mode 0600.
-pub(crate) fn persist_owners_to_config(
+pub fn persist_owners_to_config(
     path: &std::path::Path,
     owners: &[String],
 ) -> anyhow::Result<()> {

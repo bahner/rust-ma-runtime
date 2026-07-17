@@ -171,7 +171,7 @@ pub(super) async fn group_cache_update(ctx: &CrudHandlerCtx, name: &str, cid: &s
 /// manifest is updated to point at the new CID — otherwise a later daemon
 /// restart would re-read the stale `lifecycle: new` node and incorrectly
 /// re-fire the `:init` signal a second time.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(super) fn spawn_entity_reload(
     name: String,
     entity_node: EntityNode,
