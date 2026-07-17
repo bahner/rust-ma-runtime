@@ -75,15 +75,7 @@ impl ManifestWriter {
         }
 
         guard.clone_from(&new_cid);
-        {
-            let mut stats = inner.stats.write().await;
-            stats.root_cid = Some(new_cid.clone());
-            // Always mirror the published manifest's owners, including the
-            // (legitimate) empty case — previously an empty list here was
-            // silently ignored, leaving stale in-memory owners after a
-            // successful clear.
-            stats.owners.clone_from(&manifest.owners);
-        }
+        inner.stats.write().await.root_cid = Some(new_cid.clone());
         Ok(new_cid)
     }
 }
@@ -182,22 +174,5 @@ mod tests {
             Some(initial.as_str()),
             "a failed mutation must not advance the root CID"
         );
-    }
-
-    #[tokio::test]
-    async fn mutation_syncs_owners_to_stats() {
-        let kubo = MockKubo::start().await;
-        let (initial, stats) = seed(&kubo).await;
-        let writer = ManifestWriter::new(initial, kubo.url().to_string(), stats.clone());
-
-        writer
-            .mutate(|m| {
-                m.owners.push("did:ma:alice".to_string());
-                Ok(())
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(stats.read().await.owners, vec!["did:ma:alice".to_string()]);
     }
 }

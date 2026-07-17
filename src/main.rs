@@ -433,17 +433,18 @@ async fn main() -> Result<()> {
         debug!("native #scheduler entity registered");
     }
 
-    // ── Load named ACLs into cache ─────────────────────────────────────────────
+    // ── Load named ACLs and groups into cache ──────────────────────────────────
     let acl_cache = acl::new_acl_cache();
-    // Populated from `manifest.owners` below, reused when resolving owners
-    // (see "Resolve owners" further down) so the manifest is only fetched once.
+    let group_cache = acl::new_group_cache();
+    // Populated from `manifest.grp["owners"]` below, reused when resolving
+    // owners (see "Resolve owners" further down) so the manifest is only
+    // fetched once.
     let mut manifest_owners: Vec<String> = Vec::new();
     if let Some(ref rc) = root_cid {
         let manifest: Result<entity::RuntimeManifest, _> =
             kubo::dag_get(&config.kubo_rpc_url, rc).await;
         match manifest {
             Ok(m) => {
-                manifest_owners = m.owners.clone();
                 // Load the manifest ACL as the transport gate.
                 if let Some(ref link) = m.acl {
                     match acl::load_acl_from_cid(&config.kubo_rpc_url, &link.cid).await {
@@ -454,6 +455,29 @@ async fn main() -> Result<()> {
                         Err(e) => {
                             warn!(cid = %link.cid, error = %e, "failed to load root ACL from manifest");
                         }
+                    }
+                }
+                // Named groups: "/grp/<name>", flat Vec<String> of member DIDs.
+                // "owners" is one ordinary entry here, no special resolution.
+                let mut group_entries = Vec::new();
+                for (name, link) in &m.grp {
+                    match kubo::dag_get::<Vec<String>>(&config.kubo_rpc_url, &link.cid).await {
+                        Ok(members) => {
+                            info!(name = %name, cid = %link.cid, "Group loaded into cache");
+                            group_entries.push((name.clone(), members));
+                        }
+                        Err(e) => {
+                            warn!(name = %name, cid = %link.cid, error = %e, "failed to load group at startup");
+                        }
+                    }
+                }
+                {
+                    let mut cache = group_cache.write().await;
+                    for (name, members) in group_entries {
+                        if name == "owners" {
+                            manifest_owners.clone_from(&members);
+                        }
+                        cache.insert(name, members);
                     }
                 }
                 let mut entries = Vec::new();
@@ -486,7 +510,7 @@ async fn main() -> Result<()> {
         .signing_key()
         .context("failed to derive signing key")?;
 
-    // ── Resolve owners: config.yaml + --owner CLI + manifest.owners (union) ──
+    // ── Resolve owners: config.yaml + --owner CLI + /grp/owners (union) ──
     // The manifest is the source of truth for owners; config.yaml and
     // --owner are additional seed sources reconciled into it here so a
     // restart never silently forgets owners set only via CRUD (see
@@ -559,22 +583,37 @@ async fn main() -> Result<()> {
     );
 
     // Reconcile owners into the manifest if config.yaml/--owner introduced
-    // any that weren't already there (see "Resolve owners" above).
+    // any that weren't already there (see "Resolve owners" above). Unlike
+    // the old inline `manifest.owners` field, `/grp/owners` is an IPLD link
+    // to its own document, so the merged list must be published first.
     if owners_need_manifest_sync {
         let merged_owners = stats.read().await.owners.clone();
         if !merged_owners.is_empty() {
-            match manifest_writer
-                .mutate(move |m| {
-                    m.owners = merged_owners;
-                    Ok(())
-                })
-                .await
-            {
-                Ok(cid) => {
-                    info!(cid = %cid, "owners reconciled from config.yaml/--owner into manifest at startup");
+            match kubo::dag_put(&config.kubo_rpc_url, &merged_owners).await {
+                Ok(owners_cid) => {
+                    let link_cid = owners_cid.clone();
+                    match manifest_writer
+                        .mutate(move |m| {
+                            m.grp
+                                .insert("owners".to_string(), entity::IpldLink::new(&link_cid));
+                            Ok(())
+                        })
+                        .await
+                    {
+                        Ok(cid) => {
+                            group_cache
+                                .write()
+                                .await
+                                .insert("owners".to_string(), merged_owners);
+                            info!(cid = %cid, "owners reconciled from config.yaml/--owner into manifest at startup");
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "failed to reconcile owners into manifest at startup");
+                        }
+                    }
                 }
                 Err(e) => {
-                    warn!(error = %e, "failed to reconcile owners into manifest at startup");
+                    warn!(error = %e, "failed to publish reconciled owners list at startup");
                 }
             }
         }
@@ -629,6 +668,7 @@ async fn main() -> Result<()> {
         stats,
         acl,
         acl_cache,
+        group_cache,
         entity_registry,
         kind_registry,
         manifest_writer,

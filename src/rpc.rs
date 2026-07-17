@@ -10,7 +10,7 @@ use ma_core::{
 };
 use tracing::{debug, info, warn};
 
-use crate::acl::{check_full, AclCache, AclMap, CAP_RPC};
+use crate::acl::{check_full, AclCache, AclMap, GroupCache, CAP_RPC};
 use crate::entity::{CastInput, IpldLink, Lifecycle, LocalMessage, PluginMsg, SendEnvelope};
 use crate::plugin::EntityRegistry;
 use crate::status::SharedStats;
@@ -30,6 +30,7 @@ pub struct RpcHandlerCtx {
     pub envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, SendEnvelope)>,
     pub stats: SharedStats,
     pub acl_cache: AclCache,
+    pub group_cache: GroupCache,
     pub avatar_key: [u8; 32],
     pub manifest_writer: crate::manifest::ManifestWriter,
 }
@@ -67,7 +68,20 @@ pub async fn handle_rpc_message(
     if !intra_runtime {
         let owners = ctx.stats.read().await.owners.clone();
         if !crate::acl::is_owner(&owners, &message.from) {
-            check_full(acl, &message.from, &[CAP_RPC], |_| async { Ok(vec![]) }).await?;
+            let group_cache = ctx.group_cache.clone();
+            check_full(acl, &message.from, &[CAP_RPC], |key| {
+                let group_cache = group_cache.clone();
+                let name = key.strip_prefix('+').unwrap_or(key).to_string();
+                async move {
+                    Ok(group_cache
+                        .read()
+                        .await
+                        .get(&name)
+                        .cloned()
+                        .unwrap_or_default())
+                }
+            })
+            .await?;
         }
     }
 
@@ -173,7 +187,7 @@ async fn handle_entity_plugin_message(
     let maybe_acl = ctx.acl_cache.read().await.get(&acl_key).cloned();
     if let Some(ref acl_map) = maybe_acl {
         let verb_ref = verb_str.as_deref().unwrap_or("*");
-        let registry = ctx.entity_registry.clone();
+        let group_cache = ctx.group_cache.clone();
         // Pre-normalize caller: `did:ma:<our_did>#fragment` → `#fragment` so
         // that the `"#"` local-entity wildcard in ACL maps matches intra-runtime
         // callers.  This is safe because message signatures are cryptographically
@@ -182,12 +196,17 @@ async fn handle_entity_plugin_message(
             .from
             .strip_prefix(&format!("{}#", ctx.our_did))
             .map_or_else(|| message.from.clone(), |frag| format!("#{frag}"));
-        let caller_str = caller_did.clone();
-        crate::acl::check_full(acl_map, &caller_did, &[verb_ref, "*"], |g| {
-            let registry = registry.clone();
-            let g = g.to_string();
-            let caller = caller_str.clone();
-            async move { crate::acl::query_actor_group(&g, &caller, &registry).await }
+        crate::acl::check_full(acl_map, &caller_did, &[verb_ref, "*"], |key| {
+            let group_cache = group_cache.clone();
+            let name = key.strip_prefix('+').unwrap_or(key).to_string();
+            async move {
+                Ok(group_cache
+                    .read()
+                    .await
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_default())
+            }
         })
         .await
         .with_context(|| {

@@ -343,6 +343,14 @@ pub struct KindNode {
     /// only the parent entity may create instances of this kind.
     #[serde(default)]
     pub allow: Vec<String>,
+    /// Optional base kind's protocol ID to inherit from (single hop per
+    /// document; chains are followed by `resolve_kind_extends`). Lets a
+    /// variant kind (e.g. `/ma/genesis/0.0.1`) reuse a generic kind's
+    /// `cid`/`host_functions` without repeating them — see
+    /// `resolve_kind_extends` for exact merge semantics. Never present on
+    /// an already-resolved `KindNode` (cleared once resolved).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extends: Option<String>,
 }
 
 impl KindNode {
@@ -372,6 +380,86 @@ impl KindNode {
     }
 }
 
+/// Resolve `kind`'s `extends` chain (if any) against `manifest.kinds`,
+/// fetching each base kind from IPFS in turn and merging it underneath
+/// the derived kind's own fields. A kind with no `extends` is returned
+/// unchanged (no fetch performed).
+///
+/// Merge rules (the derived/more-specific kind's own value always wins
+/// where it has one):
+/// - `cid`, `behaviour`: derived `Some` overrides; derived `None` inherits
+///   the base's.
+/// - `kind_type`: **never** inherited — always the derived kind's own
+///   value (defaults to `Extism` like any other `KindNode`).
+/// - `attributes`: key-level merge — a key present on the derived kind
+///   overrides that same key on the base; keys the derived kind doesn't
+///   mention are inherited from the base. Mirrors the entity-over-kind
+///   attribute merge (`effective_attribute`) one layer up.
+/// - `host_functions`, `allow`: additive union (base's entries first, then
+///   any of the derived kind's own not already present), deduplicated.
+///   There is no "subtract" syntax — a kind that must drop a base host
+///   function should not `extends` it.
+/// - `protocol`: always the derived kind's own identity, never inherited.
+///
+/// Follows at most 8 hops before erroring, as a guard against a
+/// misconfigured extends cycle; errors if a named base protocol isn't in
+/// `manifest.kinds` at all.
+pub async fn resolve_kind_extends(
+    kubo_url: &str,
+    manifest: &RuntimeManifest,
+    mut kind: KindNode,
+) -> anyhow::Result<KindNode> {
+    const MAX_DEPTH: usize = 8;
+    let mut depth = 0;
+    while let Some(base_protocol) = kind.extends.clone() {
+        depth += 1;
+        if depth > MAX_DEPTH {
+            anyhow::bail!(
+                "kind '{}' extends chain exceeds {MAX_DEPTH} hops (possible cycle) at '{base_protocol}'",
+                kind.protocol
+            );
+        }
+        let base_link = manifest.kinds.get_protocol(&base_protocol).ok_or_else(|| {
+            anyhow::anyhow!(
+                "kind '{}' extends unknown base kind '{base_protocol}'",
+                kind.protocol
+            )
+        })?;
+        let base: KindNode = crate::kubo::dag_get(kubo_url, &base_link.cid).await?;
+        let base_extends = base.extends.clone();
+        kind = merge_kind_over_base(base, kind);
+        kind.extends = base_extends;
+    }
+    Ok(kind)
+}
+
+fn merge_kind_over_base(base: KindNode, derived: KindNode) -> KindNode {
+    let mut host_functions = base.host_functions.clone();
+    for f in &derived.host_functions {
+        if !host_functions.contains(f) {
+            host_functions.push(f.clone());
+        }
+    }
+    let mut allow = base.allow.clone();
+    for a in &derived.allow {
+        if !allow.contains(a) {
+            allow.push(a.clone());
+        }
+    }
+    let mut attributes = base.attributes.clone();
+    attributes.extend(derived.attributes.clone());
+    KindNode {
+        protocol: derived.protocol,
+        cid: derived.cid.or(base.cid),
+        kind_type: derived.kind_type,
+        behaviour: derived.behaviour.or(base.behaviour),
+        host_functions,
+        attributes,
+        allow,
+        extends: None,
+    }
+}
+
 /// In-memory registry of loaded [`KindNode`]s.  Single source of truth for all
 /// kind attributes at runtime.  Populated at bootstrap and updated on kind upsert.
 pub type KindRegistry = Arc<RwLock<HashMap<String, Arc<KindNode>>>>;
@@ -383,8 +471,8 @@ pub fn new_kind_registry() -> KindRegistry {
 
 /// Entity fragment names reserved by the runtime system.
 /// These names cannot be used as entity names.
-/// `genesis` is reserved for the one-time, owner-only `:genesis` RPC verb
-/// (rpc.rs) — ordinary CRUD upsert must never create or overwrite it;
+/// `genesis` is reserved for entities created directly under that exact
+/// fragment name — a runtime convention, not a hardcoded requirement;
 /// other entities of a genesis-attribute kind may still be created under
 /// other names via CRUD/`ma_create_entity`.
 pub const RESERVED_ENTITY_NAMES: &[&str] = &["root", "acl", "scheduler", "runtime", "genesis"];
@@ -548,9 +636,16 @@ pub struct RuntimeManifest {
     pub entities: HashMap<String, IpldLink>,
     #[serde(default)]
     pub i18n: HashMap<String, IpldLink>,
-    /// Owner DIDs — authoritative list. Controls who may use privileged RPC.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub owners: Vec<String>,
+    /// Named group registry — name → IPLD link to a flat `Vec<String>` of
+    /// member DIDs. Referenced from any `AclMap` as principal `+<name>`,
+    /// CRUD-addressed as `/grp/<name>`.
+    ///
+    /// The `"owners"` entry is the runtime's authoritative owner list — same
+    /// storage as any other group, no special resolution logic — but it is
+    /// protected against deletion (see `crud/grp.rs`): the entry may be set
+    /// to point at an empty list, but the key itself may never be removed.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub grp: HashMap<String, IpldLink>,
     #[serde(default)]
     pub config: BTreeMap<String, serde_yaml::Value>,
 }
@@ -601,7 +696,8 @@ pub struct CreateEntityRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        effective_attribute, is_genesis_entity, EntityNode, Evaluator, IpldLink, KindNode, KindTree,
+        effective_attribute, is_genesis_entity, resolve_kind_extends, EntityNode, Evaluator,
+        IpldLink, KindNode, KindTree, RuntimeManifest,
     };
     use std::collections::BTreeMap;
 
@@ -702,6 +798,7 @@ mod tests {
             host_functions: vec![],
             attributes: BTreeMap::new(),
             allow: vec![],
+            extends: None,
         }
     }
 
@@ -789,6 +886,109 @@ mod tests {
             .attributes
             .insert("genesis".to_string(), serde_json::Value::Bool(false));
         assert!(!is_genesis_entity(&kind, &entity));
+    }
+
+    #[tokio::test]
+    async fn resolve_kind_extends_merges_derived_over_base() {
+        let kubo = crate::testkubo::MockKubo::start().await;
+
+        let base = KindNode {
+            protocol: "/ma/scheme/actor/0.0.1".to_string(),
+            cid: Some(IpldLink::new("bafyactorwasm")),
+            kind_type: Evaluator::Extism,
+            behaviour: None,
+            host_functions: vec!["ma_reply".to_string(), "ma_set_state".to_string()],
+            attributes: {
+                let mut m = BTreeMap::new();
+                m.insert("stateful".to_string(), serde_json::Value::Bool(true));
+                m.insert("wasi".to_string(), serde_json::Value::Bool(false));
+                m
+            },
+            allow: vec![],
+            extends: None,
+        };
+        let base_cid = crate::kubo::dag_put(kubo.url(), &base).await.unwrap();
+
+        let mut manifest = RuntimeManifest::default();
+        manifest
+            .kinds
+            .insert_protocol("/ma/scheme/actor/0.0.1", IpldLink::new(&base_cid));
+
+        let derived = KindNode {
+            protocol: "/ma/genesis/0.0.1".to_string(),
+            cid: None, // inherit base's
+            kind_type: Evaluator::Extism,
+            behaviour: Some("bafkreibehaviour".to_string()),
+            host_functions: vec!["ma_create_entity".to_string()], // additive
+            attributes: {
+                let mut m = BTreeMap::new();
+                m.insert("genesis".to_string(), serde_json::Value::Bool(true));
+                m
+            },
+            allow: vec!["owners".to_string()],
+            extends: Some("/ma/scheme/actor/0.0.1".to_string()),
+        };
+
+        let resolved = resolve_kind_extends(kubo.url(), &manifest, derived)
+            .await
+            .expect("resolve extends");
+
+        assert_eq!(resolved.protocol, "/ma/genesis/0.0.1", "own identity preserved");
+        assert_eq!(
+            resolved.cid.map(|l| l.cid),
+            Some("bafyactorwasm".to_string()),
+            "cid inherited from base since derived didn't set one"
+        );
+        assert_eq!(
+            resolved.behaviour.as_deref(),
+            Some("bafkreibehaviour"),
+            "derived's own behaviour wins"
+        );
+        assert_eq!(
+            resolved.host_functions,
+            vec![
+                "ma_reply".to_string(),
+                "ma_set_state".to_string(),
+                "ma_create_entity".to_string()
+            ],
+            "host_functions is an additive union, base first"
+        );
+        assert_eq!(
+            resolved.attributes.get("stateful"),
+            Some(&serde_json::Value::Bool(true)),
+            "stateful inherited from base"
+        );
+        assert_eq!(
+            resolved.attributes.get("genesis"),
+            Some(&serde_json::Value::Bool(true)),
+            "genesis is the derived kind's own attribute"
+        );
+        assert_eq!(resolved.allow, vec!["owners".to_string()]);
+        assert!(resolved.extends.is_none(), "extends cleared once resolved");
+    }
+
+    #[tokio::test]
+    async fn resolve_kind_extends_is_a_noop_when_absent() {
+        let kubo = crate::testkubo::MockKubo::start().await;
+        let manifest = RuntimeManifest::default();
+        let kind = plain_kind_node();
+        let resolved = resolve_kind_extends(kubo.url(), &manifest, kind.clone())
+            .await
+            .unwrap();
+        assert_eq!(resolved.protocol, kind.protocol);
+        assert_eq!(resolved.host_functions, kind.host_functions);
+    }
+
+    #[tokio::test]
+    async fn resolve_kind_extends_errors_on_unknown_base() {
+        let kubo = crate::testkubo::MockKubo::start().await;
+        let manifest = RuntimeManifest::default();
+        let mut kind = plain_kind_node();
+        kind.extends = Some("/ma/does/not/exist/0.0.1".to_string());
+        let err = resolve_kind_extends(kubo.url(), &manifest, kind)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown base kind"), "{err}");
     }
 
     #[test]

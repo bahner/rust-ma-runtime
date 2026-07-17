@@ -19,7 +19,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use zeroize::Zeroize;
 
-use crate::acl::{AclCache, SharedAcl};
+use crate::acl::{AclCache, GroupCache, SharedAcl};
 use crate::entity::{KindRegistry, SendEnvelope};
 use crate::ipfs::IpfsServiceState;
 use crate::manifest::ManifestWriter;
@@ -55,6 +55,7 @@ pub async fn run(
     stats: SharedStats,
     acl: SharedAcl,
     acl_cache: AclCache,
+    group_cache: GroupCache,
     entity_registry: EntityRegistry,
     kind_registry: KindRegistry,
     manifest_writer: ManifestWriter,
@@ -106,6 +107,7 @@ pub async fn run(
                         envelope_tx: envelope_tx.clone(),
                         stats: stats.clone(),
                         acl_cache: acl_cache.clone(),
+                        group_cache: group_cache.clone(),
                         avatar_key,
                         manifest_writer: manifest_writer.clone(),
                     };
@@ -158,6 +160,7 @@ pub async fn run(
                                 publisher: &ipfs.publisher,
                                 resolver: Arc::clone(&shared_resolver),
                                 doc_cache: Arc::clone(&ipfs.doc_cache),
+                                group_cache: group_cache.clone(),
                             },
                             &mut ipfs.replay_guard,
                         ))
@@ -197,6 +200,7 @@ pub async fn run(
                             kind_registry: kind_registry.clone(),
                             shared_config: Arc::clone(&shared_config),
                             acl_cache: acl_cache.clone(),
+                            group_cache: group_cache.clone(),
                             root_acl: acl.clone(),
                             envelope_tx: envelope_tx.clone(),
                             avatar_key,

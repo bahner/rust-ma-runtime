@@ -40,13 +40,19 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
   `Extism`). Only `Extism` is implemented; `Native`, `Bash`, and `Lua` are
   reserved for future use. `load()` returns `Err` if asked to load a kind with
   an unsupported evaluator.
-- **ACL group resolution via local actors.** Groups in ACL maps use the
-  `+#<fragment>` syntax to reference a local `ma-set` actor. Resolution is done
-  by sending `[:contains, caller]` to the actor via `on_message`. This is a
-  runtime-level infrastructure probe — it intentionally bypasses the per-entity
-  queue since ACL must be resolved before dispatch. Single-member probe only;
-  there is no `fetch_group_members`. Use
-  `query_actor_group(group_ref, caller, registry)` in `acl.rs`.
+- **ACL groups via the manifest `grp` registry.** Groups in `AclMap`s use the
+  flat `+<name>` principal syntax (e.g. `+gurus`, `+owners`) — no nested path,
+  no `#fragment`. `<name>` is looked up directly in `manifest.grp` (CRUD-
+  addressed as `/grp/<name>`), an IPLD link to a plain `Vec<String>` of member
+  DIDs. Resolution is a synchronous, in-memory `GroupCache` lookup (see
+  `acl.rs`'s `GroupCache`/`new_group_cache`) — no actor dispatch, no async
+  RPC round-trip. `"owners"` is one ordinary entry in `grp`, resolved exactly
+  like any other group; it is protected only against deletion (see
+  `crud/grp.rs`), never resolved specially. There is no `#fragment`-actor-
+  probe mechanism (the old `+#<fragment>`/`ma-set`/`query_actor_group`
+  design) — it was removed as a fundamentally wrong conflation of "group"
+  (a `+`-prefixed principal) with "local entity address" (a bare `#fragment`
+  principal, which remains valid and unrelated, e.g. `#idjit: null`).
 - **Keys in memory only.** IPNS private key material arriving in a request is
   used once and immediately zeroized (`zeroize`). The daemon's own keys live in
   an encrypted `SecretBundle` on disk, decrypted into memory at startup and
@@ -70,16 +76,22 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
 - **Manifest is the source of truth; ACLs are derivatives.** `RuntimeManifest`
   paths are canonical. ACLs must always be derived from and kept in sync with
   manifest data, never the reverse. Concretely:
-  - `manifest.owners` (a top-level `Vec<String>` field) is the authoritative
-    owners list. The in-memory root `AclMap` and `stats.owners` are derived
-    from it and must be updated whenever it changes.
-  - On bootstrap: owners are written to `manifest.owners` and the published
-    root ACL.
-  - On startup: owners are merged from config.yaml, `manifest.owners`, and
-    `--owner` CLI args (manifest takes precedence).
-  - On CRUD SET `.owners`: `grant_owners_in_acl` and `stats.owners` are updated
-    immediately (hot-swap, no restart needed).
-  - Never read the ACL to discover owners — read `manifest.owners`.
+  - `/grp/owners` (an entry in `manifest.grp`, an IPLD link to a `Vec<String>`
+    document) is the authoritative owners list. `stats.owners` (the in-memory
+    fast-path used by `is_owner()`) and the live root `AclMap` (via
+    `grant_owners_in_acl`) are derived from it and must be updated whenever
+    it changes.
+  - On bootstrap: owners are written to `grp.owners` (`BootstrapRuntime.grp`)
+    and, if present, injected into the published root ACL.
+  - On startup: owners are merged from config.yaml, `/grp/owners`, and
+    `--owner` CLI args (manifest takes precedence; the merged result is
+    published back to `/grp/owners` if it introduced anything new).
+  - On CRUD SET `/grp/owners`: `grant_owners_in_acl` and `stats.owners` are
+    updated immediately (hot-swap, no restart needed) — see `crud/grp.rs`.
+  - `/grp/owners` can never be deleted via CRUD (may be set to an empty
+    list, but the entry itself must always exist) — enforced in
+    `crud/grp.rs`.
+  - Never read the ACL to discover owners — read `/grp/owners`.
 - **Never default or fall back to open ACLs.** An empty `AclMap` (no entries)
   denies everyone. Code must never construct or substitute an open ACL
   (`{"*": ["*"]}`) as a fallback for a missing or unreadable ACL document.

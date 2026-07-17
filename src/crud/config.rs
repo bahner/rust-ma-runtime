@@ -3,7 +3,7 @@ use ciborium::Value as CborValue;
 use tracing::warn;
 
 use super::helpers::{
-    is_ipfs_ref, load_manifest, resolve_ipfs_ref, send_crud_data_dag_cbor, send_crud_data_yaml,
+    load_manifest, resolve_ipfs_ref, send_crud_data_dag_cbor, send_crud_data_yaml,
     send_crud_i18n_error, send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, send_crud_ok_path,
     with_manifest_crud,
 };
@@ -28,7 +28,6 @@ const DAEMON_CONFIG_KEYS: &[&str] = DAEMON_CONFIG_KEYS_PUB;
 
 /// Manifest config keys that may be written via CRUD (stored in IPFS DAG).
 const MANIFEST_CONFIG_KEYS: &[&str] = &[
-    "owners",
     "i18n",
     "did_document_publishing_interval_secs",
     "did_document_publishing_timeout_secs",
@@ -247,20 +246,10 @@ pub(super) async fn handle_config_ns(
                 daemon_config_key_value_pub(&cfg, key.as_str())
             } else {
                 let manifest = load_manifest(ctx).await?;
-                if key == "owners" {
-                    serde_yaml::Value::Sequence(
-                        manifest
-                            .owners
-                            .into_iter()
-                            .map(serde_yaml::Value::String)
-                            .collect(),
-                    )
-                } else {
-                    match manifest.config.get(key.as_str()) {
-                        Some(v) => v.clone(),
-                        None => {
-                            return Err(anyhow!("config key not found: {key}"));
-                        }
+                match manifest.config.get(key.as_str()) {
+                    Some(v) => v.clone(),
+                    None => {
+                        return Err(anyhow!("config key not found: {key}"));
                     }
                 }
             };
@@ -284,11 +273,7 @@ pub(super) async fn handle_config_ns(
             }
             let key = key.as_str().to_string();
             with_manifest_crud(ctx, |m| {
-                if key == "owners" {
-                    m.owners.clear();
-                } else {
-                    m.config.remove(&key);
-                }
+                m.config.remove(&key);
                 Ok(())
             })
             .await?;
@@ -350,23 +335,8 @@ pub(super) async fn handle_config_ns(
                 )
                 .await;
             }
-            // Owners must be a sequence — reject early with an explicit error
-            // instead of silently no-op'ing while still replying `:ok` below.
-            if key == "owners" && !matches!(yaml_val, serde_yaml::Value::Sequence(_)) {
-                return send_crud_i18n_error(message, reply_type, ctx, "owners-value-not-list")
-                    .await;
-            }
             let new_root = with_manifest_crud(ctx, |m| {
-                if key == "owners" {
-                    if let serde_yaml::Value::Sequence(ref seq) = yaml_val {
-                        m.owners = seq
-                            .iter()
-                            .filter_map(|v| v.as_str().map(str::to_string))
-                            .collect();
-                    }
-                } else {
-                    m.config.insert(key.clone(), yaml_val.clone());
-                }
+                m.config.insert(key.clone(), yaml_val.clone());
                 Ok(())
             })
             .await?;
@@ -376,27 +346,11 @@ pub(super) async fn handle_config_ns(
                     crate::i18n::switch_lang(lang, &ctx.kubo_rpc_url).await;
                 }
             }
-            // Owners hot-swap: manifest is the source of truth; ACL follows.
-            if key == "owners" {
-                if let serde_yaml::Value::Sequence(ref seq) = yaml_val {
-                    let owners: Vec<String> = seq
-                        .iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect();
-                    crate::status::grant_owners_in_acl(&ctx.root_acl, &owners).await;
-                    ctx.stats.write().await.owners = owners;
-                }
-            }
-            // If the value stored is itself a CID, return the new root CID
-            // so clients can follow the link. For inline values (sequences,
-            // strings, numbers) just confirm the path was updated.
-            let is_cid_value = matches!(&yaml_val,
-                serde_yaml::Value::String(s) if is_ipfs_ref(s));
-            if is_cid_value {
-                send_crud_ok_cid(message, reply_type, ctx, &new_root).await
-            } else {
-                send_crud_ok_path(message, reply_type, ctx, &format!(".{key}")).await
-            }
+            // Every manifest mutation produces a new root CID — return it
+            // so clients can follow the link, regardless of whether the
+            // stored value itself was a CID reference. Mirrors the pattern
+            // used by `acl.rs`, `entities.rs`, `kinds.rs`, and `grp.rs`.
+            send_crud_ok_cid(message, reply_type, ctx, &new_root).await
         }
         _ => Err(anyhow!("unknown config.{key} operation")),
     }

@@ -61,9 +61,10 @@ certified security product.
   `Lua` are reserved for future use. `load()` returns `Err` if asked to load
   a kind with an unsupported evaluator.
 - **Manifest is the source of truth; ACLs are derivatives.**
-  `RuntimeManifest.owners` is the authoritative owners list. The in-memory
-  root `AclMap` and stats are derived from it and must be updated whenever it
-  changes. Never read the ACL to discover owners — read `manifest.owners`.
+  `/grp/owners` (an entry in `manifest.grp`) is the authoritative owners list.
+  The in-memory root `AclMap` and stats are derived from it and must be
+  updated whenever it changes. Never read the ACL to discover owners — read
+  `/grp/owners`.
 - **Never fall back to an open ACL.** An empty `AclMap` (no entries) denies
   everyone. Code must never substitute `{"*": ["*"]}` as a fallback for a
   missing ACL. A missing ACL is a configuration error — fail loudly. The
@@ -564,18 +565,23 @@ from DID-URLs before lookup.
 
 ### Group resolution
 
-ACL entries can reference a local `ma-set` actor as a group via the
-`+#<fragment>` syntax:
+ACL entries can reference a named group registry entry via the flat
+`+<name>` syntax — no nested path, no `#fragment`:
 
 ```yaml
 acl:
-  "+#admins": ["*"]   # anyone in the local 'admins' set gets all capabilities
+  "+admins": ["*"]     # anyone listed in /grp/admins gets all capabilities
+  "+owners": ["*"]     # anyone listed in /grp/owners (real, not cosmetic)
   "did:ma:eve":        # explicit deny overrides group membership
 ```
 
-Resolution calls `[:contains, caller]` on the named actor via `handle_call`.
-This is a single-member probe — there is no bulk fetch of group members.
-Groups are resolved at check time, not cached.
+`<name>` is looked up directly in `manifest.grp` (CRUD-addressed as
+`/grp/<name>`), an IPLD link to a plain `Vec<String>` of member DIDs.
+Resolution is a synchronous, in-memory cache lookup (`GroupCache`) — no
+actor dispatch, no async RPC round-trip. `"owners"` is one ordinary entry
+in `grp`, resolved exactly like any other group; it is protected only
+against deletion (may be set to an empty list, but the entry itself can
+never be removed via CRUD), never resolved specially.
 
 ---
 

@@ -4,29 +4,10 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use ma_core::check_cap;
 use tokio::sync::RwLock;
-use tracing::debug;
 
 pub use ma_core::{
     normalize_principal, AclMap, CapabilityEntry, CAP_CRUD, CAP_IPFS, CAP_RPC, GROUP_PREFIX,
 };
-
-/// The group principal that always holds wildcard capabilities in every in-memory ACL.
-///
-/// `+owners: ["*"]` is injected by [`inject_owners`] and [`load_acl_from_cid`]
-/// at load time so it is visible when a user edits the ACL document. Documents
-/// stored on IPFS do not need to include this entry.
-///
-/// At transport and CRUD gates the actual enforcement is done by [`is_owner`],
-/// which checks the in-memory owner list directly without IPFS group resolution.
-/// This guarantees that owners can never be locked out even if the ACL document
-/// is empty or wrong.
-///
-/// **This is not a `+#<fragment>` actor-group reference** and must never be
-/// treated as one — it is unrelated to [`query_actor_group`] resolution
-/// (which only understands `+#<fragment>`, referencing a local `ma-set`
-/// actor). `+owners` is purely a cosmetic/visual marker; nothing ever
-/// resolves it to real members, by design.
-pub const OWNERS_PRINCIPAL: &str = "+owners";
 
 /// In-memory cache of named ACLs.
 ///
@@ -38,16 +19,18 @@ pub fn new_acl_cache() -> AclCache {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
-/// Always inject `+owners: ["*"]` into an [`AclMap`] loaded from a document.
+/// In-memory cache of named ACL groups — flat DID-member lists.
 ///
-/// This entry is purely cosmetic — it makes the owner group visible when
-/// editing the ACL. Actual enforcement at transport and CRUD gates is done
-/// by [`is_owner`], which bypasses `check_full` entirely for in-memory owners.
-pub fn inject_owners(acl: &mut AclMap) {
-    acl.insert(
-        OWNERS_PRINCIPAL.to_string(),
-        CapabilityEntry::from_caps(["*"]),
-    );
+/// Backs the `+<name>` group-principal syntax in any [`AclMap`]: `+gurus`
+/// resolves by looking up `"gurus"` here. Populated from the manifest's
+/// `grp` map (CRUD-addressed as `/grp/<name>`), including the special
+/// `"owners"` entry (same storage as any other group, just protected
+/// against deletion — see `crud/grp.rs`).
+pub type GroupCache = Arc<RwLock<HashMap<String, Vec<String>>>>;
+
+/// Create a new empty [`GroupCache`].
+pub fn new_group_cache() -> GroupCache {
+    Arc::new(RwLock::new(HashMap::new()))
 }
 
 /// Return `true` if `caller` is in the in-memory owners list.
@@ -60,15 +43,10 @@ pub fn is_owner(owners: &[String], caller: &str) -> bool {
 }
 
 /// Fetch an ACL document by CID from IPFS and deserialise it as [`AclMap`].
-///
-/// [`inject_owners`] is applied after deserialisation so `+owners: ["*"]`
-/// is always present in the returned map.
 pub async fn load_acl_from_cid(kubo_rpc_url: &str, cid: &str) -> Result<AclMap> {
-    let mut acl = crate::kubo::dag_get::<AclMap>(kubo_rpc_url, cid)
+    crate::kubo::dag_get::<AclMap>(kubo_rpc_url, cid)
         .await
-        .with_context(|| format!("fetching ACL document {cid}"))?;
-    inject_owners(&mut acl);
-    Ok(acl)
+        .with_context(|| format!("fetching ACL document {cid}"))
 }
 
 /// Shared, mutable root transport-gate ACL.
@@ -147,9 +125,6 @@ where
                     .iter()
                     .any(|c| cap_set.contains(*c) || cap_set.contains("*"))
             {
-                if key == OWNERS_PRINCIPAL {
-                    debug!(caller = %caller, "{}", crate::i18n::t("acl-owners-access"));
-                }
                 return Ok(());
             }
         }
@@ -158,81 +133,6 @@ where
     Err(anyhow::anyhow!(
         "access denied for {caller}: none of {caps:?} permitted"
     ))
-}
-
-/// Resolve a `+#<fragment>` group reference by dispatching `:contains` to the
-/// local `ma-set` actor with the given `caller` DID.
-///
-/// Returns `vec![caller.to_string()]` if the set contains the caller,
-/// or an empty vec if not (or if the actor is unavailable).
-///
-/// Group references of the form `+<handle>.<path>` (legacy IPFS-path style)
-/// are not supported — use `+#<fragment>` to reference a local `ma-set` actor.
-pub async fn query_actor_group(
-    group_ref: &str,
-    caller: &str,
-    entity_registry: &crate::plugin::EntityRegistry,
-) -> Result<Vec<String>> {
-    let fragment = group_ref
-        .strip_prefix("+#")
-        .ok_or_else(|| anyhow::anyhow!("group ref must use +#<fragment> syntax: {group_ref}"))?;
-
-    let ep = entity_registry
-        .read()
-        .await
-        .get(fragment)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("group actor +#{fragment} not found in registry"))?;
-
-    // Build CastInput for [:contains, caller] verb.
-    let content = {
-        let mut buf = Vec::new();
-        ciborium::ser::into_writer(
-            &ciborium::Value::Array(vec![
-                ciborium::Value::Text(":contains".into()),
-                ciborium::Value::Text(caller.to_string()),
-            ]),
-            &mut buf,
-        )
-        .context("encoding :contains content")?;
-        buf
-    };
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let msg = crate::entity::LocalMessage {
-        id: format!("acl-contains-{fragment}"),
-        from: String::new(),
-        to: format!("#{fragment}"),
-        created_at: now_secs,
-        exp: now_secs + 5, // 5 seconds
-        reply_to: None,
-        message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),
-        content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
-        content,
-    };
-    let input = crate::entity::CastInput {
-        msg: crate::entity::PluginMsg::from(&msg),
-    };
-    let result = ep.on_message(&input).await?;
-
-    // Parse reply: :ok true → caller is member; anything else → not member.
-    let contained = match ciborium::de::from_reader::<ciborium::Value, _>(result.output.as_slice())
-    {
-        Ok(ciborium::Value::Array(ref v)) => {
-            v.first() == Some(&ciborium::Value::Text(":ok".into()))
-                && v.get(1) == Some(&ciborium::Value::Bool(true))
-        }
-        Ok(ciborium::Value::Bool(b)) => b,
-        _ => false,
-    };
-
-    if contained {
-        Ok(vec![caller.to_string()])
-    } else {
-        Ok(vec![])
-    }
 }
 
 #[cfg(test)]

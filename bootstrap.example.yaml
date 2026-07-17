@@ -16,21 +16,38 @@
 #     Use the resulting CID as the entity value below.
 
 runtime:
+  # Named group registry: name -> flat list of member DIDs, published to
+  # IPFS at bootstrap. Referenced from any AclMap as principal `+<name>`,
+  # CRUD-addressed as /grp/<name> once the daemon is running.
+  #
+  # "owners" is the runtime's authoritative owner list — same storage as any
+  # other group, no special field. It is protected against deletion once the
+  # daemon is running (may be set to an empty list, but the entry itself can
+  # never be removed via CRUD) — see AGENTS.md "ACL groups".
+  grp:
+    owners:
+      - did:ma:k51qzi5uqu5dlgh2drt9od7f7fmfe1u6rf5j2s2acfp9olltfx51oqhnl048xm
+
+  # Named ACL library: name -> inline AclMap, published to IPFS at bootstrap.
+  # Reference an ACL by name in an EntityNode's `acl` field.
+  acls:
+    open:
+      "*": ["*"]
+    owners:
+      "+owners": ["*"]
+      "*": []
+
   # Root transport-gate ACL.
   # Published to IPFS at bootstrap; loaded at startup when no --acl-file is given.
   # Controls who may use the RPC, inbox, and IPFS services.
   # An absent acl: means the daemon falls back to --acl-file (or open access).
-  owners:
-    - did:ma:k51qzi5uqu5dlgh2drt9od7f7fmfe1u6rf5j2s2acfp9olltfx51oqhnl048xm
-  acls:
-    open:
-      "*": ["*"]
+  #
+  # `+owners` below resolves against the `grp.owners` list above — it is a
+  # real, functional group reference (not a cosmetic stub): anyone listed in
+  # grp.owners gets the capabilities granted here, and stays in sync
+  # automatically as grp.owners is edited via CRUD.
   acl:
-    # NOTE: owners never need an explicit ACL entry here. The runtime always
-    # auto-injects a cosmetic `+owners: ["*"]` group into every loaded ACL
-    # document purely for human visibility when editing — real owner access
-    # is granted independently via the `owners:` list above, never through
-    # this ACL document. Do not add a `+owners`/`+/owners` line here.
+    "+owners": ["*"]
     "*":
       - ipfs
       - rpc
@@ -69,6 +86,22 @@ runtime:
         # *who* may call this is an ACL concern (KindNode.allow / entity
         # ACLs), not a host_functions concern.
         - ma_create_entity
+
+    # A genesis/tree-root variant of the same kind — reuses
+    # /ma/scheme/actor/0.0.1's `cid`/`type`/`behaviour`/`host_functions`
+    # entirely via `extends` (see `entity::resolve_kind_extends` for exact
+    # merge rules: cid/behaviour override-if-set else inherited,
+    # attributes merge key-by-key, host_functions/allow are an additive
+    # union). Only adds `attributes.genesis: true` (hardcoded rule,
+    # enforced at CRUD upsert: only an owner may create an instance, and
+    # it always gets `parent: null`). Each entity of this kind still
+    # supplies its own `.ma` source via `EntityNode.behaviour` (an IPLD
+    # link to content), inherited dialect-wise from the base kind's
+    # `behaviour: /ma/scheme/actor/0.0.1` — never a CID on the kind itself.
+    /ma/genesis/0.0.1:
+      extends: /ma/scheme/actor/0.0.1
+      attributes:
+        genesis: true
   
   # Entities — two forms are accepted:
   #

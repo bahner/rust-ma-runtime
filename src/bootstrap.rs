@@ -45,10 +45,12 @@ pub struct BootstrapRuntime {
     /// Reference an ACL by name in an `EntityNode`'s `acl` field.
     #[serde(default)]
     pub acls: HashMap<String, AclMap>,
-    /// Owner DIDs — persisted to `ma.yaml` during bootstrap so the daemon
-    /// recognises them at startup without additional configuration.
+    /// Named group registry: name → inline flat DID list, published to IPFS
+    /// at bootstrap. Referenced from any `AclMap` as principal `+<name>`.
+    /// The `"owners"` entry (if present) is the runtime's authoritative
+    /// owner list — same storage as any other group, no special field.
     #[serde(default)]
-    pub owners: Vec<String>,
+    pub grp: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +75,10 @@ pub struct BootstrapKind {
     pub attributes: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub allow: Vec<String>,
+    /// Optional base kind's protocol ID to inherit from — see
+    /// `crate::entity::resolve_kind_extends` for merge semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extends: Option<String>,
 }
 
 /// Flat map: protocol ID → kind descriptor.
@@ -170,6 +176,7 @@ pub async fn build_manifest(
     let kinds = publish_kinds(cfg, kubo_url).await?;
     let entities_map = publish_entities(cfg, kubo_url).await?;
     let acls_map = publish_named_acls(cfg, kubo_url).await?;
+    let grp_map = publish_groups(cfg, kubo_url).await?;
     let root_acl_link = publish_root_acl(cfg, kubo_url).await?;
 
     let i18n = crate::i18n::bundled_lang_map();
@@ -179,17 +186,6 @@ pub async fn build_manifest(
             serde_yaml::Value::String(active_lang.to_string()),
         );
     }
-    if !cfg.owners.is_empty() {
-        runtime_config.insert(
-            "owners".to_string(),
-            serde_yaml::Value::Sequence(
-                cfg.owners
-                    .iter()
-                    .map(|o| serde_yaml::Value::String(o.clone()))
-                    .collect(),
-            ),
-        );
-    }
     let root = RuntimeManifest {
         acl: root_acl_link,
         acls: acls_map,
@@ -197,7 +193,7 @@ pub async fn build_manifest(
         kinds,
         entities: entities_map,
         i18n,
-        owners: cfg.owners.clone(),
+        grp: grp_map,
         config: runtime_config,
     };
     let root_cid = kubo::dag_put(kubo_url, &root)
@@ -229,6 +225,7 @@ async fn publish_kinds(cfg: &BootstrapRuntime, kubo_url: &str) -> Result<KindTre
             host_functions: bk.host_functions.clone(),
             attributes: bk.attributes.clone(),
             allow: bk.allow.clone(),
+            extends: bk.extends.clone(),
         };
         let cid = kubo::dag_put(kubo_url, &node)
             .await
@@ -296,10 +293,25 @@ async fn publish_named_acls(
     Ok(acls_map)
 }
 
+async fn publish_groups(
+    cfg: &BootstrapRuntime,
+    kubo_url: &str,
+) -> Result<HashMap<String, IpldLink>> {
+    let mut grp_map: HashMap<String, IpldLink> = HashMap::new();
+    for (name, members) in &cfg.grp {
+        let cid = kubo::dag_put(kubo_url, members)
+            .await
+            .with_context(|| format!("dag_put group {name}"))?;
+        tracing::info!(name = %name, cid = %cid, "Published group node");
+        grp_map.insert(name.clone(), IpldLink::new(cid));
+    }
+    Ok(grp_map)
+}
+
 /// Publish the root transport-gate ACL with owner DIDs injected as `["*"]`.
 async fn publish_root_acl(cfg: &BootstrapRuntime, kubo_url: &str) -> Result<Option<IpldLink>> {
     let mut root_acl: AclMap = cfg.acl.clone().unwrap_or_default();
-    for owner in &cfg.owners {
+    for owner in cfg.grp.get("owners").into_iter().flatten() {
         root_acl.insert(owner.clone(), crate::acl::CapabilityEntry::from_caps(["*"]));
     }
     let cid = kubo::dag_put(kubo_url, &root_acl)
@@ -334,6 +346,7 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
                 host_functions: node.host_functions,
                 attributes: node.attributes,
                 allow: node.allow,
+                extends: node.extends,
             },
         );
     }
@@ -366,6 +379,15 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
         acls.insert(name.clone(), acl_map);
     }
 
+    // Named groups: fetch each flat DID list by CID.
+    let mut grp: HashMap<String, Vec<String>> = HashMap::new();
+    for (name, link) in &manifest.grp {
+        let members: Vec<String> = kubo::dag_get(kubo_url, &link.cid)
+            .await
+            .with_context(|| format!("fetching group {name}"))?;
+        grp.insert(name.clone(), members);
+    }
+
     // Root transport-gate ACL.
     let acl: Option<AclMap> = if let Some(ref link) = manifest.acl {
         Some(
@@ -383,7 +405,7 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
             acl,
             entities,
             acls,
-            owners: manifest.owners.clone(),
+            grp,
         },
     };
     serde_yaml::to_string(&yaml).context("serializing bootstrap YAML")
@@ -609,5 +631,23 @@ mod tests {
             .expect("/ma/scheme/actor/0.0.1 kind must be present");
         assert_eq!(kind.behaviour.as_deref(), Some("/ma/scheme/actor/0.0.1"));
         assert!(kind.cid.is_some());
+
+        let genesis_kind = yaml
+            .runtime
+            .kinds
+            .get("/ma/genesis/0.0.1")
+            .expect("/ma/genesis/0.0.1 kind must be present");
+        assert_eq!(
+            genesis_kind.extends.as_deref(),
+            Some("/ma/scheme/actor/0.0.1")
+        );
+        assert_eq!(
+            genesis_kind.attributes.get("genesis"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert!(
+            genesis_kind.cid.is_none() && genesis_kind.behaviour.is_none(),
+            "cid/behaviour should be inherited via extends, not repeated"
+        );
     }
 }

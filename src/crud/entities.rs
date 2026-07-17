@@ -24,14 +24,25 @@ async fn check_entity_management_cap(
     // Holding the guard across an await would block any concurrent write
     // to root_acl (e.g. :acl: update) until the check completes.
     let acl = ctx.root_acl.read().await.clone();
-    check_full(&acl, &message.from, caps, |_| async { Ok(vec![]) })
-        .await
-        .with_context(|| {
-            format!(
-                "entity management denied for {}: requires {:?}",
-                message.from, caps
-            )
-        })
+    check_full(&acl, &message.from, caps, |key| {
+        let name = key.strip_prefix('+').unwrap_or(key).to_string();
+        async move {
+            Ok(ctx
+                .group_cache
+                .read()
+                .await
+                .get(&name)
+                .cloned()
+                .unwrap_or_default())
+        }
+    })
+    .await
+    .with_context(|| {
+        format!(
+            "entity management denied for {}: requires {:?}",
+            message.from, caps
+        )
+    })
 }
 
 // ── Entities handler ─────────────────────────────────────────────────────────
@@ -127,12 +138,44 @@ async fn handle_single_entity(
             // read time. Either way it's true, only owners may create the
             // instance, and it always gets `parent: None`, regardless of
             // what the caller's published EntityNode requested.
-            let kind_node = ctx
+            //
+            // `kind_registry` currently has no writer anywhere in the
+            // codebase (pre-existing gap), so it's checked first as a
+            // harmless fast path but this always falls through to
+            // fetching the kind fresh from the manifest/IPFS.
+            let cached_kind = ctx
                 .kind_registry
                 .read()
                 .await
                 .get(entity_node.kind.as_str())
                 .cloned();
+            let kind_node = match cached_kind {
+                Some(k) => Some(k.as_ref().clone()),
+                None => {
+                    let manifest = load_manifest(ctx).await?;
+                    if let Some(link) = manifest.kinds.get_protocol(entity_node.kind.as_str()) {
+                        let raw_kind: crate::entity::KindNode =
+                            crate::kubo::dag_get(&ctx.kubo_rpc_url, &link.cid)
+                                .await
+                                .with_context(|| {
+                                    format!("fetching kind node for '{}'", entity_node.kind)
+                                })?;
+                        let resolved = if raw_kind.extends.is_some() {
+                            crate::entity::resolve_kind_extends(
+                                &ctx.kubo_rpc_url,
+                                &manifest,
+                                raw_kind,
+                            )
+                            .await?
+                        } else {
+                            raw_kind
+                        };
+                        Some(resolved)
+                    } else {
+                        None
+                    }
+                }
+            };
             if let Some(kind_node) = &kind_node {
                 if crate::entity::is_genesis_entity(kind_node, &entity_node) {
                     let owners = ctx.stats.read().await.owners.clone();

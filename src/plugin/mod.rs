@@ -78,7 +78,13 @@ pub type NativeDispatch =
 
 /// Return value from `on_message`.
 pub struct DispatchResult {
-    /// Raw CBOR bytes returned by the plugin export.
+    /// Raw CBOR bytes returned by the plugin export. No longer consumed by
+    /// production dispatch (entities reply via the `ma_reply` host function
+    /// instead, not via this return value) since the removal of the
+    /// `+#<fragment>`/`ma-set` actor-probe ACL group mechanism, its only
+    /// production consumer. Kept for test diagnostics and potential future
+    /// synchronous-reply use cases.
+    #[allow(dead_code)]
     pub output: Vec<u8>,
     /// State bytes queued by the plugin via `ma_set_state` host function.
     /// `None` if the plugin did not call `ma_set_state` during this invocation.
@@ -509,6 +515,7 @@ mod hostile {
             host_functions: vec![],
             attributes,
             allow: vec![],
+            extends: None,
         }
     }
 
@@ -749,6 +756,7 @@ mod wasm_repro {
             ],
             attributes,
             allow: vec![],
+            extends: None,
         };
 
         let entity_node = EntityNode {
@@ -847,6 +855,7 @@ mod wasm_repro {
             ],
             attributes,
             allow: vec![],
+            extends: None,
         };
 
         let entity_node = EntityNode {
@@ -1027,6 +1036,7 @@ mod wasm_repro {
             ],
             attributes,
             allow: vec![],
+            extends: None,
         };
 
         let entity_node = EntityNode {

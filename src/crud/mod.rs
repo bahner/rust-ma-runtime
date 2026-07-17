@@ -13,6 +13,7 @@
 mod acl;
 mod config;
 mod entities;
+mod grp;
 mod helpers;
 mod kinds;
 
@@ -23,7 +24,7 @@ use ciborium::Value as CborValue;
 use ma_core::{IpfsGatewayResolver, SigningKey, MESSAGE_TYPE_CRUD, MESSAGE_TYPE_CRUD_REPLY};
 use tokio::sync::RwLock;
 
-use crate::acl::{check_full, AclCache, AclMap, SharedAcl, CAP_CRUD};
+use crate::acl::{check_full, AclCache, AclMap, GroupCache, SharedAcl, CAP_CRUD};
 use crate::entity::{KindRegistry, SendEnvelope};
 use crate::plugin::EntityRegistry;
 use crate::status::SharedStats;
@@ -45,6 +46,9 @@ pub struct CrudHandlerCtx {
     /// Named ACL cache — maps `"acls.<name>"` to its `AclMap` for
     /// zero-overhead lookup at call time.
     pub acl_cache: AclCache,
+    /// Named group cache — maps a group name to its flat DID-member list,
+    /// backing the `+<name>` principal syntax in any `AclMap`.
+    pub group_cache: GroupCache,
     /// Shared root transport ACL — owner may update at runtime via `:acl: <cid>`.
     pub root_acl: SharedAcl,
     /// Forwarding channel for envelopes produced by entity plugins via `ma_send`.
@@ -66,7 +70,19 @@ pub async fn handle_crud_message(
     // so they can never be locked out of ACL management.
     let owners = ctx.stats.read().await.owners.clone();
     if !crate::acl::is_owner(&owners, &message.from) {
-        check_full(acl, &message.from, &[CAP_CRUD], |_| async { Ok(vec![]) }).await?;
+        check_full(acl, &message.from, &[CAP_CRUD], |key| {
+            let name = key.strip_prefix('+').unwrap_or(key).to_string();
+            async move {
+                Ok(ctx
+                    .group_cache
+                    .read()
+                    .await
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_default())
+            }
+        })
+        .await?;
     }
     dispatch_management(message, ctx).await
 }
@@ -117,6 +133,7 @@ async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx) -
         "config" => config::handle_config_ns(message, &rest, tail, args, reply_type, ctx).await,
         "acl" => acl::handle_root_acl(message, tail, args, reply_type, ctx).await,
         "acls" => acl::handle_root_acls(message, &rest, tail, args, reply_type, ctx).await,
+        "grp" => grp::handle_root_grp(message, &rest, tail, args, reply_type, ctx).await,
         // Unknown first segment: treat the full path as a config key path.
         // e.g. :owners → config["owners"], :foo.owners → config["foo"]["owners"]
         _ => {

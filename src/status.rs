@@ -329,7 +329,7 @@ pub async fn grant_owners_in_acl(acl: &SharedAcl, owners: &[String]) {
 }
 
 /// Publish a minimal `RuntimeManifest` to Kubo with an owner-only root ACL
-/// and `config.owners` set. Returns the resulting root CID.
+/// and `/grp/owners` set. Returns the resulting root CID.
 ///
 /// Called once during `POST /claim` when no manifest exists yet.
 pub async fn bootstrap_minimal_manifest(
@@ -356,9 +356,16 @@ pub async fn bootstrap_minimal_manifest(
         .await
         .context("dag_put owner-only ACL")?;
 
+    let owners_cid = crate::kubo::dag_put(kubo_rpc_url, &owners.to_vec())
+        .await
+        .context("dag_put owners group")?;
+
+    let mut grp = std::collections::HashMap::new();
+    grp.insert("owners".to_string(), IpldLink::new(&owners_cid));
+
     let manifest = RuntimeManifest {
         acl: Some(IpldLink::new(&acl_cid)),
-        owners: owners.to_vec(),
+        grp,
         ..Default::default()
     };
 

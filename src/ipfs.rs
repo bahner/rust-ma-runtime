@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 
-use crate::acl::{check_full, AclMap, CAP_IPFS};
+use crate::acl::{check_full, AclMap, GroupCache, CAP_IPFS};
 use crate::i18n;
 use crate::rpc::RPC_PROTOCOL_ID;
 
@@ -54,6 +54,8 @@ pub struct IpfsHandlerCtx<'a> {
     pub resolver: Arc<IpfsGatewayResolver>,
     /// Shared document cache — populated on `DidDocumentPublish`, read on Store.
     pub doc_cache: DocCache,
+    /// Named group cache — backs the `+<name>` principal syntax in the root ACL.
+    pub group_cache: GroupCache,
 }
 
 pub async fn do_publish_own_document(
@@ -499,7 +501,20 @@ pub async fn handle_ipfs_message(
     ctx: &IpfsHandlerCtx<'_>,
     replay_guard: &mut ReplayGuard,
 ) -> Result<()> {
-    check_full(acl, &message.from, &[CAP_IPFS], |_| async { Ok(vec![]) }).await?;
+    let group_cache = ctx.group_cache.clone();
+    check_full(acl, &message.from, &[CAP_IPFS], |key| {
+        let group_cache = group_cache.clone();
+        let name = key.strip_prefix('+').unwrap_or(key).to_string();
+        async move {
+            Ok(group_cache
+                .read()
+                .await
+                .get(&name)
+                .cloned()
+                .unwrap_or_default())
+        }
+    })
+    .await?;
 
     let headers = message.headers();
     replay_guard

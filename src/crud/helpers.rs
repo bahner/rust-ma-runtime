@@ -141,6 +141,24 @@ pub(super) async fn acl_cache_update(ctx: &CrudHandlerCtx, cache_key: &str, cid:
     }
 }
 
+/// Fetch a group's flat `Vec<String>` DID-list document by `cid`, insert it
+/// into `group_cache` under `name`. Logs success or failure; non-fatal either
+/// way — a group that fails to load simply resolves to no members.
+pub(super) async fn group_cache_update(ctx: &CrudHandlerCtx, name: &str, cid: &str) {
+    match crate::kubo::dag_get::<Vec<String>>(&ctx.kubo_rpc_url, cid).await {
+        Ok(members) => {
+            ctx.group_cache
+                .write()
+                .await
+                .insert(name.to_string(), members);
+            info!(name = %name, %cid, "group loaded into cache");
+        }
+        Err(e) => {
+            warn!(name = %name, %cid, error = %e, "failed to load group into cache");
+        }
+    }
+}
+
 /// Spawn an independent task that loads a plugin from `entity_node` and inserts
 /// it into the entity registry (replacing any existing version).
 ///
@@ -167,13 +185,17 @@ pub(super) fn spawn_entity_reload(
     manifest_writer: crate::manifest::ManifestWriter,
 ) {
     tokio::spawn(async move {
-        // Look up the KindNode from the kind registry.
+        // Look up the KindNode. `kind_registry` currently has no writer
+        // anywhere in the codebase (a pre-existing gap, not something this
+        // fixes) — so this always falls through to fetching the manifest
+        // and kind fresh from IPFS. Kept as a cache-first check in case
+        // that changes later; harmless either way since it's checked
+        // before any network call.
         let kind_node: Arc<KindNode> = {
             let registry = kind_registry.read().await;
             if let Some(k) = registry.get(&entity_node.kind).cloned() {
                 k
             } else {
-                // Fall back: fetch from IPFS via the manifest.
                 drop(registry);
                 let root_cid = stats.read().await.root_cid.clone();
                 let Some(root_cid) = root_cid else {
@@ -198,13 +220,28 @@ pub(super) fn spawn_entity_reload(
                     warn!(name = %name, kind = %entity_node.kind, "kind not in manifest; cannot reload entity");
                     return;
                 };
-                match crate::kubo::dag_get::<KindNode>(&kubo_rpc_url, &kind_link.cid).await {
-                    Ok(k) => Arc::new(k),
-                    Err(e) => {
-                        warn!(name = %name, kind = %entity_node.kind, error = %e, "failed to fetch kind node; cannot reload entity");
-                        return;
+                let raw_kind: KindNode =
+                    match crate::kubo::dag_get(&kubo_rpc_url, &kind_link.cid).await {
+                        Ok(k) => k,
+                        Err(e) => {
+                            warn!(name = %name, kind = %entity_node.kind, error = %e, "failed to fetch kind node; cannot reload entity");
+                            return;
+                        }
+                    };
+                let resolved = if raw_kind.extends.is_some() {
+                    match crate::entity::resolve_kind_extends(&kubo_rpc_url, &manifest, raw_kind)
+                        .await
+                    {
+                        Ok(k) => k,
+                        Err(e) => {
+                            warn!(name = %name, kind = %entity_node.kind, error = %e, "failed to resolve kind extends chain; cannot reload entity");
+                            return;
+                        }
                     }
-                }
+                } else {
+                    raw_kind
+                };
+                Arc::new(resolved)
             }
         };
 
