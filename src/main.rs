@@ -701,7 +701,11 @@ async fn populate_default_config_root(
         return;
     };
     match kubo::dag_get::<entity::RuntimeManifest>(kubo_rpc_url, &root_cid).await {
-        Ok(manifest) if manifest.config.contains_key("root") => return,
+        Ok(manifest)
+            if manifest.config.contains_key("root") && manifest.config.contains_key("start") =>
+        {
+            return;
+        }
         Ok(_) => {}
         Err(e) => {
             warn!(error = %format!("{e:#}"), "{}", i18n::t("default-config-root-inspect-failed"));
@@ -710,11 +714,15 @@ async fn populate_default_config_root(
     }
 
     let default_root = format!("{our_did}#root");
+    let default_start = format!("{our_did}#construct");
     match manifest_writer
         .mutate(move |m| {
             m.config
                 .entry("root".to_string())
                 .or_insert_with(|| serde_yaml::Value::String(default_root));
+            m.config
+                .entry("start".to_string())
+                .or_insert_with(|| serde_yaml::Value::String(default_start));
             Ok(())
         })
         .await

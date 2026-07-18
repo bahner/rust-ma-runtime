@@ -568,7 +568,10 @@ mod tests {
     #[test]
     fn rpc_reply_is_classified_separately_from_requests() {
         assert_eq!(rpc_message_kind(MESSAGE_TYPE_RPC), RpcMessageKind::Request);
-        assert_eq!(rpc_message_kind(MESSAGE_TYPE_RPC_REPLY), RpcMessageKind::Reply);
+        assert_eq!(
+            rpc_message_kind(MESSAGE_TYPE_RPC_REPLY),
+            RpcMessageKind::Reply
+        );
         assert_eq!(rpc_message_kind("text/plain"), RpcMessageKind::Unsupported);
     }
 }
