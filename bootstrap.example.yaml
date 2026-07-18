@@ -62,18 +62,19 @@ runtime:
   # IPLD path traversal works:
   #   ipfs dag get .../kinds/ma/python/actor/0.0.1
   kinds:
-    # Generic "bring-your-own-behaviour" ma-scheme actor. One shared Wasm
-    # binary (`cid`) interprets every entity's own `.ma` source, supplied
-    # per-entity via `EntityNode.behaviour` (ma-runtime-v1.md §11.2/§14.1).
+    # Generic ma-scheme actor. One shared Wasm binary (`cid`) interprets
+    # concatenated `.ma` source layers: this kind's stdlib `behaviour`, any
+    # derived kind behaviour, then each entity's own `EntityNode.behaviour`.
     # There is no `api`/`lifecycle` field — every kind exports exactly
     # `on_message` + `on_signal`, always (ma-scheme-v1.md §3, §16).
     # Regenerate the `cid` below with (from rust-ma-scheme-actor):
     #   make actor.wasm && ipfs add --quieter actor.wasm
     /ma/scheme/actor/0.0.1:
       cid:
-        "/": bafkreie35ubx3zapzthdsjnjdu4yepufnrzyczlwn66fgxsws3npjnknqm
+        "/": bafkreig5y3xyx3tewfegbfe5fclhhjnnyb4jnkgdp77naj4hzpjntbfdkm
       type: extism
-      behaviour: /ma/scheme/actor/0.0.1
+      behaviour:
+        "/": bafkreialwzyindzb53xgwchpnb5f6cuatrixbdmsbr3gkdykanbilq6ecy
       attributes:
         wasi: false
         stateful: true
@@ -89,17 +90,9 @@ runtime:
         # concern.
         - ma_create_entity
 
-    # A genesis/tree-root variant of the same kind — reuses
-    # /ma/scheme/actor/0.0.1's `cid`/`type`/`behaviour`/`host_functions`
-    # entirely via `extends` (see `entity::resolve_kind_extends` for exact
-    # merge rules: cid/behaviour override-if-set else inherited,
-    # attributes merge key-by-key, host_functions/allow are an additive
-    # union). Only adds `attributes.genesis: true` (hardcoded rule,
-    # enforced at CRUD upsert: only an owner may create an instance, and
-    # it always gets `parent: null`). Each entity of this kind still
-    # supplies its own `.ma` source via `EntityNode.behaviour` (an IPLD
-    # link to content), inherited dialect-wise from the base kind's
-    # `behaviour: /ma/scheme/actor/0.0.1` — never a CID on the kind itself.
+    # A genesis/tree-root variant of the same kind — reuses the scheme actor
+    # Wasm and stdlib behaviour via `extends`. Behaviour links compose
+    # base-first; this kind adds no extra source layer of its own.
     /ma/genesis/0.0.1:
       extends: /ma/scheme/actor/0.0.1
       attributes:
@@ -109,8 +102,8 @@ runtime:
   #
   #   inline:   bootstrap builds and publishes the EntityNode from the descriptor.
   #             `behaviour` is an IPLD link to the entity's own content — Wasm
-  #             bytes for a kind with no shared `cid`, or `.ma` source text for
-  #             a kind (like /ma/scheme/actor/0.0.1) that declares `behaviour`.
+  #             bytes for a kind with no shared `cid`, or `.ma` source text that
+  #             is appended after all kind-level behaviour layers.
   #             `acl` references a named ACL from `acls:` above (empty = deny-all).
   entities:
   # #root, #house, #avatar deferred — add scheme-actor entities here later

@@ -246,27 +246,54 @@ impl EntityPlugin {
                 .await
                 .with_context(|| format!("fetching wasm for '{fragment}' from {wasm_cid}"))?;
 
-            // If this kind declares a behaviour dialect and the entity
-            // carries its own behaviour source reference, fetch it as
-            // plain text for `set_behaviour` — a single, flat fetch, no
-            // recursion/directive scanning of any kind (that is entirely
-            // a ma-scheme-level concern now, handled by the dialect's own
-            // `ma-include-ipfs`, ma-scheme-v1.md §11.1).
+            // Compose kind-level behaviour (base-first, when `extends` was
+            // resolved) followed by the entity's own source. The runtime only
+            // concatenates bytes; parsing/evaluation still happens inside the
+            // actor host via `:set-behaviour`.
             let entity_behaviour_cid = node.behaviour.as_ref().map(|l| l.cid.clone());
-            let behaviour_text: Option<Vec<u8>> = if kind_node.behaviour.is_some() {
-                match &entity_behaviour_cid {
-                    Some(cid) => Some(
-                        crate::behaviour::fetch_behaviour(kubo_url, cid)
-                            .await
-                            .with_context(|| {
-                                format!("fetching behaviour for '{fragment}' from {cid}")
-                            })?,
-                    ),
-                    None => None,
-                }
+            let kind_behaviours = if kind_node.behaviour_chain.is_empty() {
+                kind_node.behaviour.iter().cloned().collect::<Vec<_>>()
             } else {
-                None
+                kind_node.behaviour_chain.clone()
             };
+            let behaviour_text: Option<Vec<u8>> =
+                if kind_behaviours.is_empty() && entity_behaviour_cid.is_none() {
+                    None
+                } else {
+                    let mut parts = Vec::new();
+                    for link in &kind_behaviours {
+                        parts.push(
+                            crate::behaviour::fetch_behaviour(kubo_url, &link.cid)
+                                .await
+                                .with_context(|| {
+                                    format!(
+                                        "fetching kind behaviour for '{fragment}' from {}",
+                                        link.cid
+                                    )
+                                })?,
+                        );
+                    }
+                    if let Some(cid) = &entity_behaviour_cid {
+                        parts.push(
+                            crate::behaviour::fetch_behaviour(kubo_url, cid)
+                                .await
+                                .with_context(|| {
+                                    format!("fetching entity behaviour for '{fragment}' from {cid}")
+                                })?,
+                        );
+                    }
+                    let mut combined = Vec::new();
+                    for part in parts {
+                        if !combined.is_empty() && !combined.ends_with(b"\n") {
+                            combined.push(b'\n');
+                        }
+                        combined.extend_from_slice(&part);
+                        if !combined.ends_with(b"\n") {
+                            combined.push(b'\n');
+                        }
+                    }
+                    Some(combined)
+                };
             (wasm_cid, wasm_bytes, entity_behaviour_cid, behaviour_text)
         } else {
             // No shared binary for this kind — the entity must supply its
@@ -512,6 +539,7 @@ mod hostile {
             cid: Some(IpldLink::new(wasm_cid)),
             kind_type: Evaluator::Extism,
             behaviour: None,
+            behaviour_chain: Vec::new(),
             host_functions: vec![],
             attributes,
             extends: None,
@@ -748,6 +776,7 @@ mod wasm_repro {
             cid: Some(IpldLink::new(&cid)),
             kind_type: Evaluator::Extism,
             behaviour: None,
+            behaviour_chain: Vec::new(),
             host_functions: vec![
                 "ma_reply".to_string(),
                 "ma_set_state".to_string(),
@@ -846,6 +875,7 @@ mod wasm_repro {
             cid: Some(IpldLink::new(&cid)),
             kind_type: Evaluator::Extism,
             behaviour: None,
+            behaviour_chain: Vec::new(),
             host_functions: vec![
                 "ma_reply".to_string(),
                 "ma_set_state".to_string(),
@@ -1011,7 +1041,8 @@ mod wasm_repro {
             protocol: "/ma/scheme/actor/0.0.1".to_string(),
             cid: Some(IpldLink::new(&wasm_cid)),
             kind_type: Evaluator::Extism,
-            behaviour: Some("/ma/scheme/actor/0.0.1".to_string()),
+            behaviour: Some(IpldLink::new("bafystdlibplaceholder")),
+            behaviour_chain: Vec::new(),
             // Conformance (ma-scheme-v1.md §16) requires at least these
             // three, plus ma_ipfs_include for kinds whose scripts may use
             // ma-include-ipfs (§11.1) -- this fixture's main.ma does. There

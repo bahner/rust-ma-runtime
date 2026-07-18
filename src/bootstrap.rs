@@ -64,11 +64,10 @@ pub struct BootstrapKind {
     /// (was `evaluator` in an earlier draft — same field, renamed).
     #[serde(rename = "type", default)]
     pub kind_type: crate::entity::Evaluator,
-    /// Optional behaviour-dialect identifier (e.g. `/ma/scheme/actor/0.0.1`).
-    /// When present, entities of this kind each carry their own
-    /// `EntityNode.behaviour` source reference.
+    /// Optional kind-level behaviour source text CID. For scriptable shared
+    /// binary kinds, this source is loaded before per-entity behaviour.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub behaviour: Option<String>,
+    pub behaviour: Option<IpldLink>,
     #[serde(default)]
     pub host_functions: Vec<String>,
     #[serde(default)]
@@ -106,10 +105,10 @@ pub enum BootstrapEntity {
     Inline {
         /// Protocol ID of this entity's kind (e.g. `/ma/stateless/python/0.0.1`).
         kind: String,
-        /// IPLD link to this entity's own behaviour-dialect source, if the
-        /// kind declares `BootstrapKind.behaviour`. **Not** the Wasm binary
-        /// — that lives on the kind's own `cid`, shared by every entity of
-        /// the kind.
+        /// IPLD link to this entity's own behaviour source. For shared-binary
+        /// scriptable kinds this text is appended after kind-level behaviour
+        /// layers; for kinds with no shared `cid`, it is the entity's own
+        /// Wasm binary.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         behaviour: Option<IpldLink>,
         /// Named ACL reference resolved via `acls.<name>` in the manifest.
@@ -220,6 +219,7 @@ async fn publish_kinds(cfg: &BootstrapRuntime, kubo_url: &str) -> Result<KindTre
             cid: bk.cid.clone(),
             kind_type: bk.kind_type.clone(),
             behaviour: bk.behaviour.clone(),
+            behaviour_chain: Vec::new(),
             host_functions: bk.host_functions.clone(),
             attributes: bk.attributes.clone(),
             extends: bk.extends.clone(),
@@ -449,12 +449,23 @@ pub async fn load_entities(
             tracing::warn!(name = %name, kind = %node.kind, "Kind not found in manifest; skipping entity");
             continue;
         };
-        let kind_node: KindNode = match kubo::dag_get(kubo_url, &kind_link.cid).await {
+        let raw_kind: KindNode = match kubo::dag_get(kubo_url, &kind_link.cid).await {
             Ok(k) => k,
             Err(e) => {
                 tracing::warn!(name = %name, kind = %node.kind, cid = %kind_link.cid, "Failed to fetch kind node: {e}");
                 continue;
             }
+        };
+        let kind_node = if raw_kind.extends.is_some() {
+            match crate::entity::resolve_kind_extends(kubo_url, &manifest, raw_kind).await {
+                Ok(k) => k,
+                Err(e) => {
+                    tracing::warn!(name = %name, kind = %node.kind, "Failed to resolve kind extends chain: {e}");
+                    continue;
+                }
+            }
+        } else {
+            raw_kind
         };
         let init_payload = node.init.as_ref().map(|s| s.as_bytes().to_vec());
         match plugin::EntityPlugin::load(
@@ -626,7 +637,7 @@ mod tests {
             .kinds
             .get("/ma/scheme/actor/0.0.1")
             .expect("/ma/scheme/actor/0.0.1 kind must be present");
-        assert_eq!(kind.behaviour.as_deref(), Some("/ma/scheme/actor/0.0.1"));
+        assert!(kind.behaviour.is_some());
         assert!(kind.cid.is_some());
 
         let genesis_kind = yaml

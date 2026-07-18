@@ -127,8 +127,8 @@ struct CreateEntityCtx {
 // `ma_create_entity` host function: plugin requests creation of a new entity.
 //
 // Input is CBOR-encoded `{ "kind": "/ma/…/0.0.1", "behaviour": "bafyCID",
-// "init": <payload> }`. `behaviour` is only meaningful for kinds that
-// declare `KindNode.behaviour`; `init` is the opaque `:init` signal creation
+// "init": <payload> }`. For shared-binary scriptable kinds, `behaviour`
+// is appended after kind-level behaviour layers; `init` is the opaque `:init` signal creation
 // payload (§14.2.1). Both are optional. The runtime generates a nanoid
 // fragment, queues the request, and returns the fragment string
 // (CBOR-encoded) to the plugin immediately. Actual plugin loading and
@@ -255,9 +255,8 @@ host_fn!(ma_end_fn(user_data: DeleteEntityCtx; _input: Vec<u8>) -> Vec<u8> {
 
 // ── ma-include-ipfs host function ─────────────────────────────────────────────
 //
-// Available only to kinds that declare `KindNode.behaviour` (a dialect
-// identifier) whose dialect supports library composition (ma-scheme does,
-// via `ma-include-ipfs`, ma-scheme-v1.md §11.1).
+// Available only to scriptable kinds whose language supports library
+// composition (ma-scheme does, via `ma-include-ipfs`, ma-scheme-v1.md §11.1).
 //
 // There is deliberately no `ma_get_behaviour`/`ma_get_behaviour_cid`/
 // `ma_set_behaviour_cid` here — an earlier draft had all three, plus a
@@ -320,8 +319,7 @@ pub(super) struct WasmThreadCfg {
     /// `is_genesis`.
     pub(super) init_payload: Option<Vec<u8>>,
     /// Pre-resolved behaviour source text for the `:set-behaviour` signal,
-    /// if this kind
-    /// declares a behaviour dialect and the entity has a reference.
+    /// assembled from kind-level and entity-level behaviour links.
     pub(super) behaviour_text: Option<Vec<u8>>,
     pub(super) node_kind: String,
     pub(super) envelope_tx: UnboundedSender<(String, SendEnvelope)>,

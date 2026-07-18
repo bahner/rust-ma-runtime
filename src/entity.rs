@@ -305,11 +305,10 @@ pub struct KindNode {
     /// "bring-your-own-compiled-actor" kind like `/ma/python/actor/0.0.1`):
     /// for those, `EntityNode.behaviour` holds that entity's own Wasm bytes
     /// directly (instantiated as-is, never interpreted as text) and this
-    /// field is omitted entirely. When present, `EntityNode.behaviour` (if
-    /// the kind also declares the `behaviour` dialect field below) instead
-    /// holds per-entity *interpreted source text* fed to the shared binary
-    /// named here (e.g. the ma-scheme case) — never raw Wasm bytes in that
-    /// case.
+    /// field is omitted entirely. When present, `KindNode.behaviour` and
+    /// `EntityNode.behaviour` are interpreted source text layers fed to the
+    /// shared binary (e.g. the ma-scheme case) — never raw Wasm bytes in
+    /// that case.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cid: Option<IpldLink>,
     /// How the runtime executes Wasm bytes for this kind. Serialised as
@@ -317,17 +316,18 @@ pub struct KindNode {
     /// field, renamed).
     #[serde(rename = "type", default)]
     pub kind_type: Evaluator,
-    /// Optional behaviour-dialect identifier (e.g. `/ma/scheme/actor/0.0.1`).
-    /// Only meaningful when `cid` (above) is `Some` — it declares that this
-    /// kind's entities each carry their own per-entity *interpreted source
-    /// text* in `EntityNode.behaviour`, fetched by the runtime as a single,
-    /// flat blob (no scanning/composition of any kind) and passed to
-    /// `set_behaviour`. Composition (e.g. ma-scheme's `ma-include-ipfs`) is
-    /// entirely the dialect's own concern, via `ma_ipfs_include` — see
-    /// `crate::behaviour`. Kinds with no per-entity scriptable behaviour
-    /// (including kinds with no shared `cid` at all) simply omit this field.
+    /// Optional kind-level behaviour source. Only meaningful when `cid`
+    /// (above) is `Some`: the linked text is loaded before any per-entity
+    /// `EntityNode.behaviour` text and handed to the shared binary via
+    /// `:set-behaviour`. Derived kinds append their behaviour after base
+    /// kinds, so a chain can layer stdlib → room defaults → entity source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub behaviour: Option<String>,
+    pub behaviour: Option<IpldLink>,
+    /// Resolved base-first behaviour chain. This is runtime-only state built
+    /// by `resolve_kind_extends`; raw KindNodes on IPFS still carry only their
+    /// own optional `behaviour` link.
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub behaviour_chain: Vec<IpldLink>,
     /// Host functions the runtime makes available to plugins of this kind.
     /// Principle of least privilege: only register what the kind actually needs.
     pub host_functions: Vec<String>,
@@ -381,8 +381,10 @@ impl KindNode {
 ///
 /// Merge rules (the derived/more-specific kind's own value always wins
 /// where it has one):
-/// - `cid`, `behaviour`: derived `Some` overrides; derived `None` inherits
-///   the base's.
+/// - `cid`: derived `Some` overrides; derived `None` inherits the base's.
+/// - `behaviour`: all links are composed base-first. The resolved kind keeps
+///   a runtime-only `behaviour_chain`; the public `behaviour` field remains
+///   the most-derived own behaviour link for round-tripping/debug display.
 /// - `kind_type`: **never** inherited — always the derived kind's own
 ///   value (defaults to `Extism` like any other `KindNode`).
 /// - `attributes`: key-level merge — a key present on the derived kind
@@ -436,11 +438,24 @@ fn merge_kind_over_base(base: KindNode, derived: KindNode) -> KindNode {
     }
     let mut attributes = base.attributes.clone();
     attributes.extend(derived.attributes.clone());
+    let mut behaviour_chain = if base.behaviour_chain.is_empty() {
+        base.behaviour.iter().cloned().collect::<Vec<_>>()
+    } else {
+        base.behaviour_chain.clone()
+    };
+    if derived.behaviour_chain.is_empty() {
+        if let Some(link) = &derived.behaviour {
+            behaviour_chain.push(link.clone());
+        }
+    } else {
+        behaviour_chain.extend(derived.behaviour_chain.clone());
+    }
     KindNode {
         protocol: derived.protocol,
         cid: derived.cid.or(base.cid),
         kind_type: derived.kind_type,
         behaviour: derived.behaviour.or(base.behaviour),
+        behaviour_chain,
         host_functions,
         attributes,
         extends: None,
@@ -508,11 +523,10 @@ pub enum Evaluator {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityNode {
     pub kind: String,
-    /// IPLD link to this entity's own behaviour-dialect source (a single
-    /// reference — no multi-piece composition). Present only for entities
-    /// of a kind that declares `KindNode.behaviour`; absent otherwise.
-    /// **Not** the Wasm binary — that now lives on `KindNode.cid`, shared
-    /// by every entity of the kind.
+    /// IPLD link to this entity's own behaviour source. For shared-binary
+    /// scriptable kinds this text is appended after all kind-level behaviour
+    /// layers. For kinds with no shared `KindNode.cid`, this is the entity's
+    /// own Wasm binary instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub behaviour: Option<IpldLink>,
     /// Entity verb-ACL — name string resolved via `acls.<name>` in the root
@@ -670,7 +684,8 @@ pub struct CreateEntityRequest {
     /// Protocol ID of the kind to instantiate (e.g. `/ma/stateless/ping/0.0.1`).
     pub kind_protocol: String,
     /// Optional per-entity behaviour source CID — becomes `EntityNode.behaviour`.
-    /// Only meaningful for kinds that declare `KindNode.behaviour`.
+    /// For shared-binary scriptable kinds, this is appended after kind-level
+    /// behaviour layers.
     pub behaviour_cid: Option<String>,
     /// Optional, opaque creation payload passed verbatim via the `:init`
     /// signal on this entity's very first load. Not persisted — discarded
@@ -782,6 +797,7 @@ mod tests {
             cid: None,
             kind_type: Evaluator::Extism,
             behaviour: None,
+            behaviour_chain: Vec::new(),
             host_functions: vec![],
             attributes: BTreeMap::new(),
             extends: None,
@@ -882,7 +898,8 @@ mod tests {
             protocol: "/ma/scheme/actor/0.0.1".to_string(),
             cid: Some(IpldLink::new("bafyactorwasm")),
             kind_type: Evaluator::Extism,
-            behaviour: None,
+            behaviour: Some(IpldLink::new("bafystdlib")),
+            behaviour_chain: Vec::new(),
             host_functions: vec!["ma_reply".to_string(), "ma_set_state".to_string()],
             attributes: {
                 let mut m = BTreeMap::new();
@@ -903,7 +920,8 @@ mod tests {
             protocol: "/ma/genesis/0.0.1".to_string(),
             cid: None, // inherit base's
             kind_type: Evaluator::Extism,
-            behaviour: Some("bafkreibehaviour".to_string()),
+            behaviour: Some(IpldLink::new("bafyroom")),
+            behaviour_chain: Vec::new(),
             host_functions: vec!["ma_create_entity".to_string()], // additive
             attributes: {
                 let mut m = BTreeMap::new();
@@ -927,9 +945,18 @@ mod tests {
             "cid inherited from base since derived didn't set one"
         );
         assert_eq!(
-            resolved.behaviour.as_deref(),
-            Some("bafkreibehaviour"),
-            "derived's own behaviour wins"
+            resolved.behaviour.map(|l| l.cid),
+            Some("bafyroom".to_string()),
+            "most-derived own behaviour remains visible"
+        );
+        assert_eq!(
+            resolved
+                .behaviour_chain
+                .iter()
+                .map(|l| l.cid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["bafystdlib", "bafyroom"],
+            "behaviour_chain composes base first"
         );
         assert_eq!(
             resolved.host_functions,
