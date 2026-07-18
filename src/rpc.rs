@@ -61,6 +61,16 @@ pub async fn handle_rpc_message(
     acl: &AclMap,
     ctx: &RpcHandlerCtx,
 ) -> Result<()> {
+    if rpc_message_kind(&message.message_type) == RpcMessageKind::Reply {
+        debug!(
+            from = %message.from,
+            to = %message.to,
+            reply_to = ?message.reply_to,
+            "RPC reply ignored: no runtime reply waiter"
+        );
+        return Ok(());
+    }
+
     // Intra-runtime messages (sender = `<our_did>#<entity>`) skip the root ACL
     // transport gate — they are trusted local dispatches between entities on
     // this runtime.
@@ -85,7 +95,7 @@ pub async fn handle_rpc_message(
         }
     }
 
-    if message.message_type != MESSAGE_TYPE_RPC {
+    if rpc_message_kind(&message.message_type) != RpcMessageKind::Request {
         return Err(anyhow!(
             "unsupported RPC message type '{}' on {}",
             message.message_type,
@@ -144,6 +154,21 @@ pub async fn handle_rpc_message(
 fn extract_fragment<'a>(to: &'a str, our_did: &str) -> Option<&'a str> {
     let prefix = format!("{our_did}#");
     to.strip_prefix(prefix.as_str())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RpcMessageKind {
+    Request,
+    Reply,
+    Unsupported,
+}
+
+fn rpc_message_kind(message_type: &str) -> RpcMessageKind {
+    match message_type {
+        MESSAGE_TYPE_RPC => RpcMessageKind::Request,
+        MESSAGE_TYPE_RPC_REPLY => RpcMessageKind::Reply,
+        _ => RpcMessageKind::Unsupported,
+    }
 }
 
 // ── Entity plugin dispatch ────────────────────────────────────────────────────
@@ -518,7 +543,9 @@ fn send_rpc_error_reply(
 
 #[cfg(test)]
 mod tests {
-    use super::extract_fragment;
+    use ma_core::{MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY};
+
+    use super::{extract_fragment, rpc_message_kind, RpcMessageKind};
 
     #[test]
     fn strips_matching_did_prefix() {
@@ -536,5 +563,12 @@ mod tests {
     #[test]
     fn none_without_fragment() {
         assert_eq!(extract_fragment("did:ma:abc", "did:ma:abc"), None);
+    }
+
+    #[test]
+    fn rpc_reply_is_classified_separately_from_requests() {
+        assert_eq!(rpc_message_kind(MESSAGE_TYPE_RPC), RpcMessageKind::Request);
+        assert_eq!(rpc_message_kind(MESSAGE_TYPE_RPC_REPLY), RpcMessageKind::Reply);
+        assert_eq!(rpc_message_kind("text/plain"), RpcMessageKind::Unsupported);
     }
 }
