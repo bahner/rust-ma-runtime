@@ -611,6 +611,15 @@ async fn main() -> Result<()> {
         }
     }
 
+    populate_default_config_root(
+        &manifest_writer,
+        &entity_registry,
+        &stats,
+        &config.kubo_rpc_url,
+        &our_did,
+    )
+    .await;
+
     // Periodic DID-document republishing from the in-memory runtime head.
     let did_publish_cache_warm_secs =
         get_u64_setting(&config, "did_publish_cache_warm_secs", 86_400);
@@ -673,4 +682,46 @@ async fn main() -> Result<()> {
         cli.poll_ms,
     )
     .await
+}
+
+async fn populate_default_config_root(
+    manifest_writer: &manifest::ManifestWriter,
+    entity_registry: &plugin::EntityRegistry,
+    stats: &status::SharedStats,
+    kubo_rpc_url: &str,
+    our_did: &str,
+) {
+    if !entity_registry.read().await.contains_key("root") {
+        warn!("{}", i18n::t("default-config-root-no-root-entity"));
+        return;
+    }
+
+    let Some(root_cid) = stats.read().await.root_cid.clone() else {
+        warn!("{}", i18n::t("default-config-root-no-root-cid"));
+        return;
+    };
+    match kubo::dag_get::<entity::RuntimeManifest>(kubo_rpc_url, &root_cid).await {
+        Ok(manifest) if manifest.config.contains_key("root") => return,
+        Ok(_) => {}
+        Err(e) => {
+            warn!(error = %format!("{e:#}"), "{}", i18n::t("default-config-root-inspect-failed"));
+            return;
+        }
+    }
+
+    let default_root = format!("{our_did}#root");
+    match manifest_writer
+        .mutate(move |m| {
+            m.config
+                .entry("root".to_string())
+                .or_insert_with(|| serde_yaml::Value::String(default_root));
+            Ok(())
+        })
+        .await
+    {
+        Ok(cid) => info!(cid = %cid, "{}", i18n::t("default-config-root-populated")),
+        Err(e) => {
+            warn!(error = %format!("{e:#}"), "{}", i18n::t("default-config-root-populate-failed"))
+        }
+    }
 }

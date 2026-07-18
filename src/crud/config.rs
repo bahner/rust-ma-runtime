@@ -28,6 +28,7 @@ const DAEMON_CONFIG_KEYS: &[&str] = DAEMON_CONFIG_KEYS_PUB;
 
 /// Manifest config keys that may be written via CRUD (stored in IPFS DAG).
 const MANIFEST_CONFIG_KEYS: &[&str] = &[
+    "root",
     "i18n",
     "did_document_publishing_interval_secs",
     "did_document_publishing_timeout_secs",
