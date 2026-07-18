@@ -1,8 +1,8 @@
 //! Native `#scheduler` entity — compiled-in schedule-registration actor.
 //!
 //! `#scheduler` is a system entity whose implementation lives here in Rust
-//! rather than in a Wasm module.  It is registered in the entity registry at
-//! startup via [`make_native_dispatch`] + [`crate::plugin::EntityPlugin::new_native`].
+//! rather than in a Wasm module. It is loaded from the manifest through the
+//! native factory registry.
 //!
 //! ## Protocol
 //!
@@ -30,7 +30,7 @@
 //!
 //! Kind protocol: [`SCHEDULER_KIND`] (`/ma/scheduler/0.0.1`)
 //! Evaluator: `native`
-//! API: `["handle_cast"]` (stateless — schedule state lives in the `JobScheduler`)
+//! API: `["handle_cast"]`
 
 use std::sync::Arc;
 
@@ -38,42 +38,14 @@ use anyhow::{anyhow, Result};
 use ciborium::Value as CborValue;
 use tracing::warn;
 
-use crate::entity::{CastInput, EntityNode};
-use crate::plugin::{DispatchResult, NativeDispatch};
+use crate::entity::CastInput;
+use crate::plugin::{DispatchResult, NativeActor, NativeFactory, NativeSignal};
 use crate::schedule::{parse_duration, register_schedule, ScheduleRequest, SchedulerCtx};
 
 /// Kind protocol ID for the native scheduler entity.
 pub const SCHEDULER_KIND: &str = "/ma/scheduler/0.0.1";
 
-/// Fragment name for the scheduler entity (no `#` prefix).
-pub const SCHEDULER_FRAGMENT: &str = "scheduler";
-
-/// ACL name used to gate access to `#scheduler`.
-///
-/// Must be present in the root manifest's `acls` map.
-/// The recommended ACL allows only local entities: `"#": [handle_cast]`.
-pub const SCHEDULER_ACL: &str = "scheduler";
-
-/// Build the [`EntityNode`] for `#scheduler`.
-///
-/// `behaviour` is `None` — native entities have no Wasm.
-/// `initialized: true` — native entities have no genesis `:init` signal to
-/// fire (see `EntityPlugin::new_native`), so there is nothing to gate.
-pub fn entity_node() -> EntityNode {
-    EntityNode {
-        kind: SCHEDULER_KIND.to_string(),
-        behaviour: None,
-        acl: SCHEDULER_ACL.to_string(),
-        state: None,
-        parent: None,
-        label: Some("Scheduler".to_string()),
-        attributes: std::collections::BTreeMap::new(),
-        init: None,
-        initialized: true,
-    }
-}
-
-/// Build the [`NativeDispatch`] closure for `#scheduler`.
+/// Build the native actor for `#scheduler`.
 ///
 /// The closure captures `sched` (the running [`tokio_cron_scheduler::JobScheduler`])
 /// and `ctx` (the [`SchedulerCtx`] needed by [`register_schedule`]).
@@ -81,11 +53,11 @@ pub fn entity_node() -> EntityNode {
 /// On each call it parses the incoming CBOR array, spawns an async task to
 /// register the schedule, and returns `:ok` immediately (fire-and-forget).
 /// Parse errors are returned as `Err` so the caller can send an error reply.
-pub fn make_native_dispatch(
+pub fn native_actor(
     sched: Arc<tokio_cron_scheduler::JobScheduler>,
     ctx: SchedulerCtx,
-) -> NativeDispatch {
-    Arc::new(move |input: &CastInput| -> Result<DispatchResult> {
+) -> NativeActor {
+    NativeActor::new(move |input: &CastInput| -> Result<DispatchResult> {
         let term: CborValue = ciborium::de::from_reader(input.msg.content.as_slice())
             .map_err(|e| anyhow!("scheduler: invalid CBOR in message: {e}"))?;
 
@@ -102,7 +74,6 @@ pub fn make_native_dispatch(
             }
         });
 
-        // Return :ok immediately — registration is async / fire-and-forget.
         let mut out = Vec::new();
         ciborium::ser::into_writer(&CborValue::Text(":ok".to_string()), &mut out)
             .map_err(|e| anyhow!("scheduler: CBOR encode :ok: {e}"))?;
@@ -113,6 +84,24 @@ pub fn make_native_dispatch(
             delete_requests: vec![],
         })
     })
+    .with_state_hooks(|| None, |_| {})
+    .with_signal(|signal| {
+        match signal {
+            NativeSignal::SetState(_bytes) => {}
+            NativeSignal::Init(_payload) => {}
+            NativeSignal::Start => {}
+            NativeSignal::Shutdown => {}
+        }
+        Ok(())
+    })
+}
+
+/// Build the native factory used by manifest loading for `/ma/scheduler/0.0.1`.
+pub fn native_factory(
+    sched: Arc<tokio_cron_scheduler::JobScheduler>,
+    ctx: SchedulerCtx,
+) -> NativeFactory {
+    Arc::new(move || native_actor(Arc::clone(&sched), ctx.clone()))
 }
 
 // ── Internal types ────────────────────────────────────────────────────────────

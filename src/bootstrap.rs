@@ -16,6 +16,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::acl::AclMap;
+use crate::entity::Evaluator;
 use crate::entity::{EntityNode, IpldLink, KindNode, KindTree, PluginKind, RuntimeManifest};
 use crate::kubo;
 use crate::plugin;
@@ -420,6 +421,7 @@ pub async fn load_entities(
     kubo_url: &str,
     our_did: &str,
     registry: &plugin::EntityRegistry,
+    native_factories: &plugin::NativeFactories,
     envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, crate::entity::SendEnvelope)>,
     avatar_key: [u8; 32],
     iroh_node_id: &str,
@@ -436,80 +438,36 @@ pub async fn load_entities(
     let mut loaded = 0usize;
     let mut manifest_updated = false;
     for (name, link) in manifest.entities.clone() {
-        let node: EntityNode = match kubo::dag_get(kubo_url, &link.cid).await {
-            Ok(n) => n,
-            Err(e) => {
-                tracing::warn!(name = %name, cid = %link.cid, "Failed to fetch entity node: {e}");
-                continue;
-            }
-        };
-        let kind_link = if let Some(l) = manifest.kinds.get_protocol(&node.kind) {
-            l.clone()
-        } else {
-            tracing::warn!(name = %name, kind = %node.kind, "Kind not found in manifest; skipping entity");
+        let Some((node, kind_node)) = load_entity_and_kind(&manifest, kubo_url, &name, &link).await
+        else {
             continue;
         };
-        let raw_kind: KindNode = match kubo::dag_get(kubo_url, &kind_link.cid).await {
-            Ok(k) => k,
-            Err(e) => {
-                tracing::warn!(name = %name, kind = %node.kind, cid = %kind_link.cid, "Failed to fetch kind node: {e}");
-                continue;
-            }
-        };
-        let kind_node = if raw_kind.extends.is_some() {
-            match crate::entity::resolve_kind_extends(kubo_url, &manifest, raw_kind).await {
-                Ok(k) => k,
-                Err(e) => {
-                    tracing::warn!(name = %name, kind = %node.kind, "Failed to resolve kind extends chain: {e}");
-                    continue;
-                }
-            }
-        } else {
-            raw_kind
-        };
-        let init_payload = node.init.as_ref().map(|s| s.as_bytes().to_vec());
-        match plugin::EntityPlugin::load(
-            name.clone(),
-            &node,
-            &kind_node,
+
+        let load = LoadEntityArgs {
+            name: &name,
+            node: &node,
+            kind_node: &kind_node,
             our_did,
             kubo_url,
-            envelope_tx.clone(),
-            registry.clone(),
+            envelope_tx: envelope_tx.clone(),
+            registry: registry.clone(),
             avatar_key,
             iroh_node_id,
             started_at,
-            init_payload, // EntityNode.init (genesis-via-CRUD/bootstrap), only fires if genesis
-        )
-        .await
-        {
-            Ok((ep, lifecycle)) => {
-                tracing::info!(name = %name, lifecycle = %lifecycle, "{}", crate::i18n::t("entity-loaded"));
-                // Persist the initialized transition (false → true) to IPFS,
-                // in the background — never something a caller declares or
-                // manages by hand (see `EntityNode::initialized`'s doc comment).
-                if !node.initialized && lifecycle == crate::entity::Lifecycle::Running {
-                    let mut updated = node.clone();
-                    updated.initialized = true;
-                    match kubo::dag_put(kubo_url, &updated).await {
-                        Ok(new_cid) => {
-                            tracing::debug!(name = %name, cid = %new_cid, "Updated entity lifecycle in IPFS");
-                            manifest
-                                .entities
-                                .insert(name.clone(), IpldLink::new(new_cid));
-                            manifest_updated = true;
-                        }
-                        Err(e) => {
-                            tracing::warn!(name = %name, error = %e, "Failed to write updated entity lifecycle to IPFS");
-                        }
-                    }
-                }
-                registry.write().await.insert(name.clone(), Arc::new(ep));
-                loaded += 1;
+        };
+
+        let load_result = if is_native_kind(&kind_node) {
+            load_native_entity(load, native_factories).await
+        } else {
+            load_wasm_entity(load).await
+        };
+
+        if let Some(result) = load_result {
+            if let Some(new_link) = result.initialized_link {
+                manifest.entities.insert(name.clone(), new_link);
+                manifest_updated = true;
             }
-            Err(e) => {
-                tracing::warn!(name = %name, error = %e, "{}", crate::i18n::t("entity-load-failed"));
-            }
+            loaded += 1;
         }
     }
 
@@ -529,6 +487,178 @@ pub async fn load_entities(
         Err(e) => {
             tracing::warn!(error = %e, "Failed to publish manifest after lifecycle transitions");
             (loaded, None)
+        }
+    }
+}
+
+async fn load_entity_and_kind(
+    manifest: &RuntimeManifest,
+    kubo_url: &str,
+    name: &str,
+    link: &IpldLink,
+) -> Option<(EntityNode, KindNode)> {
+    let node: EntityNode = match kubo::dag_get(kubo_url, &link.cid).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(name = %name, cid = %link.cid, "Failed to fetch entity node: {e}");
+            return None;
+        }
+    };
+
+    let kind_link = match manifest.kinds.get_protocol(&node.kind) {
+        Some(l) => l.clone(),
+        None => {
+            tracing::warn!(name = %name, kind = %node.kind, "Kind not found in manifest; skipping entity");
+            return None;
+        }
+    };
+
+    let raw_kind: KindNode = match kubo::dag_get(kubo_url, &kind_link.cid).await {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::warn!(name = %name, kind = %node.kind, cid = %kind_link.cid, "Failed to fetch kind node: {e}");
+            return None;
+        }
+    };
+
+    let kind_node = if raw_kind.extends.is_some() {
+        match crate::entity::resolve_kind_extends(kubo_url, manifest, raw_kind).await {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::warn!(name = %name, kind = %node.kind, "Failed to resolve kind extends chain: {e}");
+                return None;
+            }
+        }
+    } else {
+        raw_kind
+    };
+
+    Some((node, kind_node))
+}
+
+fn is_native_kind(kind_node: &KindNode) -> bool {
+    kind_node.kind_type == Evaluator::Native
+}
+
+struct LoadEntityArgs<'a> {
+    name: &'a str,
+    node: &'a EntityNode,
+    kind_node: &'a KindNode,
+    our_did: &'a str,
+    kubo_url: &'a str,
+    envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, crate::entity::SendEnvelope)>,
+    registry: plugin::EntityRegistry,
+    avatar_key: [u8; 32],
+    iroh_node_id: &'a str,
+    started_at: u64,
+}
+
+struct LoadedEntity {
+    initialized_link: Option<IpldLink>,
+}
+
+async fn load_wasm_entity(args: LoadEntityArgs<'_>) -> Option<LoadedEntity> {
+    let init_payload = args.node.init.as_ref().map(|s| s.as_bytes().to_vec());
+    match plugin::EntityPlugin::load(
+        args.name.to_string(),
+        args.node,
+        args.kind_node,
+        args.our_did,
+        args.kubo_url,
+        args.envelope_tx.clone(),
+        args.registry.clone(),
+        args.avatar_key,
+        args.iroh_node_id,
+        args.started_at,
+        init_payload,
+    )
+    .await
+    {
+        Ok((ep, lifecycle)) => {
+            tracing::info!(name = %args.name, lifecycle = %lifecycle, "{}", crate::i18n::t("entity-loaded"));
+            let updated_link = persist_initialized_transition(&args, &lifecycle).await;
+            args.registry
+                .write()
+                .await
+                .insert(args.name.to_string(), Arc::new(ep));
+            Some(LoadedEntity {
+                initialized_link: updated_link,
+            })
+        }
+        Err(e) => {
+            tracing::warn!(name = %args.name, error = %e, "{}", crate::i18n::t("entity-load-failed"));
+            None
+        }
+    }
+}
+
+async fn load_native_entity(
+    args: LoadEntityArgs<'_>,
+    native_factories: &plugin::NativeFactories,
+) -> Option<LoadedEntity> {
+    let Some(factory) = native_factories.get(&args.kind_node.protocol) else {
+        tracing::warn!(name = %args.name, kind = %args.kind_node.protocol, "Native kind has no registered runtime implementation");
+        return None;
+    };
+
+    let init_state = load_initial_state(args.node, args.kind_node, args.kubo_url).await;
+    let init_payload = args.node.init.as_ref().map(|s| s.as_bytes().to_vec());
+    match plugin::EntityPlugin::new_native(
+        args.name.to_string(),
+        args.node,
+        args.kind_node,
+        factory(),
+        init_state,
+        init_payload,
+    ) {
+        Ok((ep, lifecycle)) => {
+            tracing::info!(name = %args.name, lifecycle = %lifecycle, "{}", crate::i18n::t("entity-loaded"));
+            let updated_link = persist_initialized_transition(&args, &lifecycle).await;
+            args.registry
+                .write()
+                .await
+                .insert(args.name.to_string(), Arc::new(ep));
+            Some(LoadedEntity {
+                initialized_link: updated_link,
+            })
+        }
+        Err(e) => {
+            tracing::warn!(name = %args.name, error = %e, "{}", crate::i18n::t("entity-load-failed"));
+            None
+        }
+    }
+}
+
+async fn load_initial_state(node: &EntityNode, kind_node: &KindNode, kubo_url: &str) -> Vec<u8> {
+    if kind_node.plugin_kind() != PluginKind::Stateful {
+        return Vec::new();
+    }
+    match &node.state {
+        Some(link) => ma_core::cat_bytes(kubo_url, &link.cid)
+            .await
+            .unwrap_or_default(),
+        None => Vec::new(),
+    }
+}
+
+async fn persist_initialized_transition(
+    args: &LoadEntityArgs<'_>,
+    lifecycle: &crate::entity::Lifecycle,
+) -> Option<IpldLink> {
+    if args.node.initialized || lifecycle != &crate::entity::Lifecycle::Running {
+        return None;
+    }
+
+    let mut updated = args.node.clone();
+    updated.initialized = true;
+    match kubo::dag_put(args.kubo_url, &updated).await {
+        Ok(new_cid) => {
+            tracing::debug!(name = %args.name, cid = %new_cid, "Updated entity lifecycle in IPFS");
+            Some(IpldLink::new(new_cid))
+        }
+        Err(e) => {
+            tracing::warn!(name = %args.name, error = %e, "Failed to write updated entity lifecycle to IPFS");
+            None
         }
     }
 }
@@ -559,8 +689,10 @@ pub async fn save_all_entity_states(
     // Phase 2: persist each entity's state and lifecycle.
     // Stateless entities skip state saving but still get lifecycle: stopped.
     for (name, entity) in &snapshot {
-        // Native entities (e.g. #scheduler) are not stored in the manifest.
-        if entity.is_native() {
+        // Stateless native entities are manifest markers/compiled-in runtime
+        // hooks. Stateful native entities still pass through trigger_save(),
+        // whose native backend may currently be a no-op.
+        if entity.is_native() && entity.kind == PluginKind::Stateless {
             continue;
         }
         let Some(entity_link) = manifest.entities.get(name).cloned() else {

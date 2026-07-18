@@ -30,7 +30,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use startup::{get_u64_setting, load_secret_bundle, runtime_manifest_config};
 
@@ -386,12 +386,33 @@ async fn main() -> Result<()> {
     let kind_registry = entity::new_kind_registry();
     let startup_epoch = status::now_unix_secs();
     let startup_iroh_node_id = endpoint.id();
+
+    // ── Native scheduler backend ─────────────────────────────────────────────
+    let sched = Arc::new(
+        tokio_cron_scheduler::JobScheduler::new()
+            .await
+            .context("creating job scheduler")?,
+    );
+    sched.start().await.context("starting job scheduler")?;
+
+    let sched_ctx = schedule::SchedulerCtx {
+        entity_registry: entity_registry.clone(),
+        kubo_rpc_url: config.kubo_rpc_url.clone(),
+        our_did: our_did.clone(),
+    };
+    let mut native_factories = plugin::NativeFactories::new();
+    native_factories.insert(
+        scheduler_actor::SCHEDULER_KIND.to_string(),
+        scheduler_actor::native_factory(Arc::clone(&sched), sched_ctx),
+    );
+
     if let Some(ref rc) = root_cid {
         let (count, updated_root) = bootstrap::load_entities(
             rc,
             &config.kubo_rpc_url,
             &our_did,
             &entity_registry,
+            &native_factories,
             envelope_tx.clone(),
             avatar_key,
             &startup_iroh_node_id,
@@ -402,35 +423,6 @@ async fn main() -> Result<()> {
         if let Some(new_rc) = updated_root {
             root_cid = Some(new_rc);
         }
-    }
-
-    // ── Scheduler ─────────────────────────────────────────────────────────────
-    let sched = Arc::new(
-        tokio_cron_scheduler::JobScheduler::new()
-            .await
-            .context("creating job scheduler")?,
-    );
-    sched.start().await.context("starting job scheduler")?;
-
-    // ── Register native #scheduler entity ─────────────────────────────────────
-    {
-        use crate::schedule::SchedulerCtx;
-        let sched_ctx = SchedulerCtx {
-            entity_registry: entity_registry.clone(),
-            kubo_rpc_url: config.kubo_rpc_url.clone(),
-            our_did: our_did.clone(),
-        };
-        let handler = scheduler_actor::make_native_dispatch(Arc::clone(&sched), sched_ctx);
-        let (ep, _) = plugin::EntityPlugin::new_native(
-            scheduler_actor::SCHEDULER_FRAGMENT,
-            &scheduler_actor::entity_node(),
-            handler,
-        );
-        entity_registry.write().await.insert(
-            scheduler_actor::SCHEDULER_FRAGMENT.to_string(),
-            Arc::new(ep),
-        );
-        debug!("native #scheduler entity registered");
     }
 
     // ── Load named ACLs and groups into cache ──────────────────────────────────

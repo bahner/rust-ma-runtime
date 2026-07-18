@@ -37,6 +37,8 @@ runtime:
     owners:
       "+owners": ["*"]
       "*": []
+    scheduler:
+      "#": [handle_cast]
 
   # Root transport-gate ACL.
   # Published to IPFS at bootstrap; loaded at startup when no --acl-file is given.
@@ -97,7 +99,12 @@ runtime:
       extends: /ma/scheme/actor/0.0.1
       attributes:
         genesis: true
-  
+
+    /ma/scheduler/0.0.1:
+      type: native
+      attributes:
+        stateful: true
+
   # Entities — two forms are accepted:
   #
   #   inline:   bootstrap builds and publishes the EntityNode from the descriptor.
@@ -106,5 +113,9 @@ runtime:
   #             is appended after all kind-level behaviour layers.
   #             `acl` references a named ACL from `acls:` above (empty = deny-all).
   entities:
-  # #root, #house, #avatar deferred — add scheme-actor entities here later
-  # (each needs its own published .ma source CID; see HOWTO.md Step 10).
+    scheduler:
+      kind: /ma/scheduler/0.0.1
+      acl: scheduler
+
+    # #root, #house, #avatar deferred — add scheme-actor entities here later
+    # (each needs its own published .ma source CID; see HOWTO.md Step 10).

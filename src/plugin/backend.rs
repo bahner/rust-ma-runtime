@@ -16,7 +16,7 @@ use tracing::warn;
 
 use crate::entity::{CastInput, CreateEntityRequest, Lifecycle, ReplyRequest, SendEnvelope};
 
-use super::{DispatchResult, EntityMsg, NativeDispatch};
+use super::{DispatchResult, EntityMsg, NativeActor, NativeSignal};
 
 // ── Fragment generation ───────────────────────────────────────────────────────
 
@@ -754,7 +754,7 @@ pub(super) fn run_wasm_thread(
 /// which would panic inside an async context.
 #[allow(clippy::needless_pass_by_value)] // handler + handle are owned by the thread
 pub(super) fn run_native_thread(
-    handler: NativeDispatch,
+    actor: NativeActor,
     handle: tokio::runtime::Handle,
     mut rx: UnboundedReceiver<EntityMsg>,
 ) {
@@ -763,16 +763,20 @@ pub(super) fn run_native_thread(
             EntityMsg::Dispatch { input, reply, .. } => {
                 let res = {
                     let _guard = handle.enter();
-                    handler(&input)
+                    (actor.dispatch)(&input)
                 };
                 let _ = reply.send(res);
             }
-            // Native entities have no Wasm state; state messages are no-ops.
             EntityMsg::TakePending { reply } => {
-                let _ = reply.send(None);
+                let _ = reply.send((actor.take_pending)());
             }
-            EntityMsg::MarkSaved(_) => {}
-            EntityMsg::Shutdown => break,
+            EntityMsg::MarkSaved(bytes) => (actor.mark_saved)(bytes),
+            EntityMsg::Shutdown => {
+                if let Err(e) = (actor.signal)(NativeSignal::Shutdown) {
+                    warn!(error = %e, "native on_signal(:shutdown) failed (best-effort, ignored)");
+                }
+                break;
+            }
         }
     }
 }

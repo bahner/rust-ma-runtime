@@ -64,15 +64,61 @@ enum EntityMsg {
 
 // ── Native dispatch type ─────────────────────────────────────────────────────
 
-/// Type of the compiled-in Rust closure used by native entity plugins.
-///
-/// The closure receives a [`CastInput`] and returns a [`DispatchResult`],
-/// exactly like a Wasm `on_message` export.
-/// [`EntityPlugin::on_message`] routes through this closure for native
-/// entities — native entities do not distinguish stateful vs stateless
-/// internally (the closure owns its own state via `Arc<Mutex<…>>` or similar).
-pub type NativeDispatch =
-    std::sync::Arc<dyn Fn(&CastInput) -> anyhow::Result<DispatchResult> + Send + Sync>;
+type NativeDispatchFn = dyn Fn(&CastInput) -> anyhow::Result<DispatchResult> + Send + Sync;
+type NativeSignalFn = dyn Fn(NativeSignal) -> anyhow::Result<()> + Send + Sync;
+type NativeTakePendingFn = dyn Fn() -> Option<Vec<u8>> + Send + Sync;
+type NativeMarkSavedFn = dyn Fn(Vec<u8>) + Send + Sync;
+type NativeFactoryFn = dyn Fn() -> NativeActor + Send + Sync;
+
+/// Lifecycle signal delivered to a native entity.
+pub enum NativeSignal {
+    SetState(Vec<u8>),
+    Init(Vec<u8>),
+    Start,
+    Shutdown,
+}
+
+/// Compiled-in Rust backend for a native entity.
+pub struct NativeActor {
+    dispatch: Arc<NativeDispatchFn>,
+    signal: Arc<NativeSignalFn>,
+    take_pending: Arc<NativeTakePendingFn>,
+    mark_saved: Arc<NativeMarkSavedFn>,
+}
+
+impl NativeActor {
+    pub fn new(
+        dispatch: impl Fn(&CastInput) -> anyhow::Result<DispatchResult> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            dispatch: Arc::new(dispatch),
+            signal: Arc::new(|_| Ok(())),
+            take_pending: Arc::new(|| None),
+            mark_saved: Arc::new(|_| {}),
+        }
+    }
+
+    pub fn with_signal(
+        mut self,
+        signal: impl Fn(NativeSignal) -> anyhow::Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        self.signal = Arc::new(signal);
+        self
+    }
+
+    pub fn with_state_hooks(
+        mut self,
+        take_pending: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,
+        mark_saved: impl Fn(Vec<u8>) + Send + Sync + 'static,
+    ) -> Self {
+        self.take_pending = Arc::new(take_pending);
+        self.mark_saved = Arc::new(mark_saved);
+        self
+    }
+}
+
+pub type NativeFactory = Arc<NativeFactoryFn>;
+pub type NativeFactories = HashMap<String, NativeFactory>;
 
 // ── Dispatch result ─────────────────────────────────────────────────────────
 
@@ -149,31 +195,36 @@ impl EntityPlugin {
     pub fn new_native(
         fragment: impl Into<String>,
         node: &EntityNode,
-        handler: NativeDispatch,
-    ) -> (Self, Lifecycle) {
+        kind_node: &KindNode,
+        actor: NativeActor,
+        init_state: Vec<u8>,
+        init_payload: Option<Vec<u8>>,
+    ) -> Result<(Self, Lifecycle)> {
         let fragment = fragment.into();
+        let kind = kind_node.plugin_kind();
+        let is_genesis = !node.initialized;
+        run_native_lifecycle(&fragment, &actor, is_genesis, init_state, init_payload)?;
+
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<EntityMsg>();
         let handle = tokio::runtime::Handle::current();
         let thread_name = format!("entity-{fragment}");
         std::thread::Builder::new()
             .name(thread_name)
-            .spawn(move || run_native_thread(handler, handle, rx))
-            .expect("failed to spawn native entity thread");
+            .spawn(move || run_native_thread(actor, handle, rx))
+            .with_context(|| format!("spawning native worker thread for '{fragment}'"))?;
 
         let ep = Self {
             fragment,
-            kind: PluginKind::Stateless, // native entities dispatch via a single closure
+            kind,
             acl: node.acl.clone(),
             parent: node.parent.clone(),
             native: true,
             tx,
         };
-        (ep, Lifecycle::Running)
+        Ok((ep, Lifecycle::Running))
     }
 
-    /// Returns `true` if this plugin is backed by a compiled-in Rust closure
-    /// (i.e. not an Extism/Wasm entity).  Native entities are not stored in
-    /// the IPFS manifest and must be skipped during manifest-bound operations.
+    /// Returns `true` if this plugin is backed by a compiled-in Rust closure.
     pub const fn is_native(&self) -> bool {
         self.native
     }
@@ -434,7 +485,7 @@ impl EntityPlugin {
     }
 
     /// Record a successful IPFS persist: update the persisted snapshot and
-    /// clear the dirty flag.  No-op (ignored by the thread) for native entities.
+    /// clear the dirty flag.
     pub fn mark_saved(&self, saved_bytes: Vec<u8>) {
         let _ = self.tx.send(EntityMsg::MarkSaved(saved_bytes));
     }
@@ -444,11 +495,7 @@ impl EntityPlugin {
     /// Plugins call `ma_set_state` reactively inside `on_message`; this method
     /// flushes whatever is still queued to IPFS and returns the resulting CID.
     /// Returns `Ok(None)` when there is no pending state (nothing to save).
-    /// Always returns `Ok(None)` for native entities (they manage their own state).
     pub async fn trigger_save(&self, kubo_url: &str) -> Result<Option<String>> {
-        if self.native {
-            return Ok(None);
-        }
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
             .send(EntityMsg::TakePending { reply: reply_tx })
@@ -478,6 +525,26 @@ impl EntityPlugin {
             Ok(None)
         }
     }
+}
+
+fn run_native_lifecycle(
+    fragment: &str,
+    actor: &NativeActor,
+    is_genesis: bool,
+    init_state: Vec<u8>,
+    init_payload: Option<Vec<u8>>,
+) -> Result<()> {
+    if !init_state.is_empty() {
+        (actor.signal)(NativeSignal::SetState(init_state))
+            .with_context(|| format!("native on_signal(:set-state) failed for '{fragment}'"))?;
+    }
+    if is_genesis {
+        (actor.signal)(NativeSignal::Init(init_payload.unwrap_or_default()))
+            .with_context(|| format!("native on_signal(:init) failed for '{fragment}'"))?;
+    }
+    (actor.signal)(NativeSignal::Start)
+        .with_context(|| format!("native on_signal(:start) failed for '{fragment}'"))?;
+    Ok(())
 }
 
 #[cfg(test)]

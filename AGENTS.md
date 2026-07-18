@@ -36,6 +36,13 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
   `[:error, reason]` reply sets it to `Error` (plugin still dispatchable for
   debug). `Stopped` is written to the manifest on clean shutdown only.
   Kinds without `init` in their API skip the call and start `Running` directly.
+- **No lifecycle shortcuts for native entities.** `Evaluator::Native` means the
+  implementation is compiled into the runtime; it does **not** mean the entity
+  may bypass manifest loading, lifecycle stages, per-entity queues, ACLs, state
+  save/restore, or kind metadata. Native entities must be loaded from
+  `RuntimeManifest.entities` just like Extism entities, and statefulness must be
+  derived from the referenced `KindNode` (`KindNode::plugin_kind()`), never from
+  hardcoded knowledge about a specific native actor such as `#scheduler`.
 - **Plugin evaluator.** Each `KindNode` carries an `Evaluator` field (default:
   `Extism`). Only `Extism` is implemented; `Native`, `Bash`, and `Lua` are
   reserved for future use. `load()` returns `Err` if asked to load a kind with
