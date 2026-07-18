@@ -5,8 +5,8 @@ use tracing::info;
 use crate::entity::IpldLink;
 
 use super::helpers::{
-    acl_cache_update, load_manifest, resolve_ipfs_ref, send_crud_i18n_error, send_crud_ok_cid,
-    send_crud_reply_cbor, with_manifest_crud,
+    acl_cache_update, load_manifest, resolve_ipfs_ref, send_crud_error, send_crud_i18n_error,
+    send_crud_ok_cid, send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -47,10 +47,9 @@ pub(super) async fn handle_root_acls(
         // Get a named ACL's CID.
         ([acl_name], None, []) => {
             let manifest = load_manifest(ctx).await?;
-            let link = manifest
-                .acls
-                .get(acl_name.as_str())
-                .ok_or_else(|| anyhow!("ACL not found: acls.{acl_name}"))?;
+            let Some(link) = manifest.acls.get(acl_name.as_str()) else {
+                return send_crud_error(message, reply_type, ctx, "acl-not-found").await;
+            };
             let ipfs_path = format!("/ipfs/{}", link.cid);
             send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(ipfs_path)).await
         }
@@ -72,6 +71,10 @@ pub(super) async fn handle_root_acls(
         // Delete a named ACL.
         ([acl_name], Some(""), []) => {
             let acl_name = acl_name.clone();
+            let manifest = load_manifest(ctx).await?;
+            if !manifest.acls.contains_key(&acl_name) {
+                return send_crud_error(message, reply_type, ctx, "acl-not-found").await;
+            }
             let new_root = with_manifest_crud(ctx, |m| {
                 m.acls.remove(&acl_name);
                 Ok(())

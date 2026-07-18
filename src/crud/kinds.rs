@@ -4,7 +4,8 @@ use ciborium::Value as CborValue;
 use crate::entity::{IpldLink, KindNode};
 
 use super::helpers::{
-    load_manifest, send_crud_i18n_error, send_crud_ok, send_crud_ok_cid, send_crud_ok_yaml,
+    load_manifest, send_crud_error, send_crud_i18n_error, send_crud_ok, send_crud_ok_cid,
+    send_crud_ok_yaml,
     send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
@@ -56,7 +57,7 @@ pub(super) async fn handle_kinds_ns(
                     let kind: KindNode = crate::kubo::dag_get(&ctx.kubo_rpc_url, &link.cid).await?;
                     send_crud_ok_yaml(message, reply_type, ctx, &kind).await
                 }
-                None => send_crud_i18n_error(message, reply_type, ctx, "kind-not-found").await,
+                None => send_crud_error(message, reply_type, ctx, "kind-not-found").await,
             }
         }
         // SET /kinds/<protocol> <cid> → upsert kind
@@ -71,6 +72,10 @@ pub(super) async fn handle_kinds_ns(
         }
         // DELETE /kinds/<protocol> → remove kind
         (Some(""), []) => {
+            let manifest = load_manifest(ctx).await?;
+            if manifest.kinds.get_protocol(&protocol_id).is_none() {
+                return send_crud_error(message, reply_type, ctx, "kind-not-found").await;
+            }
             with_manifest_crud(ctx, |m| {
                 m.kinds.remove_protocol(&protocol_id);
                 Ok(())

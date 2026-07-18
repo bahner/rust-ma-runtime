@@ -7,7 +7,7 @@ use crate::acl::check_full;
 use crate::entity::{EntityNode, IpldLink};
 
 use super::helpers::{
-    load_manifest, resolve_ipfs_ref, send_crud_data_cbor, send_crud_i18n_error,
+    load_manifest, resolve_ipfs_ref, send_crud_data_cbor, send_crud_error, send_crud_i18n_error,
     send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, send_crud_reply_cbor,
     spawn_entity_reload, with_manifest_crud,
 };
@@ -86,10 +86,9 @@ async fn handle_single_entity(
     match (tail, args.as_slice()) {
         (None, []) => {
             let manifest = load_manifest(ctx).await?;
-            let link = manifest
-                .entities
-                .get(name.as_str())
-                .ok_or_else(|| anyhow!("entity not found: {name}"))?;
+            let Some(link) = manifest.entities.get(name.as_str()) else {
+                return send_crud_error(message, reply_type, ctx, "entity-not-found").await;
+            };
             let entity: EntityNode = crate::kubo::dag_get(&ctx.kubo_rpc_url, &link.cid).await?;
             send_crud_data_cbor(message, reply_type, ctx, &entity).await
         }
@@ -97,6 +96,10 @@ async fn handle_single_entity(
             // Delete entity — requires `delete` + `entities` in root ACL.
             check_entity_management_cap(message, ctx, &["delete", "entities"]).await?;
             let name = name.as_str();
+            let manifest = load_manifest(ctx).await?;
+            if !manifest.entities.contains_key(name) {
+                return send_crud_error(message, reply_type, ctx, "entity-not-found").await;
+            }
             ctx.entity_registry.write().await.remove(name);
             let new_root = with_manifest_crud(ctx, |m| {
                 m.entities.remove(name);

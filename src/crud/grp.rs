@@ -4,8 +4,8 @@ use ciborium::Value as CborValue;
 use crate::entity::IpldLink;
 
 use super::helpers::{
-    group_cache_update, load_manifest, resolve_ipfs_ref, send_crud_i18n_error, send_crud_ok_cid,
-    send_crud_reply_cbor, with_manifest_crud,
+    group_cache_update, load_manifest, resolve_ipfs_ref, send_crud_error, send_crud_i18n_error,
+    send_crud_ok_cid, send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -53,10 +53,9 @@ pub(super) async fn handle_root_grp(
         // Get a group's CID.
         ([name], None, []) => {
             let manifest = load_manifest(ctx).await?;
-            let link = manifest
-                .grp
-                .get(name.as_str())
-                .ok_or_else(|| anyhow!("group not found: grp/{name}"))?;
+            let Some(link) = manifest.grp.get(name.as_str()) else {
+                return send_crud_error(message, reply_type, ctx, "group-not-found").await;
+            };
             let ipfs_path = format!("/ipfs/{}", link.cid);
             send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(ipfs_path)).await
         }
@@ -95,6 +94,10 @@ pub(super) async fn handle_root_grp(
                 return send_crud_i18n_error(message, reply_type, ctx, "refuse-delete-root").await;
             }
             let name = name.clone();
+            let manifest = load_manifest(ctx).await?;
+            if !manifest.grp.contains_key(&name) {
+                return send_crud_error(message, reply_type, ctx, "group-not-found").await;
+            }
             let new_root = with_manifest_crud(ctx, |m| {
                 m.grp.remove(&name);
                 Ok(())

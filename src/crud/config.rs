@@ -3,7 +3,7 @@ use ciborium::Value as CborValue;
 use tracing::warn;
 
 use super::helpers::{
-    load_manifest, resolve_ipfs_ref, send_crud_data_yaml, send_crud_i18n_error,
+    load_manifest, resolve_ipfs_ref, send_crud_data_yaml, send_crud_error, send_crud_i18n_error,
     send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, send_crud_ok_path, send_crud_reply_cbor,
     with_manifest_crud,
 };
@@ -249,7 +249,7 @@ pub(super) async fn handle_config_ns(
                 match manifest.config.get(key.as_str()) {
                     Some(v) => v.clone(),
                     None => {
-                        return Err(anyhow!("config key not found: {key}"));
+                        return send_crud_error(message, reply_type, ctx, "config-not-found").await;
                     }
                 }
             };
@@ -279,6 +279,10 @@ pub(super) async fn handle_config_ns(
                 .await;
             }
             let key = key.as_str().to_string();
+            let manifest = load_manifest(ctx).await?;
+            if !manifest.config.contains_key(&key) {
+                return send_crud_error(message, reply_type, ctx, "config-not-found").await;
+            }
             with_manifest_crud(ctx, |m| {
                 m.config.remove(&key);
                 Ok(())
