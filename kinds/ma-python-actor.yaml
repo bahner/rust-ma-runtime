@@ -9,23 +9,15 @@
 # kind's job, /ma/scheme/actor/0.0.1).
 #
 # Copy this file, rename the protocol, and adjust attributes.stateful /
-# api / lifecycle / host_functions to match your own actor's exports.
+# host_functions to match your own actor's needs.
 #
-# `attributes.stateful: true` example (adjust api/lifecycle/host_functions
-# to `false`/`[on_message]`/`[]`/`[ma_send, ma_reply]` for a stateless
-# actor instead):
+# `attributes.stateful: true` example (adjust host_functions to
+# `[ma_send, ma_reply]` for a stateless actor instead):
 protocol: /ma/python/actor/0.0.1
 type: extism
 attributes:
   wasi: true
   stateful: true
-api:
-  - set_state
-  - do_start
-  - on_message
-lifecycle:
-  - set_state
-  - do_start
 host_functions:
   - ma_reply
   - ma_set_state

@@ -73,8 +73,6 @@ pub struct BootstrapKind {
     pub host_functions: Vec<String>,
     #[serde(default)]
     pub attributes: BTreeMap<String, serde_json::Value>,
-    #[serde(default)]
-    pub allow: Vec<String>,
     /// Optional base kind's protocol ID to inherit from — see
     /// `crate::entity::resolve_kind_extends` for merge semantics.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -224,7 +222,6 @@ async fn publish_kinds(cfg: &BootstrapRuntime, kubo_url: &str) -> Result<KindTre
             behaviour: bk.behaviour.clone(),
             host_functions: bk.host_functions.clone(),
             attributes: bk.attributes.clone(),
-            allow: bk.allow.clone(),
             extends: bk.extends.clone(),
         };
         let cid = kubo::dag_put(kubo_url, &node)
@@ -345,7 +342,6 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
                 behaviour: node.behaviour,
                 host_functions: node.host_functions,
                 attributes: node.attributes,
-                allow: node.allow,
                 extends: node.extends,
             },
         );

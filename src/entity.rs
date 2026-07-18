@@ -337,12 +337,6 @@ pub struct KindNode {
     /// attribute is the source of truth.
     #[serde(default)]
     pub attributes: BTreeMap<String, serde_json::Value>,
-    /// Which caller entity kinds are allowed to create instances of this kind.
-    /// `"create *"` means any kind may create instances.
-    /// Absence of `"public: true"` in attributes AND an empty allow list means
-    /// only the parent entity may create instances of this kind.
-    #[serde(default)]
-    pub allow: Vec<String>,
     /// Optional base kind's protocol ID to inherit from (single hop per
     /// document; chains are followed by `resolve_kind_extends`). Lets a
     /// variant kind (e.g. `/ma/genesis/0.0.1`) reuse a generic kind's
@@ -395,8 +389,8 @@ impl KindNode {
 ///   overrides that same key on the base; keys the derived kind doesn't
 ///   mention are inherited from the base. Mirrors the entity-over-kind
 ///   attribute merge (`effective_attribute`) one layer up.
-/// - `host_functions`, `allow`: additive union (base's entries first, then
-///   any of the derived kind's own not already present), deduplicated.
+/// - `host_functions`: additive union (base's entries first, then any of
+///   the derived kind's own not already present), deduplicated.
 ///   There is no "subtract" syntax — a kind that must drop a base host
 ///   function should not `extends` it.
 /// - `protocol`: always the derived kind's own identity, never inherited.
@@ -440,12 +434,6 @@ fn merge_kind_over_base(base: KindNode, derived: KindNode) -> KindNode {
             host_functions.push(f.clone());
         }
     }
-    let mut allow = base.allow.clone();
-    for a in &derived.allow {
-        if !allow.contains(a) {
-            allow.push(a.clone());
-        }
-    }
     let mut attributes = base.attributes.clone();
     attributes.extend(derived.attributes.clone());
     KindNode {
@@ -455,7 +443,6 @@ fn merge_kind_over_base(base: KindNode, derived: KindNode) -> KindNode {
         behaviour: derived.behaviour.or(base.behaviour),
         host_functions,
         attributes,
-        allow,
         extends: None,
     }
 }
@@ -797,7 +784,6 @@ mod tests {
             behaviour: None,
             host_functions: vec![],
             attributes: BTreeMap::new(),
-            allow: vec![],
             extends: None,
         }
     }
@@ -904,7 +890,6 @@ mod tests {
                 m.insert("wasi".to_string(), serde_json::Value::Bool(false));
                 m
             },
-            allow: vec![],
             extends: None,
         };
         let base_cid = crate::kubo::dag_put(kubo.url(), &base).await.unwrap();
@@ -925,7 +910,6 @@ mod tests {
                 m.insert("genesis".to_string(), serde_json::Value::Bool(true));
                 m
             },
-            allow: vec!["owners".to_string()],
             extends: Some("/ma/scheme/actor/0.0.1".to_string()),
         };
 
@@ -966,7 +950,6 @@ mod tests {
             Some(&serde_json::Value::Bool(true)),
             "genesis is the derived kind's own attribute"
         );
-        assert_eq!(resolved.allow, vec!["owners".to_string()]);
         assert!(resolved.extends.is_none(), "extends cleared once resolved");
     }
 

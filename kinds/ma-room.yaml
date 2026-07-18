@@ -5,13 +5,6 @@ type: extism
 attributes:
   wasi: true
   stateful: true
-api:
-  - set_state
-  - do_start
-  - on_message
-lifecycle:
-  - set_state
-  - do_start
 host_functions:
   - ma_reply
   - ma_set_state

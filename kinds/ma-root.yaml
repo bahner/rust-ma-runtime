@@ -5,8 +5,6 @@ type: extism
 attributes:
   stateful: false
   wasi: true
-api:
-  - on_message
 host_functions:
   - ma_reply
   - ma_set_state

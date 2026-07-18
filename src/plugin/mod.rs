@@ -514,7 +514,6 @@ mod hostile {
             behaviour: None,
             host_functions: vec![],
             attributes,
-            allow: vec![],
             extends: None,
         }
     }
@@ -755,7 +754,6 @@ mod wasm_repro {
                 "ma_send".to_string(),
             ],
             attributes,
-            allow: vec![],
             extends: None,
         };
 
@@ -854,7 +852,6 @@ mod wasm_repro {
                 "ma_send".to_string(),
             ],
             attributes,
-            allow: vec![],
             extends: None,
         };
 
@@ -1035,7 +1032,6 @@ mod wasm_repro {
                 "ma_create_entity".to_string(),
             ],
             attributes,
-            allow: vec![],
             extends: None,
         };
 

@@ -5,7 +5,5 @@ type: extism
 attributes:
   stateful: false
   wasi: false
-api:
-  - on_message
 host_functions:
   - ma_send
