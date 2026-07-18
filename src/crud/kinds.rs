@@ -1,4 +1,6 @@
-use anyhow::{anyhow, Result};
+use std::sync::Arc;
+
+use anyhow::{anyhow, Context, Result};
 use ciborium::Value as CborValue;
 
 use crate::entity::{IpldLink, KindNode};
@@ -62,11 +64,24 @@ pub(super) async fn handle_kinds_ns(
         // SET /kinds/<protocol> <cid> → upsert kind
         (Some(""), [CborValue::Text(raw)]) => {
             let cid = crate::kubo::dag_resolve(&ctx.kubo_rpc_url, raw).await?;
+            let raw_kind: KindNode = crate::kubo::dag_get(&ctx.kubo_rpc_url, &cid)
+                .await
+                .with_context(|| format!("fetching kind node for '{protocol_id}'"))?;
+            let manifest = load_manifest(ctx).await?;
+            let kind_node = if raw_kind.extends.is_some() {
+                crate::entity::resolve_kind_extends(&ctx.kubo_rpc_url, &manifest, raw_kind).await?
+            } else {
+                raw_kind
+            };
             let new_root = with_manifest_crud(ctx, |m| {
                 m.kinds.insert_protocol(&protocol_id, IpldLink::new(&cid));
                 Ok(())
             })
             .await?;
+            ctx.kind_registry
+                .write()
+                .await
+                .insert(protocol_id.clone(), Arc::new(kind_node));
             send_crud_ok_cid(message, reply_type, ctx, &new_root).await
         }
         // DELETE /kinds/<protocol> → remove kind
@@ -80,6 +95,7 @@ pub(super) async fn handle_kinds_ns(
                 Ok(())
             })
             .await?;
+            ctx.kind_registry.write().await.remove(&protocol_id);
             send_crud_ok(message, reply_type, ctx).await
         }
         _ => Err(anyhow!("unknown kinds operation")),

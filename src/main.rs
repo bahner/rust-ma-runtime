@@ -412,6 +412,7 @@ async fn main() -> Result<()> {
             &config.kubo_rpc_url,
             &our_did,
             &entity_registry,
+            &kind_registry,
             &native_factories,
             envelope_tx.clone(),
             avatar_key,

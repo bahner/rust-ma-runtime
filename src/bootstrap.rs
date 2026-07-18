@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::acl::AclMap;
 use crate::entity::Evaluator;
-use crate::entity::{EntityNode, IpldLink, KindNode, KindTree, PluginKind, RuntimeManifest};
+use crate::entity::{
+    EntityNode, IpldLink, KindNode, KindRegistry, KindTree, PluginKind, RuntimeManifest,
+};
 use crate::kubo;
 use crate::plugin;
 
@@ -421,6 +423,7 @@ pub async fn load_entities(
     kubo_url: &str,
     our_did: &str,
     registry: &plugin::EntityRegistry,
+    kind_registry: &KindRegistry,
     native_factories: &plugin::NativeFactories,
     envelope_tx: tokio::sync::mpsc::UnboundedSender<(String, crate::entity::SendEnvelope)>,
     avatar_key: [u8; 32],
@@ -434,6 +437,9 @@ pub async fn load_entities(
             return (0, None);
         }
     };
+
+    let kind_count = hydrate_kind_registry(&manifest, kubo_url, kind_registry).await;
+    tracing::info!(count = %kind_count, "Kind registry hydrated from manifest");
 
     let mut loaded = 0usize;
     let mut manifest_updated = false;
@@ -489,6 +495,40 @@ pub async fn load_entities(
             (loaded, None)
         }
     }
+}
+
+async fn hydrate_kind_registry(
+    manifest: &RuntimeManifest,
+    kubo_url: &str,
+    registry: &KindRegistry,
+) -> usize {
+    let mut loaded = 0usize;
+    for (protocol, link) in manifest.kinds.iter_protocols() {
+        let raw_kind: KindNode = match kubo::dag_get(kubo_url, &link.cid).await {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::warn!(protocol = %protocol, cid = %link.cid, "Failed to fetch kind node for registry: {e}");
+                continue;
+            }
+        };
+        let kind_node = if raw_kind.extends.is_some() {
+            match crate::entity::resolve_kind_extends(kubo_url, manifest, raw_kind).await {
+                Ok(k) => k,
+                Err(e) => {
+                    tracing::warn!(protocol = %protocol, "Failed to resolve kind extends chain for registry: {e}");
+                    continue;
+                }
+            }
+        } else {
+            raw_kind
+        };
+        registry
+            .write()
+            .await
+            .insert(protocol, Arc::new(kind_node));
+        loaded += 1;
+    }
+    loaded
 }
 
 async fn load_entity_and_kind(

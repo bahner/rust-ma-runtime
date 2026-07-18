@@ -142,10 +142,8 @@ async fn handle_single_entity(
             // instance, and it always gets `parent: None`, regardless of
             // what the caller's published EntityNode requested.
             //
-            // `kind_registry` currently has no writer anywhere in the
-            // codebase (pre-existing gap), so it's checked first as a
-            // harmless fast path but this always falls through to
-            // fetching the kind fresh from the manifest/IPFS.
+            // Prefer the hydrated in-memory kind registry, with a manifest/IPFS
+            // fallback for stale or externally-mutated roots.
             let cached_kind = ctx
                 .kind_registry
                 .read()

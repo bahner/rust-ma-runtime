@@ -185,12 +185,8 @@ pub(super) fn spawn_entity_reload(
     manifest_writer: crate::manifest::ManifestWriter,
 ) {
     tokio::spawn(async move {
-        // Look up the KindNode. `kind_registry` currently has no writer
-        // anywhere in the codebase (a pre-existing gap, not something this
-        // fixes) — so this always falls through to fetching the manifest
-        // and kind fresh from IPFS. Kept as a cache-first check in case
-        // that changes later; harmless either way since it's checked
-        // before any network call.
+        // Prefer the hydrated in-memory kind registry, with a manifest/IPFS
+        // fallback for stale or externally-mutated roots.
         let kind_node: Arc<KindNode> = {
             let registry = kind_registry.read().await;
             if let Some(k) = registry.get(&entity_node.kind).cloned() {
