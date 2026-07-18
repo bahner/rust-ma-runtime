@@ -133,7 +133,8 @@ to IPFS on graceful shutdown.
 | RPC reply (success) | CBOR atom `:ok`, or tuple `[":ok", payload]` |
 | RPC reply (error) | CBOR atom `:error`, or tuple `[":error", reason]` |
 | Entity content in replies | CBOR-encoded `EntityNode` (DAG-CBOR structure, never JSON) |
-| IPFS publish request | CBOR-encoded signed envelope (`application/x-ma-ipfs-request`) |
+| IPFS identity-publish request | CBOR-encoded signed envelope (`application/vnd.ma.identity.publish.request`) |
+| IPFS store request | CBOR-encoded signed envelope (`application/vnd.ma.ipfs.request`) |
 
 The one exception: the Kubo HTTP RPC API (`/api/v0/…`) speaks JSON internally.
 That is a private implementation detail of the `kubo` sub-crate and is never

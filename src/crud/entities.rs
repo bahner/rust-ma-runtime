@@ -7,8 +7,8 @@ use crate::acl::check_full;
 use crate::entity::{EntityNode, IpldLink};
 
 use super::helpers::{
-    load_manifest, resolve_ipfs_ref, send_crud_data_cbor, send_crud_data_dag_cbor,
-    send_crud_i18n_error, send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid,
+    load_manifest, resolve_ipfs_ref, send_crud_data_cbor, send_crud_i18n_error,
+    send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, send_crud_reply_cbor,
     spawn_entity_reload, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
@@ -161,12 +161,8 @@ async fn handle_single_entity(
                                 format!("fetching kind node for '{}'", entity_node.kind)
                             })?;
                     let resolved = if raw_kind.extends.is_some() {
-                        crate::entity::resolve_kind_extends(
-                            &ctx.kubo_rpc_url,
-                            &manifest,
-                            raw_kind,
-                        )
-                        .await?
+                        crate::entity::resolve_kind_extends(&ctx.kubo_rpc_url, &manifest, raw_kind)
+                            .await?
                     } else {
                         raw_kind
                     };
@@ -302,7 +298,8 @@ async fn handle_entity_acl_field(
     match (tail, args.as_slice()) {
         (None, []) => {
             let entity = fetch_entity_node(ctx, name).await?;
-            send_crud_data_dag_cbor(message, reply_type, ctx, &entity.acl).await
+            let ipfs_path = format!("/ipfs/{}", entity.acl);
+            send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(ipfs_path)).await
         }
         (Some(""), [CborValue::Text(acl_name)]) => {
             let manifest = load_manifest(ctx).await?;

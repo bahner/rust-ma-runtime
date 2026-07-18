@@ -1,6 +1,6 @@
 //! `/ma/crud/0.0.1` — structured data management service.
 //!
-//! Single message type `application/x-ma-crud`. The operation is encoded in
+//! Single message type `application/vnd.ma.crud.request`. The operation is encoded in
 //! a 1- or 2-element CBOR array payload:
 //!
 //!   GET:    `["/ns/key"]`
@@ -8,7 +8,7 @@
 //!                                    `/ipns/<key>` reference
 //!   DELETE: `["/ns/key", ""]`      — empty string value means delete
 //!
-//! All replies use `application/x-ma-crud-reply`.
+//! All replies use `application/vnd.ma.crud.reply`.
 
 mod acl;
 mod config;

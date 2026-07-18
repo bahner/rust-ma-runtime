@@ -11,8 +11,9 @@ use anyhow::Result;
 use ma_core::config::Config;
 use ma_core::{
     Did, Inbox, IpfsGatewayResolver, MaEndpoint, Message, SigningKey, INBOX_PROTOCOL_ID,
-    IPFS_PROTOCOL_ID, MESSAGE_TYPE_CRUD, MESSAGE_TYPE_CRUD_REPLY, MESSAGE_TYPE_IPFS_REQUEST,
-    MESSAGE_TYPE_IPFS_STORE, MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY,
+    IPFS_PROTOCOL_ID, MESSAGE_TYPE_CRUD, MESSAGE_TYPE_CRUD_REPLY,
+    MESSAGE_TYPE_IDENTITY_PUBLISH_REQUEST, MESSAGE_TYPE_IPFS_REQUEST, MESSAGE_TYPE_RPC,
+    MESSAGE_TYPE_RPC_REPLY,
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::RwLock;
@@ -35,7 +36,7 @@ use crate::{bootstrap, crud, i18n, inbox, ipfs, rpc, status};
 fn protocol_for(msg_type: &str) -> &'static str {
     match msg_type {
         MESSAGE_TYPE_RPC | MESSAGE_TYPE_RPC_REPLY => rpc::RPC_PROTOCOL_ID,
-        MESSAGE_TYPE_IPFS_REQUEST | MESSAGE_TYPE_IPFS_STORE => IPFS_PROTOCOL_ID,
+        MESSAGE_TYPE_IPFS_REQUEST | MESSAGE_TYPE_IDENTITY_PUBLISH_REQUEST => IPFS_PROTOCOL_ID,
         MESSAGE_TYPE_CRUD | MESSAGE_TYPE_CRUD_REPLY => crud::CRUD_PROTOCOL_ID,
         _ => INBOX_PROTOCOL_ID,
     }

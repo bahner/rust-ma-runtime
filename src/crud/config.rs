@@ -3,8 +3,8 @@ use ciborium::Value as CborValue;
 use tracing::warn;
 
 use super::helpers::{
-    load_manifest, resolve_ipfs_ref, send_crud_data_dag_cbor, send_crud_data_yaml,
-    send_crud_i18n_error, send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, send_crud_ok_path,
+    load_manifest, resolve_ipfs_ref, send_crud_data_yaml, send_crud_i18n_error,
+    send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, send_crud_ok_path, send_crud_reply_cbor,
     with_manifest_crud,
 };
 use super::CrudHandlerCtx;
@@ -255,7 +255,14 @@ pub(super) async fn handle_config_ns(
             };
             if let serde_yaml::Value::String(ref s) = val {
                 if let Some(cid) = resolve_ipfs_ref(&ctx.kubo_rpc_url, s).await? {
-                    return send_crud_data_dag_cbor(message, reply_type, ctx, &cid).await;
+                    let ipfs_path = format!("/ipfs/{cid}");
+                    return send_crud_reply_cbor(
+                        message,
+                        reply_type,
+                        ctx,
+                        &CborValue::Text(ipfs_path),
+                    )
+                    .await;
                 }
             }
             send_crud_data_yaml(message, reply_type, ctx, &val).await

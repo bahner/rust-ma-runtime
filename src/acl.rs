@@ -6,7 +6,8 @@ use ma_core::check_cap;
 use tokio::sync::RwLock;
 
 pub use ma_core::{
-    normalize_principal, AclMap, CapabilityEntry, CAP_CRUD, CAP_IPFS, CAP_RPC, GROUP_PREFIX,
+    normalize_principal, AclMap, CapabilityEntry, CAP_CRUD, CAP_IDENTITY_PUBLISH, CAP_IPFS,
+    CAP_RPC, GROUP_PREFIX,
 };
 
 /// In-memory cache of named ACLs.

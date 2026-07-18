@@ -63,16 +63,21 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
   `did_signing_key` and `did_encryption_key`, and publishes it to Kubo before
   accepting any connections.
 - **Strict input validation.** Every incoming CBOR envelope on `/ma/ipfs/0.0.1`
-  is validated by `validate_ipfs_publish_request`, which parses the signed
-  message, checks content-type, validates and verifies the DID document
-  (including its proof signature), and asserts that the sender's IPNS identity
-  matches the document's DID.
+  carrying an identity-publish request is validated by
+  `validate_identity_publish_request`, which parses the signed message, checks
+  content-type, validates and verifies the DID document (including its proof
+  signature), and asserts that the sender's IPNS identity matches the
+  document's DID.
 - **Replay protection.** A `ReplayGuard` (sliding 120-second window) is applied
   to `/ma/ipfs/0.0.1` messages before any processing.
 - **ACL with deny-wins semantics.** An explicit `null` entry in the `AclMap`
   denies a principal and overrides any wildcard allow. Capabilities are plain
   strings in YAML sequences — `/ma/rpc/0.0.1` requires `"rpc"`,
-  `/ma/ipfs/0.0.1` requires `"ipfs"`.
+  `/ma/ipfs/0.0.1` requires `"ipfs"` for generic content storage
+  (`application/vnd.ma.ipfs.request`) or `"identity-publish"` for DID-document
+  publishing (`application/vnd.ma.identity.publish.request`) — these are two
+  independent capabilities gating two independent message types on the same
+  protocol.
 - **Manifest is the source of truth; ACLs are derivatives.** `RuntimeManifest`
   paths are canonical. ACLs must always be derived from and kept in sync with
   manifest data, never the reverse. Concretely:
@@ -252,7 +257,8 @@ Built-in capability strings:
 | Capability | Required by |
 |------------|-------------|
 | `"rpc"` | `/ma/rpc/0.0.1` |
-| `"ipfs"` | `/ma/ipfs/0.0.1` |
+| `"ipfs"` | `/ma/ipfs/0.0.1` (generic content storage) |
+| `"identity-publish"` | `/ma/ipfs/0.0.1` (DID-document publishing) |
 | `"read"` | (reserved — future read-only access) |
 | `"create"` | Create namespaces/entities |
 | `"update"` | Update namespaces/entities |
@@ -336,8 +342,8 @@ Content types are defined in ma-spec, not ma-core — they are string literals:
 
 | Direction | Content-Type |
 |-----------|--------------|
-| Request | `application/x-ma-rpc` |
-| Reply | `application/x-ma-rpc-reply` |
+| Request | `application/vnd.ma.rpc.request` |
+| Reply | `application/vnd.ma.rpc.reply` |
 
 RPC verbs are CBOR-encoded text strings beginning with `:`.
 
@@ -454,7 +460,7 @@ typically from a plugin's `init()` when `lifecycle == "new"` or always on init.
 
 ## Security notes
 
-- `application/x-ma-ipfs-request` payloads **must** be encrypted envelopes per
+- `application/vnd.ma.identity.publish.request` payloads **must** be encrypted envelopes per
   the ma-spec (messaging-format.md §2.2.1). The iroh transport provides the
   encrypted channel; `validate_ipfs_publish_request` enforces content-type.
 - The IPNS private key embedded in each `/ma/ipfs/0.0.1` request is the

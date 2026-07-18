@@ -545,7 +545,7 @@ mod hostile {
                 exp: 0,
                 reply_to: None,
                 message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),
-                content_type: "application/x-ma-term".to_string(),
+                content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
                 content,
             },
         }
@@ -807,7 +807,7 @@ mod wasm_repro {
                 exp: 0,
                 reply_to: None,
                 message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),
-                content_type: "application/x-ma-term".to_string(),
+                content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
                 content,
             };
 
@@ -909,7 +909,7 @@ mod wasm_repro {
                 exp: 0,
                 reply_to: None,
                 message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),
-                content_type: "application/x-ma-term".to_string(),
+                content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
                 content,
             };
             let ep = registry.read().await.get("room").cloned().unwrap();
@@ -1103,7 +1103,7 @@ mod wasm_repro {
                 exp: 0,
                 reply_to: None,
                 message_type: ma_core::MESSAGE_TYPE_RPC.to_string(),
-                content_type: "application/x-ma-term".to_string(),
+                content_type: ma_core::CONTENT_TYPE_TERM.to_string(),
                 content,
             };
             println!("\n=== dispatch {verb} ===");

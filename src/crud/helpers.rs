@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use ciborium::Value as CborValue;
 use ma_core::{
     Did, DidDocumentResolver, IpfsGatewayResolver, Ipld, CONTENT_TYPE_TERM, CONTENT_TYPE_TERM_CBOR,
-    CONTENT_TYPE_TERM_DAG_CBOR, CONTENT_TYPE_TERM_YAML,
+    CONTENT_TYPE_TERM_YAML,
 };
 use tracing::{debug, info, warn};
 
@@ -41,7 +41,7 @@ pub(super) enum CrudOp {
     Delete(String),
 }
 
-/// Decode a `application/x-ma-crud` payload.
+/// Decode a `application/vnd.ma.crud.request` payload.
 ///
 /// - `[".path"]`          → GET
 /// - `[".path", ""]`      → DELETE (empty string = delete)
@@ -220,14 +220,15 @@ pub(super) fn spawn_entity_reload(
                     warn!(name = %name, kind = %entity_node.kind, "kind not in manifest; cannot reload entity");
                     return;
                 };
-                let raw_kind: KindNode =
-                    match crate::kubo::dag_get(&kubo_rpc_url, &kind_link.cid).await {
-                        Ok(k) => k,
-                        Err(e) => {
-                            warn!(name = %name, kind = %entity_node.kind, error = %e, "failed to fetch kind node; cannot reload entity");
-                            return;
-                        }
-                    };
+                let raw_kind: KindNode = match crate::kubo::dag_get(&kubo_rpc_url, &kind_link.cid)
+                    .await
+                {
+                    Ok(k) => k,
+                    Err(e) => {
+                        warn!(name = %name, kind = %entity_node.kind, error = %e, "failed to fetch kind node; cannot reload entity");
+                        return;
+                    }
+                };
                 let resolved = if raw_kind.extends.is_some() {
                     match crate::entity::resolve_kind_extends(&kubo_rpc_url, &manifest, raw_kind)
                         .await
@@ -501,21 +502,6 @@ pub(super) async fn send_crud_data_yaml<T: serde::Serialize + Sync>(
     ciborium::ser::into_writer(&CborValue::Text(yaml_str), &mut out)
         .context("encoding YAML string as CBOR text")?;
     send_crud_reply_raw(incoming, reply_type, ctx, CONTENT_TYPE_TERM_YAML, &out).await
-}
-
-/// Send a GET data reply whose payload is a `CIDv1` string (encoded as a
-/// CBOR text value).  Uses `CONTENT_TYPE_TERM_DAG_CBOR` so the receiver
-/// knows it must fetch the CID from IPFS to obtain the actual content.
-pub(super) async fn send_crud_data_dag_cbor(
-    incoming: &ma_core::Message,
-    reply_type: &str,
-    ctx: &CrudHandlerCtx,
-    cid: &str,
-) -> Result<()> {
-    let mut out = Vec::new();
-    ciborium::ser::into_writer(&CborValue::Text(cid.to_string()), &mut out)
-        .context("encoding CID as CBOR text")?;
-    send_crud_reply_raw(incoming, reply_type, ctx, CONTENT_TYPE_TERM_DAG_CBOR, &out).await
 }
 
 pub(super) async fn send_crud_reply(

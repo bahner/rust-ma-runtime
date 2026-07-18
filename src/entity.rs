@@ -656,7 +656,7 @@ pub struct RuntimeManifest {
 ///
 /// `to`           — recipient DID (or DID-URL).
 /// `content_type` — MIME type of the payload (e.g. `application/cbor`).
-/// `message_type` — envelope routing type (e.g. `application/x-ma-chat`).  If
+/// `message_type` — envelope routing type (e.g. `application/vnd.ma.chat`).  If
 ///                  `None` the runtime defaults to `MESSAGE_TYPE_RPC`.  The
 ///                  protocol used for delivery is derived from this field; see
 ///                  `eventloop::protocol_for`.
@@ -933,7 +933,10 @@ mod tests {
             .await
             .expect("resolve extends");
 
-        assert_eq!(resolved.protocol, "/ma/genesis/0.0.1", "own identity preserved");
+        assert_eq!(
+            resolved.protocol, "/ma/genesis/0.0.1",
+            "own identity preserved"
+        );
         assert_eq!(
             resolved.cid.map(|l| l.cid),
             Some("bafyactorwasm".to_string()),

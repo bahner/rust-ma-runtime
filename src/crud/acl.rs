@@ -51,7 +51,8 @@ pub(super) async fn handle_root_acls(
                 .acls
                 .get(acl_name.as_str())
                 .ok_or_else(|| anyhow!("ACL not found: acls.{acl_name}"))?;
-            send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(link.cid.clone())).await
+            let ipfs_path = format!("/ipfs/{}", link.cid);
+            send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(ipfs_path)).await
         }
         // Set a named ACL by CID.
         ([acl_name], Some(""), [CborValue::Text(raw)]) => {
@@ -94,12 +95,14 @@ pub(super) async fn handle_root_acl(
     match (tail, args.as_slice()) {
         (None, []) => {
             let manifest = load_manifest(ctx).await?;
-            let cid = manifest
+            // No `/ipfs/` prefix when no root ACL has been set yet — there
+            // is genuinely no reference to point at.
+            let value = manifest
                 .acl
                 .as_ref()
-                .map(|link| link.cid.clone())
+                .map(|link| format!("/ipfs/{}", link.cid))
                 .unwrap_or_default();
-            send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(cid)).await
+            send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(value)).await
         }
         (Some(""), [CborValue::Text(raw)]) => {
             let Some(cid) = resolve_ipfs_ref(&ctx.kubo_rpc_url, raw).await? else {

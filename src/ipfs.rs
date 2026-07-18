@@ -3,8 +3,9 @@ use ma_core::ipfs::IpfsDidPublisher;
 use ma_core::ipfs::MA_IPNS_ALIAS_HASH_PREFIX;
 use ma_core::ipfs_add;
 use ma_core::{
-    ipns_from_secret, resolve_endpoint_for_protocol, validate_ipfs_request, Did, Document, Inbox,
-    IpfsGatewayResolver, ReplayGuard, SigningKey, ValidatedIpfsRequest, MESSAGE_TYPE_RPC_REPLY,
+    ipns_from_secret, resolve_endpoint_for_protocol, validate_identity_publish_message,
+    validate_ipfs_request, Did, Document, Inbox, IpfsGatewayResolver, ReplayGuard, SigningKey,
+    MESSAGE_TYPE_IDENTITY_PUBLISH_REQUEST, MESSAGE_TYPE_IPFS_REQUEST, MESSAGE_TYPE_RPC_REPLY,
 };
 use reqwest::multipart;
 use serde::Deserialize;
@@ -15,7 +16,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 
-use crate::acl::{check_full, AclMap, GroupCache, CAP_IPFS};
+use crate::acl::{check_full, AclMap, GroupCache, CAP_IDENTITY_PUBLISH, CAP_IPFS};
 use crate::i18n;
 use crate::rpc::RPC_PROTOCOL_ID;
 
@@ -501,8 +502,18 @@ pub async fn handle_ipfs_message(
     ctx: &IpfsHandlerCtx<'_>,
     replay_guard: &mut ReplayGuard,
 ) -> Result<()> {
+    let cap = match message.message_type.as_str() {
+        MESSAGE_TYPE_IDENTITY_PUBLISH_REQUEST => CAP_IDENTITY_PUBLISH,
+        MESSAGE_TYPE_IPFS_REQUEST => CAP_IPFS,
+        other => {
+            return Err(anyhow!(
+                "unsupported message type on /ma/ipfs/0.0.1: {other}"
+            ))
+        }
+    };
+
     let group_cache = ctx.group_cache.clone();
-    check_full(acl, &message.from, &[CAP_IPFS], |key| {
+    check_full(acl, &message.from, &[cap], |key| {
         let group_cache = group_cache.clone();
         let name = key.strip_prefix('+').unwrap_or(key).to_string();
         async move {
@@ -521,19 +532,25 @@ pub async fn handle_ipfs_message(
         .check_and_insert(&headers)
         .context("replay or invalid headers")?;
 
-    let validated = validate_ipfs_request(message).context("invalid /ma/ipfs/0.0.1 request")?;
-
-    match validated {
-        ValidatedIpfsRequest::DidDocumentPublish(v) => {
-            handle_did_document_publish(message, *v, ctx).await
+    match message.message_type.as_str() {
+        MESSAGE_TYPE_IDENTITY_PUBLISH_REQUEST => {
+            let v = validate_identity_publish_message(message)
+                .context("invalid identity-publish request")?;
+            handle_did_document_publish(message, v, ctx).await
         }
-        ValidatedIpfsRequest::Store(v) => handle_ipfs_store(message, &v, ctx).await,
+        MESSAGE_TYPE_IPFS_REQUEST => {
+            let v = validate_ipfs_request(message).context("invalid ipfs-store request")?;
+            handle_ipfs_store(message, &v, ctx).await
+        }
+        other => Err(anyhow!(
+            "unsupported message type on /ma/ipfs/0.0.1: {other}"
+        )),
     }
 }
 
 async fn handle_did_document_publish(
     message: &ma_core::Message,
-    v: ma_core::ValidatedIpfsPublish,
+    v: ma_core::ValidatedIdentityPublish,
     ctx: &IpfsHandlerCtx<'_>,
 ) -> Result<()> {
     info!(from = %message.from, id = %message.id, "{}", i18n::t("did-publish-request-received"));

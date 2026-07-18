@@ -57,7 +57,8 @@ pub(super) async fn handle_root_grp(
                 .grp
                 .get(name.as_str())
                 .ok_or_else(|| anyhow!("group not found: grp/{name}"))?;
-            send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(link.cid.clone())).await
+            let ipfs_path = format!("/ipfs/{}", link.cid);
+            send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(ipfs_path)).await
         }
         // Set a group by CID. Unrestricted — including "owners", and
         // including setting it to a CID for an empty list.
