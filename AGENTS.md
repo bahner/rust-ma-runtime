@@ -242,13 +242,13 @@ ma --status-bind 0.0.0.0:5003
 
 The ACL YAML must contain an `acl:` map from principal to a YAML sequence of
 capability strings. The default when no file is supplied is open
-(`"*": [rpc, ipfs]`).
+(`"*": [rpc, ipfs, identity-publish]`).
 
 ```yaml
 acl:
-  "*": [rpc, ipfs]            # everyone: RPC + IPFS publish
+  "*": [rpc, ipfs, identity-publish]  # everyone: RPC + IPFS store + DID publish
   "did:ma:alice": ["*"]       # alice: all capabilities
-  "did:ma:bob": [rpc]         # bob: RPC only, no IPFS publish
+  "did:ma:bob": [rpc]         # bob: RPC only, no IPFS store or DID publish
   "did:ma:eve":               # null = explicit deny
 ```
 

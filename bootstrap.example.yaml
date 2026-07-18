@@ -27,6 +27,7 @@ runtime:
   grp:
     owners:
       - did:ma:k51qzi5uqu5dlgh2drt9od7f7fmfe1u6rf5j2s2acfp9olltfx51oqhnl048xm
+      - did:ma:k51qzi5uqu5dikd2qx9mpj3xguv89v6qhcnfnx2jb6yp4eby6iatr5xer8rn7t
 
   # Named ACL library: name -> inline AclMap, published to IPFS at bootstrap.
   # Reference an ACL by name in an EntityNode's `acl` field.
@@ -50,6 +51,7 @@ runtime:
     "+owners": ["*"]
     "*":
       - ipfs
+      - identity-publish
       - rpc
 
 

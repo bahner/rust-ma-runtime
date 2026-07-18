@@ -610,6 +610,7 @@ pub async fn save_all_entity_states(
 #[cfg(test)]
 mod tests {
     use super::BootstrapYaml;
+    use ma_core::{check_cap, CAP_IDENTITY_PUBLISH, CAP_IPFS, CAP_RPC};
 
     #[test]
     fn example_yaml_parses() {
@@ -645,5 +646,10 @@ mod tests {
             genesis_kind.cid.is_none() && genesis_kind.behaviour.is_none(),
             "cid/behaviour should be inherited via extends, not repeated"
         );
+
+        let root_acl = yaml.runtime.acl.expect("root ACL must be present");
+        assert!(check_cap(&root_acl, "did:ma:alice", CAP_IPFS).is_ok());
+        assert!(check_cap(&root_acl, "did:ma:alice", CAP_IDENTITY_PUBLISH).is_ok());
+        assert!(check_cap(&root_acl, "did:ma:alice", CAP_RPC).is_ok());
     }
 }

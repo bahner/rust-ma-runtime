@@ -156,8 +156,8 @@ That's it.  Your DID document is published to IPFS automatically as part
 of the process — no separate publish step is needed.
 
 Until claimed, `ma` runs with an **open ACL** — all principals may use
-RPC and IPFS publish.  This is intentional: it means DID documents can be
-published immediately on a fresh runtime without any manual configuration.
+RPC, generic IPFS store, and DID-document publish.  This is intentional: it
+means DID documents can be published immediately on a fresh runtime without any manual configuration.
 Once you claim the runtime the ACL tightens.
 
 ### Why open before claiming?

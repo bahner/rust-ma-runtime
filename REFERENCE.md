@@ -546,9 +546,9 @@ Capabilities are plain strings in YAML sequences. The default when no
 
 ```yaml
 acl:
-  "*": [rpc, ipfs]            # everyone: RPC + IPFS publish (default)
+  "*": [rpc, ipfs, identity-publish]  # everyone: RPC + IPFS store + DID publish (default)
   "did:ma:alice": [owner]     # alice: full access
-  "did:ma:bob": [rpc]         # bob: RPC only, no IPFS publish
+  "did:ma:bob": [rpc]         # bob: RPC only, no IPFS store or DID publish
   "did:ma:eve":               # null = explicit deny
 ```
 
@@ -557,7 +557,8 @@ Built-in capabilities:
 | Capability | Required by |
 |------------|-------------|
 | `rpc` | `/ma/rpc/0.0.1` |
-| `ipfs` | `/ma/ipfs/0.0.1` |
+| `ipfs` | `/ma/ipfs/0.0.1` generic content storage |
+| `identity-publish` | `/ma/ipfs/0.0.1` DID-document publishing |
 | `"*"` | Wildcard — grants all capabilities when used in an Allow set |
 | `create` / `update` / `delete` | Namespace / entity management |
 

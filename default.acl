@@ -1,2 +1,2 @@
 acl:
-  "*": [rpc, ipfs]
+  "*": [rpc, ipfs, identity-publish]
