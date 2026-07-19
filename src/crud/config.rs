@@ -95,7 +95,7 @@ fn yaml_config_value_to_string(value: &serde_yaml::Value) -> Option<String> {
     }
 }
 
-pub(crate) fn public_plugin_config(
+pub fn public_plugin_config(
     manifest: &crate::entity::RuntimeManifest,
     cfg: &ma_core::Config,
 ) -> std::collections::BTreeMap<String, String> {

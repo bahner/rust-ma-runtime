@@ -305,12 +305,18 @@ async fn handle_entity_plugin_message(
     if let Some(state_bytes) = result.pending_state {
         let entity_arc = Arc::clone(&entity);
         let kubo_url = ctx.kubo_rpc_url.to_string();
+        let writer = ctx.manifest_writer.clone();
         tokio::spawn(async move {
             match ipfs_add(&kubo_url, state_bytes.clone()).await {
-                Ok(cid) => {
-                    debug!(fragment = %entity_arc.fragment, %cid, "plugin state saved via ma_set_state");
-                    entity_arc.mark_saved(state_bytes);
-                }
+                Ok(cid) => match writer.set_entity_state(&entity_arc.fragment, &cid).await {
+                    Ok(root_cid) => {
+                        debug!(fragment = %entity_arc.fragment, %cid, %root_cid, "plugin state saved via ma_set_state");
+                        entity_arc.mark_saved(state_bytes);
+                    }
+                    Err(e) => {
+                        warn!(fragment = %entity_arc.fragment, cid = %cid, error = %e, "failed to update manifest with plugin state");
+                    }
+                },
                 Err(e) => {
                     warn!(fragment = %entity_arc.fragment, error = %e, "failed to persist plugin state");
                 }
@@ -370,6 +376,11 @@ async fn handle_entity_plugin_message(
         .await
         {
             Ok((ep, Lifecycle::Running)) => {
+                let mut running_node = entity_node.clone();
+                running_node.initialized = true;
+                if let Ok(Some(cid)) = ep.trigger_save(&ctx.kubo_rpc_url).await {
+                    running_node.state = Some(IpldLink::new(cid));
+                }
                 ctx.entity_registry
                     .write()
                     .await
@@ -381,8 +392,6 @@ async fn handle_entity_plugin_message(
                 // already live in the in-memory registry above.  The manifest
                 // writer serialises this against all other manifest mutations,
                 // so concurrent creates can no longer clobber each other.
-                let mut running_node = entity_node.clone();
-                running_node.initialized = true;
                 let kubo_url = ctx.kubo_rpc_url.to_string();
                 let fragment = req.fragment.clone();
                 let writer = ctx.manifest_writer.clone();

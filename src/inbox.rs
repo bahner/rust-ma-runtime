@@ -17,6 +17,7 @@ pub struct InboxHandlerCtx {
     pub our_did: Arc<str>,
     pub entity_registry: EntityRegistry,
     pub kubo_rpc_url: Arc<str>,
+    pub manifest_writer: crate::manifest::ManifestWriter,
 }
 
 pub async fn handle_inbox_message(message: &ma_core::Message, ctx: &InboxHandlerCtx) -> Result<()> {
@@ -68,12 +69,18 @@ pub async fn handle_inbox_message(message: &ma_core::Message, ctx: &InboxHandler
         let kubo_url = Arc::clone(&ctx.kubo_rpc_url);
         let fragment_str = entity.fragment.clone();
         let entity_arc = Arc::clone(&entity);
+        let writer = ctx.manifest_writer.clone();
         tokio::spawn(async move {
             match crate::kubo::dag_put(&kubo_url, &state_bytes).await {
-                Ok(cid) => {
-                    entity_arc.mark_saved(state_bytes);
-                    info!(fragment = %fragment_str, cid = %cid, "inbox: entity state persisted");
-                }
+                Ok(cid) => match writer.set_entity_state(&fragment_str, &cid).await {
+                    Ok(root_cid) => {
+                        entity_arc.mark_saved(state_bytes);
+                        info!(fragment = %fragment_str, cid = %cid, %root_cid, "inbox: entity state persisted");
+                    }
+                    Err(e) => {
+                        warn!(fragment = %fragment_str, cid = %cid, error = %e, "inbox: failed to update manifest with entity state");
+                    }
+                },
                 Err(e) => {
                     warn!(fragment = %fragment_str, error = %e, "inbox: failed to persist entity state");
                 }

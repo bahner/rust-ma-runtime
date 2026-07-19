@@ -615,7 +615,11 @@ async fn load_wasm_entity(args: LoadEntityArgs<'_>) -> Option<LoadedEntity> {
     {
         Ok((ep, lifecycle)) => {
             tracing::info!(name = %args.name, lifecycle = %lifecycle, "{}", crate::i18n::t("entity-loaded"));
-            let updated_link = persist_initialized_transition(&args, &lifecycle).await;
+            let mut node = args.node.clone();
+            if let Ok(Some(cid)) = ep.trigger_save(args.kubo_url).await {
+                node.state = Some(IpldLink::new(cid));
+            }
+            let updated_link = persist_initialized_transition(&args, &node, &lifecycle).await;
             args.registry
                 .write()
                 .await
@@ -652,7 +656,11 @@ async fn load_native_entity(
     ) {
         Ok((ep, lifecycle)) => {
             tracing::info!(name = %args.name, lifecycle = %lifecycle, "{}", crate::i18n::t("entity-loaded"));
-            let updated_link = persist_initialized_transition(&args, &lifecycle).await;
+            let mut node = args.node.clone();
+            if let Ok(Some(cid)) = ep.trigger_save(args.kubo_url).await {
+                node.state = Some(IpldLink::new(cid));
+            }
+            let updated_link = persist_initialized_transition(&args, &node, &lifecycle).await;
             args.registry
                 .write()
                 .await
@@ -682,14 +690,23 @@ async fn load_initial_state(node: &EntityNode, kind_node: &KindNode, kubo_url: &
 
 async fn persist_initialized_transition(
     args: &LoadEntityArgs<'_>,
+    node: &EntityNode,
     lifecycle: &crate::entity::Lifecycle,
 ) -> Option<IpldLink> {
-    if args.node.initialized || lifecycle != &crate::entity::Lifecycle::Running {
+    if lifecycle != &crate::entity::Lifecycle::Running {
         return None;
     }
 
-    let mut updated = args.node.clone();
-    updated.initialized = true;
+    let mut updated = node.clone();
+    let state_changed = args.node.state.as_ref().map(|l| l.cid.as_str())
+        != updated.state.as_ref().map(|l| l.cid.as_str());
+    let initialized_changed = !args.node.initialized;
+    if initialized_changed {
+        updated.initialized = true;
+    }
+    if !initialized_changed && !state_changed {
+        return None;
+    }
     match kubo::dag_put(args.kubo_url, &updated).await {
         Ok(new_cid) => {
             tracing::debug!(name = %args.name, cid = %new_cid, "Updated entity lifecycle in IPFS");

@@ -414,18 +414,27 @@ pub(super) fn spawn_entity_reload(
         .await
         {
             Ok((ep, lifecycle)) => {
+                let mut updated_node = entity_node.clone();
+                if let Ok(Some(cid)) = ep.trigger_save(&kubo_rpc_url).await {
+                    updated_node.state = Some(crate::entity::IpldLink::new(cid));
+                }
                 entity_registry
                     .write()
                     .await
                     .insert(name.clone(), Arc::new(ep));
                 info!(name = %name, lifecycle = %lifecycle, "{}", crate::i18n::t("entity-reloaded"));
-                // Persist the initialized transition (false → true) to IPFS,
-                // exactly like bootstrap::load_entities does at startup —
-                // otherwise a later daemon restart re-reads the stale
-                // `initialized: false` node and incorrectly re-fires `:init`.
-                if !entity_node.initialized && lifecycle == crate::entity::Lifecycle::Running {
-                    let mut updated = entity_node.clone();
-                    updated.initialized = true;
+                // Persist lifecycle/state changes to IPFS, exactly like
+                // bootstrap::load_entities does at startup. Otherwise a later
+                // daemon restart re-reads stale state and/or `initialized`.
+                let state_changed = entity_node.state.as_ref().map(|l| l.cid.as_str())
+                    != updated_node.state.as_ref().map(|l| l.cid.as_str());
+                if lifecycle == crate::entity::Lifecycle::Running
+                    && (!entity_node.initialized || state_changed)
+                {
+                    let mut updated = updated_node;
+                    if !entity_node.initialized {
+                        updated.initialized = true;
+                    }
                     match crate::kubo::dag_put(&kubo_rpc_url, &updated).await {
                         Ok(new_cid) => {
                             let name_for_mutation = name.clone();

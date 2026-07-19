@@ -236,6 +236,7 @@ pub async fn run(
                         our_did: Arc::from(our_did.as_str()),
                         entity_registry: entity_registry.clone(),
                         kubo_rpc_url: Arc::from(kubo_url.as_str()),
+                        manifest_writer: manifest_writer.clone(),
                     };
                     tokio::spawn(async move {
                         if let Err(err) = tokio::time::timeout(

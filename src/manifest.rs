@@ -21,7 +21,7 @@ use anyhow::Result;
 use tokio::sync::Mutex;
 use tracing::warn;
 
-use crate::entity::RuntimeManifest;
+use crate::entity::{EntityNode, IpldLink, RuntimeManifest};
 use crate::status::SharedStats;
 
 /// Cloneable handle to the serialised manifest writer.
@@ -69,6 +69,38 @@ impl ManifestWriter {
 
         let mut manifest: RuntimeManifest = crate::kubo::dag_get(&inner.kubo_url, &old_cid).await?;
         f(&mut manifest)?;
+        let new_cid = crate::kubo::dag_put(&inner.kubo_url, &manifest).await?;
+        if let Err(e) = crate::kubo::pin_update(&inner.kubo_url, &old_cid, &new_cid).await {
+            warn!(old = %old_cid, new = %new_cid, error = %e, "manifest pin_update failed");
+        }
+
+        guard.clone_from(&new_cid);
+        inner.stats.write().await.root_cid = Some(new_cid.clone());
+        Ok(new_cid)
+    }
+
+    /// Publish an updated entity node whose `state` points at `state_cid`, then
+    /// publish a manifest that points at that updated entity node.
+    #[allow(clippy::significant_drop_tightening)]
+    pub async fn set_entity_state(&self, fragment: &str, state_cid: &str) -> Result<String> {
+        let inner = &self.inner;
+        let mut guard = inner.current.lock().await;
+        let old_cid = guard.clone();
+
+        let mut manifest: RuntimeManifest = crate::kubo::dag_get(&inner.kubo_url, &old_cid).await?;
+        let entity_link = manifest
+            .entities
+            .get(fragment)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("entity '{fragment}' is not in the manifest"))?;
+        let mut entity_node: EntityNode =
+            crate::kubo::dag_get(&inner.kubo_url, &entity_link.cid).await?;
+        entity_node.state = Some(IpldLink::new(state_cid));
+        let entity_cid = crate::kubo::dag_put(&inner.kubo_url, &entity_node).await?;
+        manifest
+            .entities
+            .insert(fragment.to_string(), IpldLink::new(&entity_cid));
+
         let new_cid = crate::kubo::dag_put(&inner.kubo_url, &manifest).await?;
         if let Err(e) = crate::kubo::pin_update(&inner.kubo_url, &old_cid, &new_cid).await {
             warn!(old = %old_cid, new = %new_cid, error = %e, "manifest pin_update failed");
@@ -159,6 +191,50 @@ mod tests {
         let cid = stats.read().await.root_cid.clone().unwrap();
         let m: RuntimeManifest = crate::kubo::dag_get(kubo.url(), &cid).await.unwrap();
         assert_eq!(m.entities.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn set_entity_state_updates_entity_node_and_manifest_root() {
+        let kubo = MockKubo::start().await;
+        let entity_node = crate::entity::EntityNode {
+            kind: "/ma/test/0.0.1".to_string(),
+            behaviour: None,
+            acl: String::new(),
+            state: None,
+            parent: None,
+            label: None,
+            attributes: std::collections::BTreeMap::new(),
+            init: None,
+            initialized: false,
+        };
+        let entity_cid = crate::kubo::dag_put(kubo.url(), &entity_node)
+            .await
+            .unwrap();
+        let mut manifest = RuntimeManifest::default();
+        manifest
+            .entities
+            .insert("room".to_string(), IpldLink::new(entity_cid));
+        let initial = crate::kubo::dag_put(kubo.url(), &manifest).await.unwrap();
+        let stats = Arc::new(RwLock::new(Stats {
+            root_cid: Some(initial.clone()),
+            ..Default::default()
+        }));
+        let writer = ManifestWriter::new(initial, kubo.url().to_string(), stats.clone());
+
+        let root_cid = writer.set_entity_state("room", "bafystate").await.unwrap();
+
+        assert_eq!(
+            stats.read().await.root_cid.as_deref(),
+            Some(root_cid.as_str())
+        );
+        let updated_manifest: RuntimeManifest =
+            crate::kubo::dag_get(kubo.url(), &root_cid).await.unwrap();
+        let updated_link = updated_manifest.entities.get("room").unwrap();
+        let updated_node: crate::entity::EntityNode =
+            crate::kubo::dag_get(kubo.url(), &updated_link.cid)
+                .await
+                .unwrap();
+        assert_eq!(updated_node.state.unwrap().cid, "bafystate");
     }
 
     #[tokio::test]
