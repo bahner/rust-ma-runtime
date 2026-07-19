@@ -67,6 +67,7 @@ pub fn spawn_status_server(stats: SharedStats, acl: SharedAcl, status_bind: Sock
         .route("/status.json", get(handle_status_json))
         .route("/bootstrap.yaml", get(handle_bootstrap_yaml))
         .route("/ipfs/*path", get(handle_ipfs_path))
+        .route("/ipns/*path", get(handle_ipns_path))
         .route("/zion", get(handle_zion_redirect))
         .route("/zion/", get(handle_zion_index))
         .route("/zion/*path", get(handle_zion_path))
@@ -328,13 +329,28 @@ async fn handle_ipfs_path(
     State(state): State<StatusState>,
     Path(path): Path<String>,
 ) -> impl IntoResponse {
+    handle_gateway_path(state, "ipfs", path).await
+}
+
+async fn handle_ipns_path(
+    State(state): State<StatusState>,
+    Path(path): Path<String>,
+) -> impl IntoResponse {
+    handle_gateway_path(state, "ipns", path).await
+}
+
+async fn handle_gateway_path(
+    state: StatusState,
+    namespace: &'static str,
+    path: String,
+) -> axum::response::Response {
     let path = path.trim_start_matches('/');
     if path.is_empty() || path.split('/').any(|part| part == "..") {
-        return text_response(StatusCode::BAD_REQUEST, "invalid IPFS path");
+        return text_response(StatusCode::BAD_REQUEST, "invalid gateway path");
     }
 
     let kubo_rpc_url = state.stats.read().await.kubo_rpc_url.clone();
-    match kubo_cat_ipfs_path(&kubo_rpc_url, &format!("/ipfs/{path}")).await {
+    match kubo_cat_ipfs_path(&kubo_rpc_url, &format!("/{namespace}/{path}")).await {
         Ok(Some(bytes)) => (
             StatusCode::OK,
             [
@@ -344,12 +360,12 @@ async fn handle_ipfs_path(
             bytes,
         )
             .into_response(),
-        Ok(None) => text_response(StatusCode::NOT_FOUND, "IPFS path not found"),
+        Ok(None) => text_response(StatusCode::NOT_FOUND, "gateway path not found"),
         Err(e) => {
-            warn!(path = %path, error = %e, "failed to relay IPFS asset from Kubo");
+            warn!(namespace, path = %path, error = %e, "failed to relay gateway asset from Kubo");
             text_response(
                 StatusCode::BAD_GATEWAY,
-                "failed to fetch IPFS asset from Kubo",
+                "failed to fetch gateway asset from Kubo",
             )
         }
     }
