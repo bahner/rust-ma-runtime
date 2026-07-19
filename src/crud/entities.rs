@@ -192,6 +192,11 @@ async fn handle_single_entity(
                 Ok(())
             })
             .await?;
+            let runtime_config = {
+                let manifest = load_manifest(ctx).await?;
+                let cfg = ctx.shared_config.read().await;
+                super::config::public_plugin_config(&manifest, &cfg)
+            };
             spawn_entity_reload(
                 name.to_string(),
                 entity_node,
@@ -203,6 +208,7 @@ async fn handle_single_entity(
                 ctx.entity_registry.clone(),
                 ctx.avatar_key,
                 ctx.manifest_writer.clone(),
+                runtime_config,
             );
             info!(name = %name, cid = %cid, "{}", crate::i18n::t("entity-created"));
             send_crud_ok_cid(message, reply_type, ctx, cid).await

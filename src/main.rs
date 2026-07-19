@@ -410,6 +410,7 @@ async fn main() -> Result<()> {
         let (count, updated_root) = bootstrap::load_entities(
             rc,
             &config.kubo_rpc_url,
+            &config,
             &our_did,
             &entity_registry,
             &kind_registry,

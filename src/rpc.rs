@@ -33,6 +33,7 @@ pub struct RpcHandlerCtx {
     pub group_cache: GroupCache,
     pub avatar_key: [u8; 32],
     pub manifest_writer: crate::manifest::ManifestWriter,
+    pub shared_config: Arc<tokio::sync::RwLock<ma_core::Config>>,
 }
 
 // ── Entity creation helper ─────────────────────────────────────────────────────
@@ -52,6 +53,22 @@ async fn persist_new_entity(
         })
         .await?;
     Ok(())
+}
+
+async fn public_plugin_config_for_rpc(
+    ctx: &RpcHandlerCtx,
+) -> Result<std::collections::BTreeMap<String, String>> {
+    let root_cid = ctx
+        .stats
+        .read()
+        .await
+        .root_cid
+        .clone()
+        .ok_or_else(|| anyhow!("no manifest root CID available"))?;
+    let manifest: crate::entity::RuntimeManifest =
+        crate::kubo::dag_get(&ctx.kubo_rpc_url, &root_cid).await?;
+    let cfg = ctx.shared_config.read().await;
+    Ok(crate::crud::config::public_plugin_config(&manifest, &cfg))
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
@@ -331,6 +348,10 @@ async fn handle_entity_plugin_message(
             let s = ctx.stats.read().await;
             (s.endpoint_id.clone(), s.started_at)
         };
+        let runtime_config = public_plugin_config_for_rpc(ctx).await.unwrap_or_else(|e| {
+            warn!(error = %e, "ma_create_entity: failed to build public plugin config; continuing with entity-local config only");
+            std::collections::BTreeMap::new()
+        });
 
         match crate::plugin::EntityPlugin::load(
             req.fragment.clone(),
@@ -343,6 +364,7 @@ async fn handle_entity_plugin_message(
             ctx.avatar_key,
             &iroh_node_id,
             started_at,
+            runtime_config,
             req.init_payload.clone(),
         )
         .await

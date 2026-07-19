@@ -340,6 +340,8 @@ pub(super) struct WasmThreadCfg {
     pub(super) started_at: u64,
     /// DID-URL of the parent entity, if any.
     pub(super) parent: Option<String>,
+    /// Public runtime/manifest config exposed to the entity as read-only config.
+    pub(super) runtime_config: std::collections::BTreeMap<String, String>,
 }
 
 /// Handles retained by the worker thread to drain plugin side-effects after
@@ -365,7 +367,7 @@ struct WasmThreadState {
 ///   `started_at`   Unix epoch seconds when the runtime started            [always]
 ///   `parent`       DID-URL of the parent entity                           [if set]
 fn build_plugin_config(cfg: &WasmThreadCfg) -> std::collections::BTreeMap<String, String> {
-    let mut config = std::collections::BTreeMap::new();
+    let mut config = cfg.runtime_config.clone();
     config.insert(
         "self".to_string(),
         format!("{}#{}", cfg.our_did, cfg.fragment),

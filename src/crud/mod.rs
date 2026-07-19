@@ -11,7 +11,7 @@
 //! All replies use `application/vnd.ma.crud.reply`.
 
 mod acl;
-mod config;
+pub(crate) mod config;
 mod entities;
 mod grp;
 mod helpers;

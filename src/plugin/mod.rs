@@ -262,6 +262,7 @@ impl EntityPlugin {
         avatar_key: [u8; 32],
         iroh_node_id: &str,
         started_at: u64,
+        runtime_config: std::collections::BTreeMap<String, String>,
         init_payload: Option<Vec<u8>>,
     ) -> Result<(Self, Lifecycle)> {
         let fragment = fragment.into();
@@ -398,6 +399,7 @@ impl EntityPlugin {
             iroh_node_id: iroh_node_id.to_string(),
             started_at,
             parent: node.parent.clone(),
+            runtime_config,
         };
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<EntityMsg>();
@@ -663,6 +665,7 @@ mod hostile {
             [7u8; 32],
             "",
             0,
+            std::collections::BTreeMap::new(),
             None,
         )
         .await
@@ -881,6 +884,7 @@ mod wasm_repro {
             [7u8; 32],
             "",
             0,
+            std::collections::BTreeMap::new(),
             None,
         )
         .await
@@ -980,6 +984,7 @@ mod wasm_repro {
             [7u8; 32],
             "",
             0,
+            std::collections::BTreeMap::new(),
             None,
         )
         .await
@@ -1033,6 +1038,7 @@ mod wasm_repro {
             [7u8; 32],
             "",
             0,
+            std::collections::BTreeMap::new(),
             None,
         )
         .await
@@ -1168,6 +1174,7 @@ mod wasm_repro {
             [7u8; 32],
             "",
             0,
+            std::collections::BTreeMap::new(),
             Some(init_payload),
         )
         .await

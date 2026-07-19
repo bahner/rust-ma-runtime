@@ -183,6 +183,7 @@ pub(super) fn spawn_entity_reload(
     entity_registry: crate::plugin::EntityRegistry,
     avatar_key: [u8; 32],
     manifest_writer: crate::manifest::ManifestWriter,
+    runtime_config: std::collections::BTreeMap<String, String>,
 ) {
     tokio::spawn(async move {
         // Prefer the hydrated in-memory kind registry, with a manifest/IPFS
@@ -259,6 +260,7 @@ pub(super) fn spawn_entity_reload(
             avatar_key,
             &iroh_node_id,
             started_at,
+            runtime_config,
             init_payload, // EntityNode.init (§ genesis-via-CRUD), only fires if genesis
         )
         .await

@@ -111,6 +111,7 @@ pub async fn run(
                         group_cache: group_cache.clone(),
                         avatar_key,
                         manifest_writer: manifest_writer.clone(),
+                        shared_config: Arc::clone(&shared_config),
                     };
                     tokio::spawn(async move {
                         if let Err(err) = tokio::time::timeout(

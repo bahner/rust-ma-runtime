@@ -83,6 +83,37 @@ pub fn daemon_config_key_value_pub(cfg: &ma_core::Config, key: &str) -> serde_ya
     }
 }
 
+fn yaml_config_value_to_string(value: &serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::Null => None,
+        serde_yaml::Value::Bool(value) => Some(value.to_string()),
+        serde_yaml::Value::Number(value) => Some(value.to_string()),
+        serde_yaml::Value::String(value) => Some(value.clone()),
+        value => serde_yaml::to_string(value)
+            .ok()
+            .map(|s| s.trim_end().to_string()),
+    }
+}
+
+pub(crate) fn public_plugin_config(
+    manifest: &crate::entity::RuntimeManifest,
+    cfg: &ma_core::Config,
+) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    for (key, value) in &manifest.config {
+        if let Some(value) = yaml_config_value_to_string(value) {
+            out.insert(key.clone(), value);
+        }
+    }
+    for key in DAEMON_CONFIG_KEYS {
+        let value = daemon_config_key_value_pub(cfg, key);
+        if let Some(value) = yaml_config_value_to_string(&value) {
+            out.insert((*key).to_string(), value);
+        }
+    }
+    out
+}
+
 /// Apply a YAML value from CRUD to the corresponding `Config` field in memory.
 pub fn set_daemon_config_key_pub(cfg: &mut ma_core::Config, key: &str, val: &serde_yaml::Value) {
     match key {
@@ -371,8 +402,26 @@ pub(super) async fn handle_config_ns(
 
 #[cfg(test)]
 mod tests {
-    use super::{cbor_to_yaml, is_protected_config_key_pub};
+    use super::{cbor_to_yaml, is_protected_config_key_pub, public_plugin_config};
     use ciborium::Value as CborValue;
+    use ma_core::Config;
+
+    fn test_config() -> Config {
+        Config {
+            slug: "ma".to_string(),
+            log_level: "info".to_string(),
+            log_level_stdout: "warn".to_string(),
+            did_resolver_positive_ttl_secs: 60,
+            did_resolver_negative_ttl_secs: 10,
+            log_file: None,
+            kubo_rpc_url: "http://127.0.0.1:5001".to_string(),
+            kubo_key_alias: "ma".to_string(),
+            secret_bundle: None,
+            secret_bundle_passphrase: Some("secret".to_string()),
+            config_path: None,
+            extra: serde_yaml::Mapping::new(),
+        }
+    }
 
     #[test]
     fn protects_secret_and_reserved_keys() {
@@ -416,5 +465,43 @@ mod tests {
         assert_eq!(items.len(), 2, "duplicates should be dropped");
         assert_eq!(items[0].as_str(), Some("a"));
         assert_eq!(items[1].as_str(), Some("b"));
+    }
+
+    #[test]
+    fn public_plugin_config_includes_public_runtime_keys_only() {
+        let mut manifest = crate::entity::RuntimeManifest::default();
+        manifest.config.insert(
+            "root".to_string(),
+            serde_yaml::Value::String("did:ma:test#root".to_string()),
+        );
+        manifest.config.insert(
+            "start".to_string(),
+            serde_yaml::Value::String("did:ma:test#construct".to_string()),
+        );
+        manifest
+            .config
+            .insert("enabled".to_string(), serde_yaml::Value::Bool(true));
+        manifest
+            .config
+            .insert("absent".to_string(), serde_yaml::Value::Null);
+
+        let view = public_plugin_config(&manifest, &test_config());
+
+        assert_eq!(
+            view.get("root").map(String::as_str),
+            Some("did:ma:test#root")
+        );
+        assert_eq!(
+            view.get("start").map(String::as_str),
+            Some("did:ma:test#construct")
+        );
+        assert_eq!(view.get("enabled").map(String::as_str), Some("true"));
+        assert_eq!(
+            view.get("kubo_rpc_url").map(String::as_str),
+            Some("http://127.0.0.1:5001")
+        );
+        assert!(!view.contains_key("absent"));
+        assert!(!view.contains_key("secret_bundle_passphrase"));
+        assert!(!view.contains_key("config_path"));
     }
 }

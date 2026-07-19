@@ -421,6 +421,7 @@ pub async fn export_bootstrap_yaml(root_cid: &str, kubo_url: &str) -> Result<Str
 pub async fn load_entities(
     root_cid: &str,
     kubo_url: &str,
+    daemon_config: &ma_core::Config,
     our_did: &str,
     registry: &plugin::EntityRegistry,
     kind_registry: &KindRegistry,
@@ -440,6 +441,7 @@ pub async fn load_entities(
 
     let kind_count = hydrate_kind_registry(&manifest, kubo_url, kind_registry).await;
     tracing::info!(count = %kind_count, "Kind registry hydrated from manifest");
+    let runtime_config = crate::crud::config::public_plugin_config(&manifest, daemon_config);
 
     let mut loaded = 0usize;
     let mut manifest_updated = false;
@@ -460,6 +462,7 @@ pub async fn load_entities(
             avatar_key,
             iroh_node_id,
             started_at,
+            runtime_config: &runtime_config,
         };
 
         let load_result = if is_native_kind(&kind_node) {
@@ -522,10 +525,7 @@ async fn hydrate_kind_registry(
         } else {
             raw_kind
         };
-        registry
-            .write()
-            .await
-            .insert(protocol, Arc::new(kind_node));
+        registry.write().await.insert(protocol, Arc::new(kind_node));
         loaded += 1;
     }
     loaded
@@ -591,6 +591,7 @@ struct LoadEntityArgs<'a> {
     avatar_key: [u8; 32],
     iroh_node_id: &'a str,
     started_at: u64,
+    runtime_config: &'a std::collections::BTreeMap<String, String>,
 }
 
 struct LoadedEntity {
@@ -610,6 +611,7 @@ async fn load_wasm_entity(args: LoadEntityArgs<'_>) -> Option<LoadedEntity> {
         args.avatar_key,
         args.iroh_node_id,
         args.started_at,
+        args.runtime_config.clone(),
         init_payload,
     )
     .await
