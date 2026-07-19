@@ -6,8 +6,9 @@ use ciborium::Value as CborValue;
 use crate::entity::{IpldLink, KindNode};
 
 use super::helpers::{
-    load_manifest, send_crud_error, send_crud_i18n_error, send_crud_ok, send_crud_ok_cid,
-    send_crud_ok_yaml, send_crud_reply_cbor, with_manifest_crud,
+    load_manifest, runtime_config_snapshot, send_crud_error, send_crud_i18n_error, send_crud_ok,
+    send_crud_ok_cid, send_crud_ok_yaml, send_crud_reply_cbor, spawn_kind_dependency_reloads,
+    with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -82,6 +83,21 @@ pub(super) async fn handle_kinds_ns(
                 .write()
                 .await
                 .insert(protocol_id.clone(), Arc::new(kind_node));
+            match runtime_config_snapshot(ctx).await {
+                Ok(runtime_config) => {
+                    match spawn_kind_dependency_reloads(&protocol_id, ctx, runtime_config).await {
+                        Ok(reload_count) => {
+                            tracing::info!(protocol = %protocol_id, reload_count, "kind dependents scheduled for reload");
+                        }
+                        Err(e) => {
+                            tracing::warn!(protocol = %protocol_id, error = %e, "failed to schedule kind dependent reloads");
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(protocol = %protocol_id, error = %e, "failed to build runtime config for kind dependent reloads");
+                }
+            }
             send_crud_ok_cid(message, reply_type, ctx, &new_root).await
         }
         // DELETE /kinds/<protocol> → remove kind

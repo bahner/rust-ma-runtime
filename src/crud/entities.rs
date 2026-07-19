@@ -7,9 +7,9 @@ use crate::acl::check_full;
 use crate::entity::{EntityNode, IpldLink};
 
 use super::helpers::{
-    load_manifest, resolve_ipfs_ref, send_crud_data_cbor, send_crud_error, send_crud_i18n_error,
-    send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid, send_crud_reply_cbor,
-    spawn_entity_reload, with_manifest_crud,
+    load_manifest, resolve_ipfs_ref, runtime_config_snapshot, send_crud_data_cbor, send_crud_error,
+    send_crud_i18n_error, send_crud_i18n_errorf, send_crud_ok, send_crud_ok_cid,
+    send_crud_reply_cbor, spawn_entity_reload, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -192,11 +192,7 @@ async fn handle_single_entity(
                 Ok(())
             })
             .await?;
-            let runtime_config = {
-                let manifest = load_manifest(ctx).await?;
-                let cfg = ctx.shared_config.read().await;
-                super::config::public_plugin_config(&manifest, &cfg)
-            };
+            let runtime_config = runtime_config_snapshot(ctx).await?;
             spawn_entity_reload(
                 name.to_string(),
                 entity_node,

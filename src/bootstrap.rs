@@ -545,12 +545,9 @@ async fn load_entity_and_kind(
         }
     };
 
-    let kind_link = match manifest.kinds.get_protocol(&node.kind) {
-        Some(l) => l.clone(),
-        None => {
-            tracing::warn!(name = %name, kind = %node.kind, "Kind not found in manifest; skipping entity");
-            return None;
-        }
+    let Some(kind_link) = manifest.kinds.get_protocol(&node.kind).cloned() else {
+        tracing::warn!(name = %name, kind = %node.kind, "Kind not found in manifest; skipping entity");
+        return None;
     };
 
     let raw_kind: KindNode = match kubo::dag_get(kubo_url, &kind_link.cid).await {

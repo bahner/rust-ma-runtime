@@ -89,8 +89,7 @@ pub fn native_actor(
         match signal {
             NativeSignal::SetState(_bytes) => {}
             NativeSignal::Init(_payload) => {}
-            NativeSignal::Start => {}
-            NativeSignal::Shutdown => {}
+            NativeSignal::Start | NativeSignal::Shutdown => {}
         }
         Ok(())
     })

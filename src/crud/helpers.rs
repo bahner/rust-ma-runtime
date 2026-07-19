@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use anyhow::{anyhow, Context, Result};
 use ciborium::Value as CborValue;
@@ -124,6 +127,14 @@ pub(super) async fn load_manifest(ctx: &CrudHandlerCtx) -> Result<RuntimeManifes
     crate::kubo::dag_get(&ctx.kubo_rpc_url, &root_cid).await
 }
 
+pub(super) async fn runtime_config_snapshot(
+    ctx: &CrudHandlerCtx,
+) -> Result<BTreeMap<String, String>> {
+    let manifest = load_manifest(ctx).await?;
+    let cfg = ctx.shared_config.read().await;
+    Ok(super::config::public_plugin_config(&manifest, &cfg))
+}
+
 /// Load an ACL from `cid`, insert it into `acl_cache` under `cache_key`.
 /// Logs success or failure; non-fatal either way.
 pub(super) async fn acl_cache_update(ctx: &CrudHandlerCtx, cache_key: &str, cid: &str) {
@@ -157,6 +168,143 @@ pub(super) async fn group_cache_update(ctx: &CrudHandlerCtx, name: &str, cid: &s
             warn!(name = %name, %cid, error = %e, "failed to load group into cache");
         }
     }
+}
+
+async fn load_raw_kind_nodes(
+    ctx: &CrudHandlerCtx,
+    manifest: &RuntimeManifest,
+) -> HashMap<String, KindNode> {
+    let mut raw_kinds = HashMap::new();
+    for (protocol, link) in manifest.kinds.iter_protocols() {
+        match crate::kubo::dag_get::<KindNode>(&ctx.kubo_rpc_url, &link.cid).await {
+            Ok(kind) => {
+                raw_kinds.insert(protocol, kind);
+            }
+            Err(e) => {
+                warn!(protocol = %protocol, cid = %link.cid, error = %e, "failed to fetch kind node for dependency reload");
+            }
+        }
+    }
+    raw_kinds
+}
+
+fn kind_depends_on(
+    protocol: &str,
+    updated_protocol: &str,
+    raw_kinds: &HashMap<String, KindNode>,
+) -> bool {
+    const MAX_DEPTH: usize = 8;
+    if protocol == updated_protocol {
+        return true;
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut current = raw_kinds
+        .get(protocol)
+        .and_then(|kind| kind.extends.as_deref());
+    for _ in 0..MAX_DEPTH {
+        let Some(base_protocol) = current else {
+            return false;
+        };
+        if base_protocol == updated_protocol {
+            return true;
+        }
+        if !seen.insert(base_protocol.to_string()) {
+            warn!(protocol = %protocol, base = %base_protocol, "kind extends cycle while computing dependency reload set");
+            return false;
+        }
+        current = raw_kinds
+            .get(base_protocol)
+            .and_then(|kind| kind.extends.as_deref());
+    }
+
+    warn!(protocol = %protocol, updated = %updated_protocol, "kind extends chain exceeded reload dependency depth");
+    false
+}
+
+pub(super) fn affected_kind_protocols(
+    updated_protocol: &str,
+    raw_kinds: &HashMap<String, KindNode>,
+) -> BTreeSet<String> {
+    let mut affected = BTreeSet::from([updated_protocol.to_string()]);
+    affected.extend(
+        raw_kinds
+            .keys()
+            .filter(|protocol| kind_depends_on(protocol, updated_protocol, raw_kinds))
+            .cloned(),
+    );
+    affected
+}
+
+async fn hydrate_affected_kind_registry(
+    ctx: &CrudHandlerCtx,
+    manifest: &RuntimeManifest,
+    raw_kinds: &HashMap<String, KindNode>,
+    affected: &BTreeSet<String>,
+) {
+    for protocol in affected {
+        let Some(raw_kind) = raw_kinds.get(protocol).cloned() else {
+            warn!(protocol = %protocol, "affected kind missing from raw registry; cannot hydrate reload dependency");
+            continue;
+        };
+        let resolved = if raw_kind.extends.is_some() {
+            match crate::entity::resolve_kind_extends(&ctx.kubo_rpc_url, manifest, raw_kind).await {
+                Ok(kind) => kind,
+                Err(e) => {
+                    warn!(protocol = %protocol, error = %e, "failed to resolve kind dependency for reload");
+                    continue;
+                }
+            }
+        } else {
+            raw_kind
+        };
+        ctx.kind_registry
+            .write()
+            .await
+            .insert(protocol.clone(), Arc::new(resolved));
+    }
+}
+
+pub(super) async fn spawn_kind_dependency_reloads(
+    updated_protocol: &str,
+    ctx: &CrudHandlerCtx,
+    runtime_config: BTreeMap<String, String>,
+) -> Result<usize> {
+    let manifest = load_manifest(ctx).await?;
+    let raw_kinds = load_raw_kind_nodes(ctx, &manifest).await;
+    let affected = affected_kind_protocols(updated_protocol, &raw_kinds);
+    hydrate_affected_kind_registry(ctx, &manifest, &raw_kinds, &affected).await;
+    let mut reload_count = 0usize;
+
+    for (name, link) in manifest.entities {
+        let entity_node: EntityNode = match crate::kubo::dag_get(&ctx.kubo_rpc_url, &link.cid).await
+        {
+            Ok(entity) => entity,
+            Err(e) => {
+                warn!(name = %name, cid = %link.cid, error = %e, "failed to fetch entity node for dependency reload");
+                continue;
+            }
+        };
+        if !affected.contains(&entity_node.kind) {
+            continue;
+        }
+        spawn_entity_reload(
+            name,
+            entity_node,
+            ctx.kind_registry.clone(),
+            ctx.stats.clone(),
+            Arc::clone(&ctx.kubo_rpc_url),
+            Arc::clone(&ctx.our_did),
+            ctx.envelope_tx.clone(),
+            ctx.entity_registry.clone(),
+            ctx.avatar_key,
+            ctx.manifest_writer.clone(),
+            runtime_config.clone(),
+        );
+        reload_count += 1;
+    }
+
+    Ok(reload_count)
 }
 
 /// Spawn an independent task that loads a plugin from `entity_node` and inserts
@@ -557,13 +705,36 @@ async fn send_crud_reply_raw(
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_crud_payload, is_ipfs_ref, parse_path, CrudOp};
+    use super::{affected_kind_protocols, decode_crud_payload, is_ipfs_ref, parse_path, CrudOp};
     use ciborium::Value as CborValue;
+    use std::collections::{BTreeMap, HashMap};
+
+    use crate::entity::{Evaluator, KindNode};
 
     fn cbor(v: &CborValue) -> Vec<u8> {
         let mut buf = Vec::new();
         ciborium::ser::into_writer(v, &mut buf).unwrap();
         buf
+    }
+
+    fn kind(protocol: &str, extends: Option<&str>) -> KindNode {
+        KindNode {
+            protocol: protocol.to_string(),
+            cid: None,
+            kind_type: Evaluator::Extism,
+            behaviour: None,
+            behaviour_chain: Vec::new(),
+            host_functions: vec![],
+            attributes: BTreeMap::new(),
+            extends: extends.map(str::to_string),
+        }
+    }
+
+    fn raw_kinds(kinds: Vec<KindNode>) -> HashMap<String, KindNode> {
+        kinds
+            .into_iter()
+            .map(|kind| (kind.protocol.clone(), kind))
+            .collect()
     }
 
     #[test]
@@ -654,5 +825,58 @@ mod tests {
         assert!(!is_ipfs_ref("bafy123"));
         assert!(!is_ipfs_ref("/ipld/bafy123"));
         assert!(!is_ipfs_ref("plain text"));
+    }
+
+    #[test]
+    fn affected_kind_protocols_includes_descendants_only() {
+        let raw = raw_kinds(vec![
+            kind("/ma/root/0.0.1", None),
+            kind("/ma/room/0.0.1", Some("/ma/root/0.0.1")),
+            kind("/ma/fancy-room/0.0.1", Some("/ma/room/0.0.1")),
+            kind("/ma/avatar/0.0.1", None),
+        ]);
+
+        let affected = affected_kind_protocols("/ma/room/0.0.1", &raw);
+
+        assert!(affected.contains("/ma/room/0.0.1"));
+        assert!(affected.contains("/ma/fancy-room/0.0.1"));
+        assert!(!affected.contains("/ma/root/0.0.1"));
+        assert!(!affected.contains("/ma/avatar/0.0.1"));
+    }
+
+    #[test]
+    fn affected_kind_protocols_root_update_includes_whole_subtree() {
+        let raw = raw_kinds(vec![
+            kind("/ma/root/0.0.1", None),
+            kind("/ma/room/0.0.1", Some("/ma/root/0.0.1")),
+            kind("/ma/fancy-room/0.0.1", Some("/ma/room/0.0.1")),
+            kind("/ma/avatar/0.0.1", None),
+        ]);
+
+        let affected = affected_kind_protocols("/ma/root/0.0.1", &raw);
+
+        assert!(affected.contains("/ma/root/0.0.1"));
+        assert!(affected.contains("/ma/room/0.0.1"));
+        assert!(affected.contains("/ma/fancy-room/0.0.1"));
+        assert!(!affected.contains("/ma/avatar/0.0.1"));
+    }
+
+    #[test]
+    fn affected_kind_protocols_skips_malformed_branches() {
+        let raw = raw_kinds(vec![
+            kind("/ma/root/0.0.1", None),
+            kind("/ma/room/0.0.1", Some("/ma/root/0.0.1")),
+            kind("/ma/missing-base/0.0.1", Some("/ma/nope/0.0.1")),
+            kind("/ma/cycle-a/0.0.1", Some("/ma/cycle-b/0.0.1")),
+            kind("/ma/cycle-b/0.0.1", Some("/ma/cycle-a/0.0.1")),
+        ]);
+
+        let affected = affected_kind_protocols("/ma/root/0.0.1", &raw);
+
+        assert!(affected.contains("/ma/root/0.0.1"));
+        assert!(affected.contains("/ma/room/0.0.1"));
+        assert!(!affected.contains("/ma/missing-base/0.0.1"));
+        assert!(!affected.contains("/ma/cycle-a/0.0.1"));
+        assert!(!affected.contains("/ma/cycle-b/0.0.1"));
     }
 }

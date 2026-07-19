@@ -324,7 +324,7 @@ pub struct KindNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub behaviour: Option<IpldLink>,
     /// Resolved base-first behaviour chain. This is runtime-only state built
-    /// by `resolve_kind_extends`; raw KindNodes on IPFS still carry only their
+    /// by `resolve_kind_extends`; raw `KindNode`s on IPFS still carry only their
     /// own optional `behaviour` link.
     #[serde(default, skip_serializing, skip_deserializing)]
     pub behaviour_chain: Vec<IpldLink>,

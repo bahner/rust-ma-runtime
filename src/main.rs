@@ -731,7 +731,7 @@ async fn populate_default_config_root(
     {
         Ok(cid) => info!(cid = %cid, "{}", i18n::t("default-config-root-populated")),
         Err(e) => {
-            warn!(error = %format!("{e:#}"), "{}", i18n::t("default-config-root-populate-failed"))
+            warn!(error = %format!("{e:#}"), "{}", i18n::t("default-config-root-populate-failed"));
         }
     }
 }
