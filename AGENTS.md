@@ -192,6 +192,7 @@ changes take effect immediately in memory and are saved to `config.yaml`:
 | `did_resolver_positive_ttl_secs` | u64 | Cache TTL for resolved DIDs |
 | `did_resolver_negative_ttl_secs` | u64 | Cache TTL for failed DID lookups |
 | `log_file` | string or null | Path to log file |
+| `root_cid` | string | Runtime manifest head CID; read at startup and updated whenever the head changes |
 
 **Manifest config keys** — stored in the IPFS DAG (`manifest.config`), not in
 `config.yaml`. These persist across restarts only because they live in IPFS.
@@ -203,6 +204,11 @@ changes take effect immediately in memory and are saved to `config.yaml`:
 
 Setting `i18n` via `:config.i18n: nb` takes effect immediately (calls
 `switch_lang()` to reload FTL translations in memory) and persists to IPFS.
+
+Startup head resolution order is `--root-cid`, `--bootstrap`, `root_cid` from
+`config.yaml`, then runtime IPNS. Any head found or produced at startup is
+written back to `config.yaml`; runtime manifest mutations keep `root_cid` in
+the in-memory config and YAML file in sync.
 
 ### IPFS publisher toggle
 

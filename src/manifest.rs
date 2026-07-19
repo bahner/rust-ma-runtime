@@ -15,10 +15,13 @@
 //! manifest directly.  The writer must therefore be spawned *after* startup has
 //! settled the initial root CID, and all concurrent mutations must go through it.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
+use ma_core::config::Config;
 use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tracing::warn;
 
 use crate::entity::{EntityNode, IpldLink, RuntimeManifest};
@@ -36,17 +39,44 @@ struct Inner {
     current: Mutex<String>,
     kubo_url: String,
     stats: SharedStats,
+    config_path: Option<PathBuf>,
+    shared_config: Option<Arc<RwLock<Config>>>,
 }
 
 impl ManifestWriter {
     /// Create a writer rooted at `initial_cid`.
-    pub fn new(initial_cid: String, kubo_url: String, stats: SharedStats) -> Self {
+    pub fn new(
+        initial_cid: String,
+        kubo_url: String,
+        stats: SharedStats,
+        config_path: Option<PathBuf>,
+        shared_config: Option<Arc<RwLock<Config>>>,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 current: Mutex::new(initial_cid),
                 kubo_url,
                 stats,
+                config_path,
+                shared_config,
             }),
+        }
+    }
+
+    async fn persist_root_cid(&self, root_cid: &str) {
+        if let Some(ref shared_config) = self.inner.shared_config {
+            let mut config = shared_config.write().await;
+            config.extra.insert(
+                serde_yaml::Value::String("root_cid".to_string()),
+                serde_yaml::Value::String(root_cid.to_string()),
+            );
+            if let Err(e) = config.save() {
+                warn!(root_cid = %root_cid, error = %e, "failed to persist root_cid to config.yaml");
+            }
+        } else if let Some(ref path) = self.inner.config_path {
+            if let Err(e) = crate::startup::persist_root_cid_to_config(path, root_cid) {
+                warn!(root_cid = %root_cid, error = %e, "failed to persist root_cid to config.yaml");
+            }
         }
     }
 
@@ -76,6 +106,7 @@ impl ManifestWriter {
 
         guard.clone_from(&new_cid);
         inner.stats.write().await.root_cid = Some(new_cid.clone());
+        self.persist_root_cid(&new_cid).await;
         Ok(new_cid)
     }
 
@@ -108,6 +139,7 @@ impl ManifestWriter {
 
         guard.clone_from(&new_cid);
         inner.stats.write().await.root_cid = Some(new_cid.clone());
+        self.persist_root_cid(&new_cid).await;
         Ok(new_cid)
     }
 }
@@ -149,7 +181,8 @@ mod tests {
     async fn concurrent_mutations_are_not_lost() {
         let kubo = MockKubo::start().await;
         let (initial, stats) = seed(&kubo).await;
-        let writer = ManifestWriter::new(initial, kubo.url().to_string(), stats.clone());
+        let writer =
+            ManifestWriter::new(initial, kubo.url().to_string(), stats.clone(), None, None);
 
         let mut handles = Vec::new();
         for i in 0..25u32 {
@@ -175,7 +208,8 @@ mod tests {
     async fn sequential_mutations_chain() {
         let kubo = MockKubo::start().await;
         let (initial, stats) = seed(&kubo).await;
-        let writer = ManifestWriter::new(initial, kubo.url().to_string(), stats.clone());
+        let writer =
+            ManifestWriter::new(initial, kubo.url().to_string(), stats.clone(), None, None);
 
         for name in ["a", "b", "c"] {
             let name = name.to_string();
@@ -219,7 +253,8 @@ mod tests {
             root_cid: Some(initial.clone()),
             ..Default::default()
         }));
-        let writer = ManifestWriter::new(initial, kubo.url().to_string(), stats.clone());
+        let writer =
+            ManifestWriter::new(initial, kubo.url().to_string(), stats.clone(), None, None);
 
         let root_cid = writer.set_entity_state("room", "bafystate").await.unwrap();
 
@@ -241,7 +276,13 @@ mod tests {
     async fn failed_mutation_does_not_advance_root() {
         let kubo = MockKubo::start().await;
         let (initial, stats) = seed(&kubo).await;
-        let writer = ManifestWriter::new(initial.clone(), kubo.url().to_string(), stats.clone());
+        let writer = ManifestWriter::new(
+            initial.clone(),
+            kubo.url().to_string(),
+            stats.clone(),
+            None,
+            None,
+        );
 
         let result = writer.mutate(|_m| Err(anyhow::anyhow!("boom"))).await;
         assert!(result.is_err());

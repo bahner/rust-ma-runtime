@@ -32,7 +32,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
-use startup::{get_u64_setting, load_secret_bundle, runtime_manifest_config};
+use startup::{
+    get_u64_setting, load_secret_bundle, persist_root_cid_to_config, runtime_manifest_config,
+    select_root_cid,
+};
 
 const MA_DEFAULT_SLUG: &str = "ma";
 
@@ -249,8 +252,8 @@ async fn main() -> Result<()> {
     let endpoint: Arc<dyn ma_core::MaEndpoint> = Arc::from(endpoint);
 
     // ── Own DID document (ma extension uses protocol + runtime link) ─────────
-    // root_cid priority: --root-cid CLI > --bootstrap generated CID > IPNS resolution
-    let mut root_cid = cli.root_cid.clone().or(bootstrap_root_cid);
+    // root_cid priority: --root-cid CLI > --bootstrap generated CID > config.yaml > IPNS resolution.
+    let mut root_cid = select_root_cid(cli.root_cid.clone(), bootstrap_root_cid, &config)?;
     let lang_cid = config
         .extra
         .get("i18n_cid")
@@ -427,6 +430,12 @@ async fn main() -> Result<()> {
         }
     }
 
+    if let (Some(ref path), Some(ref rc)) = (&config.config_path, &root_cid) {
+        if let Err(e) = persist_root_cid_to_config(path, rc) {
+            warn!(root_cid = %rc, error = %e, "failed to persist root_cid to config.yaml");
+        }
+    }
+
     // ── Load named ACLs and groups into cache ──────────────────────────────────
     let acl_cache = acl::new_acl_cache();
     let group_cache = acl::new_group_cache();
@@ -566,6 +575,12 @@ async fn main() -> Result<()> {
         ..Default::default()
     }));
 
+    // Shared daemon config (enables runtime RPC writes + config.yaml save-back).
+    // Keep this alive before the manifest writer is created so every runtime
+    // head mutation updates both the in-memory config and config.yaml.
+    let shared_config: std::sync::Arc<tokio::sync::RwLock<Config>> =
+        std::sync::Arc::new(tokio::sync::RwLock::new(config.clone()));
+
     status::spawn_status_server(stats.clone(), acl.clone(), cli.status_bind);
 
     // Serialised manifest writer — all runtime-phase manifest mutations (CRUD
@@ -574,6 +589,8 @@ async fn main() -> Result<()> {
         root_cid.clone().unwrap_or_default(),
         config.kubo_rpc_url.clone(),
         stats.clone(),
+        config.config_path.clone(),
+        Some(Arc::clone(&shared_config)),
     );
 
     // Reconcile owners into the manifest if config.yaml/--owner introduced
@@ -652,10 +669,6 @@ async fn main() -> Result<()> {
 
     // ── Shared DID document resolver (cached, TTL configurable) ─────────────
     let shared_resolver = Arc::new(config.ipfs_gateway_resolver());
-
-    // ── Shared daemon config (enables runtime RPC writes + config.yaml save-back) ──
-    let shared_config: std::sync::Arc<tokio::sync::RwLock<Config>> =
-        std::sync::Arc::new(tokio::sync::RwLock::new(config));
 
     // ── Main event loop + graceful shutdown ─────────────────────────────────────
     eventloop::run(

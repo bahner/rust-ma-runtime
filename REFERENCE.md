@@ -247,14 +247,19 @@ make release
 ```
 
 Recommended runtime model:
-- Runtime head CID is read from IPNS at startup.
-- `--root-cid <cid>` overrides IPNS for the current process.
+- Runtime head CID is read from `root_cid` in `config.yaml` at startup, falling
+  back to runtime IPNS if the config key is absent.
+- Runtime manifest mutations update `root_cid` in `config.yaml` as the head
+  advances.
+- `--root-cid <cid>` overrides both config and IPNS, and the selected head is
+  written back to `config.yaml`.
 
 Warning for `--root-cid`:
-- It immediately resets runtime head for this run.
+- It immediately resets runtime head and persists that reset to `config.yaml`.
 - If you pass the wrong CID, retrieve the previous CID from runtime logs and restart with that value.
 
-On subsequent starts, the daemon restores runtime head from IPNS automatically.
+On subsequent starts, the daemon restores runtime head from `config.yaml`, with
+IPNS as a fallback.
 
 #### `bootstrap.yaml` format
 

@@ -14,6 +14,7 @@ use super::CrudHandlerCtx;
 /// Daemon config fields that may be read/written via CRUD and are saved to
 /// `config.yaml` on change.
 pub const DAEMON_CONFIG_KEYS_PUB: &[&str] = &[
+    "root_cid",
     "kubo_rpc_url",
     "kubo_key_alias",
     "log_level",
@@ -64,6 +65,11 @@ fn is_protected_config_key(key: &str) -> bool {
 /// Returns `Value::Null` for unknown or platform-guarded keys.
 pub fn daemon_config_key_value_pub(cfg: &ma_core::Config, key: &str) -> serde_yaml::Value {
     match key {
+        "root_cid" => cfg
+            .extra
+            .get("root_cid")
+            .cloned()
+            .unwrap_or(serde_yaml::Value::Null),
         "kubo_rpc_url" => serde_yaml::Value::String(cfg.kubo_rpc_url.clone()),
         "kubo_key_alias" => serde_yaml::Value::String(cfg.kubo_key_alias.clone()),
         "log_level" => serde_yaml::Value::String(cfg.log_level.clone()),
@@ -159,6 +165,14 @@ pub fn set_daemon_config_key_pub(cfg: &mut ma_core::Config, key: &str, val: &ser
                 cfg.extra.insert(
                     serde_yaml::Value::String("ipv6_enable".to_string()),
                     serde_yaml::Value::Bool(b),
+                );
+            }
+        }
+        "root_cid" => {
+            if let Some(s) = val.as_str() {
+                cfg.extra.insert(
+                    serde_yaml::Value::String("root_cid".to_string()),
+                    serde_yaml::Value::String(s.to_string()),
                 );
             }
         }
