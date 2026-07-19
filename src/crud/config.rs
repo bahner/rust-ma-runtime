@@ -40,6 +40,9 @@ const MANIFEST_CONFIG_KEYS: &[&str] = &[
     "ipns_publish_allow_offline",
 ];
 
+pub const DEFAULT_ZION_SOURCE: &str =
+    "/ipns/k51qzi5uqu5djnoah9igllgb3zsn0sfy75glxdjf8glaozybubkm13nuqbfvpm";
+
 /// Keys that are never exposed or writable via CRUD.
 /// Any key beginning with `secret` is also blocked dynamically.
 const PROTECTED_CONFIG_KEYS: &[&str] = &[
@@ -238,6 +241,9 @@ pub(super) async fn handle_config_ns(
             (None, []) => {
                 let manifest = load_manifest(ctx).await?;
                 let mut combined = manifest.config.clone();
+                combined
+                    .entry("zion".to_string())
+                    .or_insert_with(|| serde_yaml::Value::String(DEFAULT_ZION_SOURCE.to_string()));
                 {
                     let cfg = ctx.shared_config.read().await;
                     for key in DAEMON_CONFIG_KEYS {
@@ -282,6 +288,9 @@ pub(super) async fn handle_config_ns(
                 let manifest = load_manifest(ctx).await?;
                 match manifest.config.get(key.as_str()) {
                     Some(v) => v.clone(),
+                    None if key == "zion" => {
+                        serde_yaml::Value::String(DEFAULT_ZION_SOURCE.to_string())
+                    }
                     None => {
                         return send_crud_error(message, reply_type, ctx, "config-not-found").await;
                     }

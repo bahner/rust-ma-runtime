@@ -14,6 +14,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
 use crate::acl::SharedAcl;
+use crate::crud::config::DEFAULT_ZION_SOURCE;
 use crate::entity::RuntimeManifest;
 
 const ZION_CONFIG_KEY: &str = "zion";
@@ -119,7 +120,7 @@ async fn handle_index(State(state): State<StatusState>) -> impl IntoResponse {
             s.kubo_rpc_url.clone(),
         )
     };
-    let zion_cid =
+    let zion_path =
         manifest_config_string(&kubo_rpc_url, root_cid.as_deref(), ZION_CONFIG_KEY).await;
     let ipfs_status = if ipfs_enabled { "enabled" } else { "disabled" };
     let entities_html = if entity_names.is_empty() {
@@ -138,9 +139,9 @@ async fn handle_index(State(state): State<StatusState>) -> impl IntoResponse {
     } else {
         owners.join("<br>")
     };
-    let zion_html = zion_cid.map_or_else(
+    let zion_html = zion_path.map_or_else(
         || "<em>not configured</em>".to_string(),
-        |cid| format!(r#"<a href="/zion/">/zion/</a> <code>{cid}</code>"#),
+        |path| format!(r#"<a href="/zion/">/zion/</a> <code>{path}</code>"#),
     );
     let process = process_metrics();
     let html = format!(
@@ -215,7 +216,7 @@ async fn handle_status_json(State(state): State<StatusState>) -> impl IntoRespon
             s.kubo_rpc_url.clone(),
         )
     };
-    let zion_cid =
+    let zion_source =
         manifest_config_string(&kubo_rpc_url, root_cid.as_deref(), ZION_CONFIG_KEY).await;
     let runtime: Value = root_cid.map_or(Value::Null, |cid| json!({ "/": cid }));
     let ipns = did_to_ipns_path(&our_did);
@@ -232,7 +233,7 @@ async fn handle_status_json(State(state): State<StatusState>) -> impl IntoRespon
         "entity_names": entity_names,
         "runtime": runtime,
         "zion": {
-            "cid": zion_cid,
+            "source": zion_source,
             "path": "/zion/",
         },
         "process": {
@@ -263,10 +264,39 @@ async fn manifest_config_string(
     root_cid: Option<&str>,
     key: &str,
 ) -> Option<String> {
-    let manifest: RuntimeManifest = crate::kubo::dag_get(kubo_url, root_cid?).await.ok()?;
-    let value = manifest.config.get(key)?.as_str()?.trim();
-    let value = value.strip_prefix("/ipfs/").unwrap_or(value);
-    (!value.is_empty()).then(|| value.trim_end_matches('/').to_string())
+    let Some(root_cid) = root_cid else {
+        return default_config_string(key);
+    };
+    let Ok(manifest) = crate::kubo::dag_get::<RuntimeManifest>(kubo_url, root_cid).await else {
+        return default_config_string(key);
+    };
+    let value = manifest
+        .config
+        .get(key)
+        .and_then(serde_yaml::Value::as_str)
+        .map(ToString::to_string)
+        .or_else(|| default_config_string(key))?;
+    normalize_zion_source(&value)
+}
+
+fn default_config_string(key: &str) -> Option<String> {
+    (key == ZION_CONFIG_KEY).then(|| DEFAULT_ZION_SOURCE.to_string())
+}
+
+fn normalize_zion_source(value: &str) -> Option<String> {
+    let value = value.trim().trim_end_matches('/');
+    if value.is_empty() {
+        return None;
+    }
+    if value.starts_with("/ipfs/") || value.starts_with("/ipns/") {
+        Some(value.to_string())
+    } else {
+        Some(format!("/ipfs/{value}"))
+    }
+}
+
+fn zion_asset_path(source: &str, path: &str) -> String {
+    format!("{}/{path}", source.trim_end_matches('/'))
 }
 
 async fn handle_zion_redirect() -> impl IntoResponse {
@@ -334,7 +364,7 @@ async fn serve_zion_path(state: StatusState, path: &str) -> axum::response::Resp
         let s = state.stats.read().await;
         (s.root_cid.clone(), s.kubo_rpc_url.clone())
     };
-    let Some(zion_cid) =
+    let Some(zion_source) =
         manifest_config_string(&kubo_rpc_url, root_cid.as_deref(), ZION_CONFIG_KEY).await
     else {
         return text_response(
@@ -343,7 +373,8 @@ async fn serve_zion_path(state: StatusState, path: &str) -> axum::response::Resp
         );
     };
 
-    match kubo_cat_ipfs_path(&kubo_rpc_url, &format!("/ipfs/{zion_cid}/{path}")).await {
+    let ipfs_path = zion_asset_path(&zion_source, path);
+    match kubo_cat_ipfs_path(&kubo_rpc_url, &ipfs_path).await {
         Ok(Some(bytes)) => (
             StatusCode::OK,
             [
@@ -355,7 +386,7 @@ async fn serve_zion_path(state: StatusState, path: &str) -> axum::response::Resp
             .into_response(),
         Ok(None) => text_response(StatusCode::NOT_FOUND, "zion asset not found"),
         Err(e) => {
-            warn!(path = %path, cid = %zion_cid, error = %e, "failed to proxy zion asset from IPFS");
+            warn!(path = %path, source = %zion_source, error = %e, "failed to proxy zion asset from IPFS");
             text_response(
                 StatusCode::BAD_GATEWAY,
                 "failed to fetch zion asset from IPFS",
@@ -622,4 +653,57 @@ pub async fn bootstrap_minimal_manifest(
         .context("pinning minimal manifest")?;
 
     Ok(root_cid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_config_string, normalize_zion_source, zion_asset_path, ZION_CONFIG_KEY};
+    use crate::crud::config::DEFAULT_ZION_SOURCE;
+
+    #[test]
+    fn zion_default_source_is_hardcoded_ipns_path() {
+        assert_eq!(
+            default_config_string(ZION_CONFIG_KEY).as_deref(),
+            Some(DEFAULT_ZION_SOURCE)
+        );
+        assert_eq!(
+            normalize_zion_source(DEFAULT_ZION_SOURCE).as_deref(),
+            Some(DEFAULT_ZION_SOURCE)
+        );
+    }
+
+    #[test]
+    fn normalizes_zion_source_to_ipfs_or_ipns_path() {
+        assert_eq!(
+            normalize_zion_source("bafybeigdyrzt").as_deref(),
+            Some("/ipfs/bafybeigdyrzt")
+        );
+        assert_eq!(
+            normalize_zion_source("/ipfs/bafybeigdyrzt/").as_deref(),
+            Some("/ipfs/bafybeigdyrzt")
+        );
+        assert_eq!(
+            normalize_zion_source(
+                "/ipns/k51qzi5uqu5dkw4n2093va9ydfnvex2rwfhy0jb0bb1p9giaoam465pdk1y726"
+            )
+            .as_deref(),
+            Some("/ipns/k51qzi5uqu5dkw4n2093va9ydfnvex2rwfhy0jb0bb1p9giaoam465pdk1y726")
+        );
+        assert_eq!(normalize_zion_source("   "), None);
+    }
+
+    #[test]
+    fn appends_zion_asset_path_to_source() {
+        assert_eq!(
+            zion_asset_path(
+                "/ipns/k51qzi5uqu5dkw4n2093va9ydfnvex2rwfhy0jb0bb1p9giaoam465pdk1y726",
+                "index.html"
+            ),
+            "/ipns/k51qzi5uqu5dkw4n2093va9ydfnvex2rwfhy0jb0bb1p9giaoam465pdk1y726/index.html"
+        );
+        assert_eq!(
+            zion_asset_path("/ipfs/bafybeigdyrzt/", "style/zion.css"),
+            "/ipfs/bafybeigdyrzt/style/zion.css"
+        );
+    }
 }
