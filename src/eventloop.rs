@@ -85,7 +85,7 @@ pub async fn run(
                         protocol = rpc::RPC_PROTOCOL_ID,
                         "{}", i18n::t("node-connected")
                     );
-                    info!(
+                    debug!(
                         from = %message.from,
                         to = %message.to,
                         id = %message.id,

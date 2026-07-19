@@ -143,7 +143,7 @@ pub async fn handle_rpc_message(
             }
         } else {
             let reason = format!("unknown entity fragment: {fragment}");
-            info!(fragment = %fragment, "{}", crate::i18n::t("entity-not-found"));
+            debug!(fragment = %fragment, "{}", crate::i18n::t("entity-not-found"));
             send_rpc_error_reply(message, ctx, &reason)
         };
     }
@@ -156,7 +156,7 @@ pub async fn handle_rpc_message(
         }
     };
     if ping_text == ":ping" {
-        info!("{}", crate::i18n::t("ping-received"));
+        debug!("{}", crate::i18n::t("ping-received"));
         let mut pong = Vec::new();
         ciborium::ser::into_writer(&CborValue::Text(":pong".to_string()), &mut pong)
             .context("encode :pong")?;
@@ -201,7 +201,7 @@ async fn handle_entity_plugin_message(
     entity: Arc<crate::plugin::EntityPlugin>,
     ctx: &RpcHandlerCtx,
 ) -> Result<()> {
-    info!(fragment = %entity.fragment, from = %message.from, "{}", crate::i18n::t("entity-dispatched"));
+    debug!(fragment = %entity.fragment, from = %message.from, "{}", crate::i18n::t("entity-dispatched"));
 
     // Entity verb-ACL enforcement.
     // Extract the verb from the CBOR term (text atom or first array element).
@@ -519,7 +519,7 @@ fn send_rpc_reply_typed(
                 if let Err(err) = outbox.send(&reply).await {
                     warn!(error = %err, to = %from, "RPC reply send failed");
                 } else {
-                    info!(to = %from, reply_to = %msg_id, "{}", crate::i18n::t("rpc-reply-sent"));
+                    debug!(to = %from, reply_to = %msg_id, "{}", crate::i18n::t("rpc-reply-sent"));
                 }
             }
             Err(err) => {
