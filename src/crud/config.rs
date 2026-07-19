@@ -30,6 +30,7 @@ const DAEMON_CONFIG_KEYS: &[&str] = DAEMON_CONFIG_KEYS_PUB;
 const MANIFEST_CONFIG_KEYS: &[&str] = &[
     "root",
     "start",
+    "zion",
     "i18n",
     "did_document_publishing_interval_secs",
     "did_document_publishing_timeout_secs",

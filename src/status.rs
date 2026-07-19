@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::State;
-use axum::http::{header, Method};
-use axum::response::{Html, IntoResponse};
+use axum::extract::{Path, State};
+use axum::http::{header, Method, StatusCode, Uri};
+use axum::response::{Html, IntoResponse, Redirect};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{json, Value};
@@ -14,6 +14,9 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
 use crate::acl::SharedAcl;
+use crate::entity::RuntimeManifest;
+
+const ZION_CONFIG_KEY: &str = "zion";
 
 #[derive(Default)]
 pub struct Stats {
@@ -34,6 +37,17 @@ pub struct Stats {
 
 pub type SharedStats = Arc<RwLock<Stats>>;
 
+#[derive(Default)]
+struct ProcessMetrics {
+    pid: u32,
+    vm_peak_kib: Option<u64>,
+    vm_size_kib: Option<u64>,
+    vm_rss_kib: Option<u64>,
+    vm_data_kib: Option<u64>,
+    threads: Option<u64>,
+    open_fds: Option<u64>,
+}
+
 /// Combined axum router state for the status server.
 #[derive(Clone)]
 pub struct StatusState {
@@ -51,7 +65,12 @@ pub fn spawn_status_server(stats: SharedStats, acl: SharedAcl, status_bind: Sock
         .route("/", get(handle_index))
         .route("/status.json", get(handle_status_json))
         .route("/bootstrap.yaml", get(handle_bootstrap_yaml))
+        .route("/ipfs/*path", get(handle_ipfs_path))
+        .route("/zion", get(handle_zion_redirect))
+        .route("/zion/", get(handle_zion_index))
+        .route("/zion/*path", get(handle_zion_path))
         .route("/claim", post(handle_claim))
+        .fallback(handle_zion_root_asset)
         .layer(cors)
         .with_state(StatusState { stats, acl });
 
@@ -84,6 +103,7 @@ async fn handle_index(State(state): State<StatusState>) -> impl IntoResponse {
         entity_names,
         root_cid,
         owners,
+        kubo_rpc_url,
     ) = {
         let s = shared_stats.read().await;
         (
@@ -96,8 +116,11 @@ async fn handle_index(State(state): State<StatusState>) -> impl IntoResponse {
             s.entity_names.clone(),
             s.root_cid.clone(),
             s.owners.clone(),
+            s.kubo_rpc_url.clone(),
         )
     };
+    let zion_cid =
+        manifest_config_string(&kubo_rpc_url, root_cid.as_deref(), ZION_CONFIG_KEY).await;
     let ipfs_status = if ipfs_enabled { "enabled" } else { "disabled" };
     let entities_html = if entity_names.is_empty() {
         "<em>none</em>".to_string()
@@ -115,6 +138,11 @@ async fn handle_index(State(state): State<StatusState>) -> impl IntoResponse {
     } else {
         owners.join("<br>")
     };
+    let zion_html = zion_cid.map_or_else(
+        || "<em>not configured</em>".to_string(),
+        |cid| format!(r#"<a href="/zion/">/zion/</a> <code>{cid}</code>"#),
+    );
+    let process = process_metrics();
     let html = format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -136,10 +164,25 @@ th{{background:#222}}a{{color:#7cf}}</style></head>
 <tr><td>RPC requests</td><td>{rpc_requests}</td></tr>
 <tr><td>Entities</td><td>{entities_html}</td></tr>
 <tr><td>Runtime</td><td>{root_cid_html}</td></tr>
+<tr><td>Zion</td><td>{zion_html}</td></tr>
 <tr><td>Owner</td><td>{owner_html}</td></tr>
+<tr><td>Process PID</td><td>{pid}</td></tr>
+<tr><td>Process threads</td><td>{threads}</td></tr>
+<tr><td>Open file descriptors</td><td>{open_fds}</td></tr>
+<tr><td>VmRSS</td><td>{vm_rss}</td></tr>
+<tr><td>VmSize</td><td>{vm_size}</td></tr>
+<tr><td>VmData</td><td>{vm_data}</td></tr>
+<tr><td>VmPeak</td><td>{vm_peak}</td></tr>
 </table>
 <p><a href="/status.json">status.json</a> &bull; <a href="/bootstrap.yaml">bootstrap.yaml</a></p>
-</body></html>"#
+</body></html>"#,
+        pid = process.pid,
+        threads = format_opt_count(process.threads),
+        open_fds = format_opt_count(process.open_fds),
+        vm_rss = format_opt_kib(process.vm_rss_kib),
+        vm_size = format_opt_kib(process.vm_size_kib),
+        vm_data = format_opt_kib(process.vm_data_kib),
+        vm_peak = format_opt_kib(process.vm_peak_kib),
     );
     Html(html)
 }
@@ -156,6 +199,7 @@ async fn handle_status_json(State(state): State<StatusState>) -> impl IntoRespon
         ipfs_enabled,
         entity_names,
         root_cid,
+        kubo_rpc_url,
     ) = {
         let s = shared_stats.read().await;
         (
@@ -168,10 +212,14 @@ async fn handle_status_json(State(state): State<StatusState>) -> impl IntoRespon
             s.ipfs_publisher_enabled,
             s.entity_names.clone(),
             s.root_cid.clone(),
+            s.kubo_rpc_url.clone(),
         )
     };
+    let zion_cid =
+        manifest_config_string(&kubo_rpc_url, root_cid.as_deref(), ZION_CONFIG_KEY).await;
     let runtime: Value = root_cid.map_or(Value::Null, |cid| json!({ "/": cid }));
     let ipns = did_to_ipns_path(&our_did);
+    let process = process_metrics();
     let body = json!({
         "did": our_did,
         "ipns": ipns,
@@ -183,6 +231,21 @@ async fn handle_status_json(State(state): State<StatusState>) -> impl IntoRespon
         "started_at": started_at,
         "entity_names": entity_names,
         "runtime": runtime,
+        "zion": {
+            "cid": zion_cid,
+            "path": "/zion/",
+        },
+        "process": {
+            "pid": process.pid,
+            "threads": process.threads,
+            "open_fds": process.open_fds,
+            "memory": {
+                "vm_peak_kib": process.vm_peak_kib,
+                "vm_size_kib": process.vm_size_kib,
+                "vm_rss_kib": process.vm_rss_kib,
+                "vm_data_kib": process.vm_data_kib,
+            }
+        },
     });
     (
         [(axum::http::header::CONTENT_TYPE, "application/json")],
@@ -193,6 +256,190 @@ async fn handle_status_json(State(state): State<StatusState>) -> impl IntoRespon
 fn did_to_ipns_path(did: &str) -> Option<String> {
     let identity = did.strip_prefix("did:ma:")?;
     Some(format!("/ipns/{identity}"))
+}
+
+async fn manifest_config_string(
+    kubo_url: &str,
+    root_cid: Option<&str>,
+    key: &str,
+) -> Option<String> {
+    let manifest: RuntimeManifest = crate::kubo::dag_get(kubo_url, root_cid?).await.ok()?;
+    let value = manifest.config.get(key)?.as_str()?.trim();
+    let value = value.strip_prefix("/ipfs/").unwrap_or(value);
+    (!value.is_empty()).then(|| value.trim_end_matches('/').to_string())
+}
+
+async fn handle_zion_redirect() -> impl IntoResponse {
+    Redirect::permanent("/zion/")
+}
+
+async fn handle_zion_index(State(state): State<StatusState>) -> impl IntoResponse {
+    serve_zion_path(state, "index.html").await
+}
+
+async fn handle_zion_path(
+    State(state): State<StatusState>,
+    Path(path): Path<String>,
+) -> impl IntoResponse {
+    let path = path.trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+    serve_zion_path(state, path).await
+}
+
+async fn handle_zion_root_asset(State(state): State<StatusState>, uri: Uri) -> impl IntoResponse {
+    let path = uri.path().trim_start_matches('/');
+    if path.is_empty() {
+        return text_response(StatusCode::NOT_FOUND, "not found");
+    }
+    serve_zion_path(state, path).await
+}
+
+async fn handle_ipfs_path(
+    State(state): State<StatusState>,
+    Path(path): Path<String>,
+) -> impl IntoResponse {
+    let path = path.trim_start_matches('/');
+    if path.is_empty() || path.split('/').any(|part| part == "..") {
+        return text_response(StatusCode::BAD_REQUEST, "invalid IPFS path");
+    }
+
+    let kubo_rpc_url = state.stats.read().await.kubo_rpc_url.clone();
+    match kubo_cat_ipfs_path(&kubo_rpc_url, &format!("/ipfs/{path}")).await {
+        Ok(Some(bytes)) => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, content_type_for_path(path)),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Ok(None) => text_response(StatusCode::NOT_FOUND, "IPFS path not found"),
+        Err(e) => {
+            warn!(path = %path, error = %e, "failed to relay IPFS asset from Kubo");
+            text_response(
+                StatusCode::BAD_GATEWAY,
+                "failed to fetch IPFS asset from Kubo",
+            )
+        }
+    }
+}
+
+async fn serve_zion_path(state: StatusState, path: &str) -> axum::response::Response {
+    if path.split('/').any(|part| part == "..") {
+        return text_response(StatusCode::BAD_REQUEST, "invalid zion path");
+    }
+
+    let (root_cid, kubo_rpc_url) = {
+        let s = state.stats.read().await;
+        (s.root_cid.clone(), s.kubo_rpc_url.clone())
+    };
+    let Some(zion_cid) =
+        manifest_config_string(&kubo_rpc_url, root_cid.as_deref(), ZION_CONFIG_KEY).await
+    else {
+        return text_response(
+            StatusCode::NOT_FOUND,
+            "runtime /config/zion is not configured",
+        );
+    };
+
+    match kubo_cat_ipfs_path(&kubo_rpc_url, &format!("/ipfs/{zion_cid}/{path}")).await {
+        Ok(Some(bytes)) => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, content_type_for_path(path)),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Ok(None) => text_response(StatusCode::NOT_FOUND, "zion asset not found"),
+        Err(e) => {
+            warn!(path = %path, cid = %zion_cid, error = %e, "failed to proxy zion asset from IPFS");
+            text_response(
+                StatusCode::BAD_GATEWAY,
+                "failed to fetch zion asset from IPFS",
+            )
+        }
+    }
+}
+
+async fn kubo_cat_ipfs_path(kubo_url: &str, ipfs_path: &str) -> anyhow::Result<Option<Vec<u8>>> {
+    let base = kubo_url.trim_end_matches('/');
+    let response = reqwest::Client::new()
+        .post(format!("{base}/api/v0/cat"))
+        .query(&[("arg", ipfs_path)])
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Ok(None);
+    }
+    let bytes = response.bytes().await?;
+    Ok(Some(bytes.to_vec()))
+}
+
+fn text_response(status: StatusCode, body: &str) -> axum::response::Response {
+    (
+        status,
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        body.to_string(),
+    )
+        .into_response()
+}
+
+fn content_type_for_path(path: &str) -> &'static str {
+    match path.rsplit_once('.').map(|(_, ext)| ext) {
+        Some("css") => "text/css; charset=utf-8",
+        Some("html") => "text/html; charset=utf-8",
+        Some("js" | "mjs") => "text/javascript; charset=utf-8",
+        Some("json") => "application/json",
+        Some("wasm") => "application/wasm",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("ico") => "image/x-icon",
+        Some("ftl" | "txt") => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+fn process_metrics() -> ProcessMetrics {
+    let mut metrics = ProcessMetrics {
+        pid: std::process::id(),
+        ..Default::default()
+    };
+    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+        for line in status.lines() {
+            if let Some(value) = line.strip_prefix("VmPeak:") {
+                metrics.vm_peak_kib = parse_status_number(value);
+            } else if let Some(value) = line.strip_prefix("VmSize:") {
+                metrics.vm_size_kib = parse_status_number(value);
+            } else if let Some(value) = line.strip_prefix("VmRSS:") {
+                metrics.vm_rss_kib = parse_status_number(value);
+            } else if let Some(value) = line.strip_prefix("VmData:") {
+                metrics.vm_data_kib = parse_status_number(value);
+            } else if let Some(value) = line.strip_prefix("Threads:") {
+                metrics.threads = parse_status_number(value);
+            }
+        }
+    }
+    metrics.open_fds = std::fs::read_dir("/proc/self/fd")
+        .ok()
+        .map(|entries| entries.filter_map(Result::ok).count() as u64);
+    metrics
+}
+
+fn parse_status_number(value: &str) -> Option<u64> {
+    value.split_whitespace().next()?.parse().ok()
+}
+
+fn format_opt_count(value: Option<u64>) -> String {
+    value.map_or_else(|| "-".to_string(), |n| n.to_string())
+}
+
+fn format_opt_kib(value: Option<u64>) -> String {
+    value.map_or_else(|| "-".to_string(), |n| format!("{n} KiB"))
 }
 
 async fn handle_bootstrap_yaml(State(state): State<StatusState>) -> impl IntoResponse {
@@ -239,16 +486,16 @@ async fn handle_claim(
     State(state): State<StatusState>,
     Json(body): Json<ClaimBody>,
 ) -> impl IntoResponse {
-    let (already_claimed, config_path) = {
+    let (owners, config_path) = {
         let s = state.stats.read().await;
-        (!s.owners.is_empty(), s.config_path.clone())
+        (s.owners.clone(), s.config_path.clone())
     };
 
-    if already_claimed {
+    if !owners.is_empty() {
         return (
             axum::http::StatusCode::CONFLICT,
             [(axum::http::header::CONTENT_TYPE, "application/json")],
-            serde_json::json!({"error": "already claimed"}).to_string(),
+            serde_json::json!({"error": "already claimed", "owners": owners}).to_string(),
         )
             .into_response();
     }
