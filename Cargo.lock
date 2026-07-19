@@ -2977,6 +2977,7 @@ dependencies = [
  "tracing",
  "unic-langid",
  "uuid",
+ "wasmtime",
  "wat",
  "zeroize",
 ]

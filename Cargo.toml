@@ -32,6 +32,7 @@ tower-http = { version = "0.5", features = ["cors"] }
 uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
 unic-langid = "0.9"
+wasmtime = "43"
 zeroize = "1"
 
 [dev-dependencies]

@@ -240,6 +240,29 @@ ma --owner did:ma:<your-ipns> --status-bind 0.0.0.0:5003
 A status page is available at `http://127.0.0.1:5003` once the daemon is
 running.
 
+### Wasm memory reservation
+
+`ma` runs each entity plugin through Extism/Wasmtime. Wasmtime normally
+reserves a large virtual address range for each Wasm linear memory so it can
+grow quickly; this can make `top` show a high `VIRT` value even when actual
+resident memory (`RSS`) is small. That reservation is address space, not heap
+already in use.
+
+The default runtime reservation is tuned for ordinary entities such as rooms,
+avatars, and small script actors:
+
+```sh
+MA_WASM_MEMORY_RESERVATION_BYTES=67108864              # default: 64 MiB
+MA_WASM_MEMORY_RESERVATION_FOR_GROWTH_BYTES=1048576    # default: 1 MiB
+```
+
+These settings are not hard memory limits. If a plugin grows beyond the
+reserved range, Wasmtime can relocate and grow the linear memory; the tradeoff
+is lower virtual memory usage versus less room for growth before relocation.
+Most deployments should leave the defaults alone. Operators running unusually
+large Wasm entities can raise the values, or restore Wasmtime's typical 4 GiB
+reservation with `MA_WASM_MEMORY_RESERVATION_BYTES=4294967296`.
+
 ---
 
 ## Security model

@@ -7,7 +7,7 @@
 //! parent module.
 
 use anyhow::{anyhow, Result};
-use extism::{host_fn, Function, Manifest, Plugin, UserData, Wasm, PTR};
+use extism::{host_fn, Function, Manifest, Plugin, PluginBuilder, UserData, Wasm, PTR};
 use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender},
     oneshot,
@@ -213,6 +213,26 @@ fn env_secs(var: &str, default: u64) -> std::time::Duration {
 /// operational escape hatch).
 pub(super) fn wasm_call_timeout() -> std::time::Duration {
     env_secs("MA_WASM_CALL_TIMEOUT_SECS", 30)
+}
+
+fn env_bytes(var: &str, default: u64) -> u64 {
+    std::env::var(var)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
+fn wasmtime_config() -> wasmtime::Config {
+    let mut config = wasmtime::Config::new();
+    config.memory_reservation(env_bytes(
+        "MA_WASM_MEMORY_RESERVATION_BYTES",
+        64 * 1024 * 1024,
+    ));
+    config.memory_reservation_for_growth(env_bytes(
+        "MA_WASM_MEMORY_RESERVATION_FOR_GROWTH_BYTES",
+        1024 * 1024,
+    ));
+    config
 }
 
 // ── ma_delete_entity host function ───────────────────────────────────────────
@@ -497,7 +517,11 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
     let manifest = Manifest::new([Wasm::data(cfg.wasm_bytes.clone())])
         .with_timeout(wasm_call_timeout())
         .with_config(build_plugin_config(cfg).into_iter());
-    let plugin = Plugin::new(&manifest, host_fns, cfg.wasi)
+    let plugin = PluginBuilder::new(manifest)
+        .with_functions(host_fns)
+        .with_wasi(cfg.wasi)
+        .with_wasmtime_config(wasmtime_config())
+        .build()
         .map_err(|e| anyhow!("failed to create extism plugin for '{}': {e}", cfg.fragment))?;
 
     Ok(WasmThreadState {
