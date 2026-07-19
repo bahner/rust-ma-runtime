@@ -170,8 +170,8 @@ your browser ──iroh QUIC──► /ma/rpc   ──► Wasm entity dispatch
 ### Prerequisites
 
 - Rust (latest stable)
-- [Kubo](https://docs.ipfs.tech/install/command-line/) running on
-  `http://127.0.0.1:5001`
+- [IPFS Desktop](https://docs.ipfs.tech/install/ipfs-desktop/) running locally
+  (it includes Kubo on `http://127.0.0.1:5001`)
 
 ### Build
 
@@ -237,8 +237,11 @@ ma
 ma --owner did:ma:<your-ipns> --status-bind 0.0.0.0:5003
 ```
 
-A status page is available at `http://127.0.0.1:5003` once the daemon is
-running.
+Once IPFS Desktop and `ma` are running, the simplest and safest way to begin is
+to open `http://localhost:5003/zion` in your browser. The runtime serves Zion
+through its local-only status server, so you do not need a separate web app or a
+remote origin for first setup. The status page remains available at
+`http://127.0.0.1:5003`.
 
 ### Wasm memory reservation
 

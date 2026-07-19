@@ -149,8 +149,9 @@ canonical reference.
 ## Prerequisites
 
 - Rust (latest stable)
-- [Kubo](https://docs.ipfs.tech/install/command-line/) running on
-  `http://127.0.0.1:5001` (or set `kubo_rpc_url` in config)
+- [IPFS Desktop](https://docs.ipfs.tech/install/ipfs-desktop/) running locally
+  (it includes Kubo on `http://127.0.0.1:5001`; set `kubo_rpc_url` in config if
+  you use another Kubo endpoint)
 
 ---
 
@@ -599,7 +600,15 @@ never be removed via CRUD), never resolved specially.
 | `GET /` | `text/html` | Human-friendly page |
 | `GET /status.json` | `application/json` | Machine-readable status |
 | `GET /bootstrap.yaml` | `text/yaml` | Bootstrap template for this runtime |
+| `GET /zion` | `text/html` | Redirects to `/zion/` |
+| `GET /zion/` | `text/html` | Local Zion app served from the configured `/config/zion` IPFS/IPNS source |
+| `GET /zion/*path` | varies | Local Zion assets proxied from IPFS |
 | `POST /claim` | — | Claim ownership: body `{"did":"did:ma:…"}` |
+
+For a first local setup, start IPFS Desktop, start `ma`, then visit
+`http://localhost:5003/zion`. This is the recommended path because the browser
+app is loaded through the runtime's local-only status server instead of a remote
+web origin.
 
 ### CORS policy (default-deny except allowlist)
 

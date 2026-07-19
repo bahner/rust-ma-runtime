@@ -133,9 +133,14 @@ curl http://127.0.0.1:5003/status.json
 
 ## Step 4 — Open zion and claim your runtime
 
-zion is the browser-based actor terminal.  Open it at:
+zion is the browser-based actor terminal. The easiest, best, and safest first
+run path is to use the copy served by your own local runtime:
 
-**<https://zion.bahner.com>**
+**<http://localhost:5003/zion>**
+
+This keeps setup on the local status server that `ma` just started. It also
+avoids depending on a separately hosted web app while you create and claim your
+first identity.
 
 1. Create an identity (pick a username, set a passphrase).
 
@@ -155,19 +160,17 @@ zion is the browser-based actor terminal.  Open it at:
 That's it.  Your DID document is published to IPFS automatically as part
 of the process — no separate publish step is needed.
 
-Until claimed, `ma` runs with an **open ACL** — all principals may use
-RPC, generic IPFS store, and DID-document publish.  This is intentional: it
-means DID documents can be published immediately on a fresh runtime without any manual configuration.
-Once you claim the runtime the ACL tightens.
+Until claimed, `ma` does not grant any owner access over RPC/CRUD. The local
+`/claim` endpoint exists specifically to solve first setup without opening the
+runtime to arbitrary remote callers. Once you claim the runtime, your DID is
+persisted as an owner and the live transport ACL is updated immediately.
 
-### Why open before claiming?
+### Why claim through the local page
 
-Your DID document needs to reach IPFS before anyone can verify your
-identity.  Without an open ACL on a fresh unclaimed runtime, zion could
-not publish its DID document to `ma`, which means no one could call you —
-a chicken-and-egg problem.  The open window is short and local-only (the
-runtime is only reachable via iroh QUIC using your endpoint ID, which you
-have not shared yet).
+Your Zion identity needs to become an owner before it can safely administer the
+runtime. Loading Zion from `http://localhost:5003/zion` lets the browser call
+the local status server directly for that one-time claim, then use normal
+authenticated ma protocols after ownership is established.
 
 ### Privacy and encryption
 
@@ -561,6 +564,7 @@ archive it.  `:emote` sends a third-person action in the style of IRC
 
 # Status
 http://127.0.0.1:5003           runtime status page (browser)
+http://localhost:5003/zion      local Zion app served by ma
 ```
 
 ---
