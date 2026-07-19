@@ -258,7 +258,7 @@ impl EntityPlugin {
         our_did: &str,
         kubo_url: &str,
         envelope_tx: UnboundedSender<(String, SendEnvelope)>,
-        _entity_registry: EntityRegistry,
+        entity_registry: EntityRegistry,
         avatar_key: [u8; 32],
         iroh_node_id: &str,
         started_at: u64,
@@ -400,6 +400,7 @@ impl EntityPlugin {
             started_at,
             parent: node.parent.clone(),
             runtime_config,
+            entity_registry,
         };
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<EntityMsg>();

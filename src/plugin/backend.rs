@@ -16,7 +16,7 @@ use tracing::warn;
 
 use crate::entity::{CastInput, CreateEntityRequest, Lifecycle, ReplyRequest, SendEnvelope};
 
-use super::{DispatchResult, EntityMsg, NativeActor, NativeSignal};
+use super::{DispatchResult, EntityMsg, EntityRegistry, NativeActor, NativeSignal};
 
 // ── Fragment generation ───────────────────────────────────────────────────────
 
@@ -161,6 +161,51 @@ host_fn!(ma_create_entity_fn(user_data: CreateEntityCtx; input: Vec<u8>) -> Vec<
         .map_err(|e| extism::Error::msg(format!("ma_create_entity: CBOR encode: {e}")))?;
     Ok(out)
 });
+
+// ── ma_entity_exists host function ───────────────────────────────────────────
+
+// Context captured by `ma_entity_exists` host function.
+struct EntityExistsCtx {
+    registry: EntityRegistry,
+    our_did: String,
+}
+
+// `ma_entity_exists` host function: test whether a local entity fragment is live.
+//
+// Input is raw UTF-8, either `fragment`, `#fragment`, or this runtime's full
+// `did:ma:...#fragment` DID-URL. Foreign DID-URLs always return false.
+// Output is raw UTF-8: `true` or `false`.
+host_fn!(ma_entity_exists_fn(user_data: EntityExistsCtx; input: Vec<u8>) -> Vec<u8> {
+    let target = String::from_utf8(input)
+        .map_err(|e| extism::Error::msg(format!("ma_entity_exists: invalid UTF-8: {e}")))?;
+    let arc = user_data.get()?;
+    let ctx = arc.lock().unwrap();
+    let fragment = entity_fragment(&target, &ctx.our_did);
+    let registry = ctx.registry.clone();
+    drop(ctx);
+    let exists = fragment
+        .as_deref()
+        .is_some_and(|fragment| registry.blocking_read().contains_key(fragment));
+    Ok(if exists { b"true".to_vec() } else { b"false".to_vec() })
+});
+
+fn entity_fragment(target: &str, our_did: &str) -> Option<String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return None;
+    }
+    if let Some(fragment) = target.strip_prefix('#') {
+        return (!fragment.is_empty()).then(|| fragment.to_string());
+    }
+    if target.starts_with("did:ma:") {
+        let (did, fragment) = target.split_once('#')?;
+        if did == our_did && !fragment.is_empty() {
+            return Some(fragment.to_string());
+        }
+        return None;
+    }
+    (!target.contains('#') && !target.contains('/')).then(|| target.to_string())
+}
 
 // ── ma_avatar_id host function ────────────────────────────────────────────────
 
@@ -362,6 +407,8 @@ pub(super) struct WasmThreadCfg {
     pub(super) parent: Option<String>,
     /// Public runtime/manifest config exposed to the entity as read-only config.
     pub(super) runtime_config: std::collections::BTreeMap<String, String>,
+    /// Live entity registry, used by local introspection host functions.
+    pub(super) entity_registry: EntityRegistry,
 }
 
 /// Handles retained by the worker thread to drain plugin side-effects after
@@ -430,11 +477,61 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
     let avatar_id_ctx: UserData<AvatarIdCtx> = UserData::new(AvatarIdCtx {
         key: cfg.avatar_key,
     });
+    let entity_exists_ctx: UserData<EntityExistsCtx> = UserData::new(EntityExistsCtx {
+        registry: cfg.entity_registry.clone(),
+        our_did: cfg.our_did.clone(),
+    });
     let behaviour: UserData<BehaviourCtx> = UserData::new(BehaviourCtx {
         kubo_url: cfg.kubo_url.clone(),
         handle: cfg.tokio_handle.clone(),
     });
+    let host_fns = build_host_functions(
+        cfg,
+        outbox_ctx_reply,
+        HostFunctionCtx {
+            outbox_ctx_send,
+            state: state.clone(),
+            create_queue: create_queue.clone(),
+            delete_queue: delete_queue.clone(),
+            avatar_id_ctx,
+            entity_exists_ctx,
+            behaviour,
+        },
+    );
 
+    let manifest = Manifest::new([Wasm::data(cfg.wasm_bytes.clone())])
+        .with_timeout(wasm_call_timeout())
+        .with_config(build_plugin_config(cfg).into_iter());
+    let plugin = PluginBuilder::new(manifest)
+        .with_functions(host_fns)
+        .with_wasi(cfg.wasi)
+        .with_wasmtime_config(wasmtime_config())
+        .build()
+        .map_err(|e| anyhow!("failed to create extism plugin for '{}': {e}", cfg.fragment))?;
+
+    Ok(WasmThreadState {
+        plugin,
+        state,
+        create_queue,
+        delete_queue,
+    })
+}
+
+struct HostFunctionCtx {
+    outbox_ctx_send: UserData<OutboxCtx>,
+    state: UserData<StateCtx>,
+    create_queue: UserData<CreateEntityCtx>,
+    delete_queue: UserData<DeleteEntityCtx>,
+    avatar_id_ctx: UserData<AvatarIdCtx>,
+    entity_exists_ctx: UserData<EntityExistsCtx>,
+    behaviour: UserData<BehaviourCtx>,
+}
+
+fn build_host_functions(
+    cfg: &WasmThreadCfg,
+    outbox_ctx_reply: UserData<OutboxCtx>,
+    ctx: HostFunctionCtx,
+) -> Vec<Function> {
     // IMPORTANT: This order MUST match the @extism.import_fn declaration order
     // in the Python actor library chain (actor.py → avatar.py / root.py).
     // extism-py assigns IMPORT_INDEX sequentially across all @extism.import_fn
@@ -461,19 +558,25 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
         ),
         (
             "ma_set_state",
-            Function::new("ma_set_state", [PTR], [PTR], state.clone(), ma_set_state_fn),
+            Function::new("ma_set_state", [PTR], [PTR], ctx.state, ma_set_state_fn),
         ),
         (
             "ma_send",
-            Function::new("ma_send", [PTR], [PTR], outbox_ctx_send, ma_send_fn),
+            Function::new("ma_send", [PTR], [PTR], ctx.outbox_ctx_send, ma_send_fn),
         ),
         (
             "ma_end",
-            Function::new("ma_end", [PTR], [PTR], delete_queue.clone(), ma_end_fn),
+            Function::new("ma_end", [PTR], [PTR], ctx.delete_queue.clone(), ma_end_fn),
         ),
         (
             "ma_avatar_id",
-            Function::new("ma_avatar_id", [PTR], [PTR], avatar_id_ctx, ma_avatar_id_fn),
+            Function::new(
+                "ma_avatar_id",
+                [PTR],
+                [PTR],
+                ctx.avatar_id_ctx,
+                ma_avatar_id_fn,
+            ),
         ),
         (
             "ma_create_entity",
@@ -481,7 +584,7 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
                 "ma_create_entity",
                 [PTR],
                 [PTR],
-                create_queue.clone(),
+                ctx.create_queue,
                 ma_create_entity_fn,
             ),
         ),
@@ -491,7 +594,7 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
                 "ma_delete_entity",
                 [PTR],
                 [PTR],
-                delete_queue.clone(),
+                ctx.delete_queue,
                 ma_delete_entity_fn,
             ),
         ),
@@ -501,35 +604,28 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
                 "ma_ipfs_include",
                 [PTR],
                 [PTR],
-                behaviour,
+                ctx.behaviour,
                 ma_ipfs_include_fn,
+            ),
+        ),
+        (
+            "ma_entity_exists",
+            Function::new(
+                "ma_entity_exists",
+                [PTR],
+                [PTR],
+                ctx.entity_exists_ctx,
+                ma_entity_exists_fn,
             ),
         ),
     ];
     let allowed: std::collections::HashSet<&str> =
         cfg.host_functions.iter().map(String::as_str).collect();
-    let host_fns: Vec<Function> = all_fns
+    all_fns
         .into_iter()
         .filter(|(name, _)| allowed.contains(*name))
         .map(|(_, f)| f)
-        .collect();
-
-    let manifest = Manifest::new([Wasm::data(cfg.wasm_bytes.clone())])
-        .with_timeout(wasm_call_timeout())
-        .with_config(build_plugin_config(cfg).into_iter());
-    let plugin = PluginBuilder::new(manifest)
-        .with_functions(host_fns)
-        .with_wasi(cfg.wasi)
-        .with_wasmtime_config(wasmtime_config())
-        .build()
-        .map_err(|e| anyhow!("failed to create extism plugin for '{}': {e}", cfg.fragment))?;
-
-    Ok(WasmThreadState {
-        plugin,
-        state,
-        create_queue,
-        delete_queue,
-    })
+        .collect()
 }
 
 /// Parse a plugin export's CBOR-encoded return value as `:ok`/`[:ok, …]` vs

@@ -91,6 +91,7 @@ runtime:
         # *who* may call this is an ACL concern, not a host_functions
         # concern.
         - ma_create_entity
+        - ma_entity_exists
 
     # A genesis/tree-root variant of the same kind — reuses the scheme actor
     # Wasm and stdlib behaviour via `extends`. Behaviour links compose
