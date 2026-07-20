@@ -18,10 +18,11 @@ use ma_core::{
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 use zeroize::Zeroize;
 
 use crate::acl::{AclCache, GroupCache, SharedAcl};
-use crate::entity::{KindRegistry, SendEnvelope};
+use crate::entity::{CastInput, KindRegistry, LocalMessage, PluginMsg, SendEnvelope};
 use crate::ipfs::IpfsServiceState;
 use crate::manifest::ManifestWriter;
 use crate::plugin::EntityRegistry;
@@ -39,6 +40,103 @@ fn protocol_for(msg_type: &str) -> &'static str {
         MESSAGE_TYPE_IPFS_REQUEST | MESSAGE_TYPE_IDENTITY_PUBLISH_REQUEST => IPFS_PROTOCOL_ID,
         MESSAGE_TYPE_CRUD | MESSAGE_TYPE_CRUD_REPLY => crud::CRUD_PROTOCOL_ID,
         _ => INBOX_PROTOCOL_ID,
+    }
+}
+
+fn local_target_fragment<'a>(target: &'a str, our_did: &str) -> Option<&'a str> {
+    let target = target.trim();
+    if target.is_empty() {
+        return None;
+    }
+    if target.starts_with("did:ma:") {
+        let fragment = target.strip_prefix(our_did)?.strip_prefix('#')?;
+        return (!fragment.is_empty()).then_some(fragment);
+    }
+    if let Some(fragment) = target.strip_prefix('#') {
+        return (!fragment.is_empty()).then_some(fragment);
+    }
+    (!target.contains('#') && !target.contains('/')).then_some(target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_target_fragment;
+
+    #[test]
+    fn local_target_fragment_accepts_local_forms_only() {
+        let our_did = "did:ma:local";
+
+        assert_eq!(local_target_fragment("#room", our_did), Some("room"));
+        assert_eq!(local_target_fragment("room", our_did), Some("room"));
+        assert_eq!(
+            local_target_fragment("did:ma:local#room", our_did),
+            Some("room")
+        );
+
+        assert_eq!(local_target_fragment("did:ma:local", our_did), None);
+        assert_eq!(local_target_fragment("did:ma:remote#room", our_did), None);
+        assert_eq!(local_target_fragment("/entities/room", our_did), None);
+    }
+}
+
+async fn dispatch_local_plugin_envelope(
+    sender_fragment: &str,
+    target_fragment: &str,
+    env: SendEnvelope,
+    msg_type: &str,
+    entity_registry: &EntityRegistry,
+    manifest_writer: &ManifestWriter,
+    kubo_url: &str,
+) {
+    let entity = entity_registry.read().await.get(target_fragment).cloned();
+    let Some(entity) = entity else {
+        warn!(fragment = %sender_fragment, to = %env.to, target = %target_fragment, "plugin envelope: unknown local recipient; skipped");
+        return;
+    };
+
+    let local_msg = LocalMessage {
+        id: Uuid::new_v4().to_string(),
+        from: format!("#{sender_fragment}"),
+        to: env.to.clone(),
+        created_at: status::now_unix_secs(),
+        exp: 0,
+        reply_to: env.reply_to.clone(),
+        message_type: msg_type.to_string(),
+        content_type: env.content_type.clone(),
+        content: env.content.clone(),
+    };
+    let cast_input = CastInput {
+        msg: PluginMsg::from(&local_msg),
+    };
+
+    let result = match entity.on_message(&cast_input).await {
+        Ok(result) => result,
+        Err(err) => {
+            warn!(fragment = %target_fragment, from = %local_msg.from, error = %err, "plugin envelope: local dispatch failed");
+            return;
+        }
+    };
+
+    if let Some(state_bytes) = result.pending_state {
+        let entity_arc = Arc::clone(&entity);
+        let writer = manifest_writer.clone();
+        let kubo_url = kubo_url.to_string();
+        tokio::spawn(async move {
+            match crate::kubo::dag_put(&kubo_url, &state_bytes).await {
+                Ok(cid) => match writer.set_entity_state(&entity_arc.fragment, &cid).await {
+                    Ok(root_cid) => {
+                        entity_arc.mark_saved(state_bytes);
+                        debug!(fragment = %entity_arc.fragment, cid = %cid, %root_cid, "plugin envelope: local entity state persisted");
+                    }
+                    Err(err) => {
+                        warn!(fragment = %entity_arc.fragment, cid = %cid, error = %err, "plugin envelope: failed to update manifest with local entity state");
+                    }
+                },
+                Err(err) => {
+                    warn!(fragment = %entity_arc.fragment, error = %err, "plugin envelope: failed to persist local entity state");
+                }
+            }
+        });
     }
 }
 
@@ -257,10 +355,25 @@ pub async fn run(
                 // Drain plugin outbox — envelopes sent fire-and-forget by ma_send/ma_reply.
                 while let Ok((fragment, env)) = envelope_rx.try_recv() {
                     let msg_type = if env.reply_to.is_some() {
-                        MESSAGE_TYPE_RPC_REPLY
+                        MESSAGE_TYPE_RPC_REPLY.to_string()
                     } else {
-                        env.message_type.as_deref().unwrap_or(MESSAGE_TYPE_RPC)
+                        env.message_type
+                            .clone()
+                            .unwrap_or_else(|| MESSAGE_TYPE_RPC.to_string())
                     };
+                    if let Some(target_fragment) = local_target_fragment(&env.to, &our_did).map(str::to_string) {
+                        dispatch_local_plugin_envelope(
+                            &fragment,
+                            &target_fragment,
+                            env,
+                            &msg_type,
+                            &entity_registry,
+                            &manifest_writer,
+                            &kubo_url,
+                        )
+                        .await;
+                        continue;
+                    }
                     let sender_did_url = format!("{our_did}#{fragment}");
                     let recipient = match Did::try_from(env.to.as_str()) {
                         Ok(d) => d,
@@ -272,7 +385,7 @@ pub async fn run(
                     let mut msg = match ma_core::Message::new(
                         &sender_did_url,
                         &env.to,
-                        msg_type,
+                        &msg_type,
                         &env.content_type,
                         &env.content,
                         &signing_key,
@@ -284,7 +397,7 @@ pub async fn run(
                         }
                     };
                     msg.reply_to = env.reply_to;
-                    let protocol = protocol_for(msg_type);
+                    let protocol = protocol_for(&msg_type);
                     // Spawn each delivery independently so one unreachable peer
                     // cannot block others. Cap the outbox-open at 5 seconds.
                     let ep   = Arc::clone(&endpoint);
