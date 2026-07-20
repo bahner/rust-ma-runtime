@@ -88,6 +88,10 @@ pub async fn handle_inbox_message(message: &ma_core::Message, ctx: &InboxHandler
         });
     }
 
+    if !result.behaviour_requests.is_empty() {
+        warn!(fragment = %entity.fragment, "inbox: ma_set_behaviour requests are ignored on fire-and-forget inbox dispatch");
+    }
+
     Ok(())
 }
 

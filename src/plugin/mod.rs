@@ -22,7 +22,7 @@ use tracing::debug;
 
 use crate::entity::{
     CastInput, CreateEntityRequest, EntityNode, Evaluator, KindNode, Lifecycle, PluginKind,
-    SendEnvelope,
+    SendEnvelope, SetBehaviourRequest,
 };
 
 mod backend;
@@ -140,6 +140,8 @@ pub struct DispatchResult {
     /// Entity deletion requests enqueued via `ma_delete_entity` host function.
     /// Each entry is the fragment of the entity to delete.
     pub delete_requests: Vec<String>,
+    /// Self-behaviour update requests enqueued via `ma_set_behaviour`.
+    pub behaviour_requests: Vec<SetBehaviourRequest>,
 }
 
 // ── Registry type alias ───────────────────────────────────────────────────────

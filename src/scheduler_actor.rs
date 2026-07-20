@@ -82,6 +82,7 @@ pub fn native_actor(
             pending_state: None,
             create_requests: vec![],
             delete_requests: vec![],
+            behaviour_requests: vec![],
         })
     })
     .with_state_hooks(|| None, |_| {})

@@ -142,6 +142,43 @@ impl ManifestWriter {
         self.persist_root_cid(&new_cid).await;
         Ok(new_cid)
     }
+
+    /// Publish an updated entity node with a new per-entity behaviour link,
+    /// then publish a manifest that points at that updated entity node.
+    #[allow(clippy::significant_drop_tightening)]
+    pub async fn set_entity_behaviour(
+        &self,
+        fragment: &str,
+        behaviour_cid: Option<&str>,
+    ) -> Result<String> {
+        let inner = &self.inner;
+        let mut guard = inner.current.lock().await;
+        let old_cid = guard.clone();
+
+        let mut manifest: RuntimeManifest = crate::kubo::dag_get(&inner.kubo_url, &old_cid).await?;
+        let entity_link = manifest
+            .entities
+            .get(fragment)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("entity '{fragment}' is not in the manifest"))?;
+        let mut entity_node: EntityNode =
+            crate::kubo::dag_get(&inner.kubo_url, &entity_link.cid).await?;
+        entity_node.behaviour = behaviour_cid.map(IpldLink::new);
+        let entity_cid = crate::kubo::dag_put(&inner.kubo_url, &entity_node).await?;
+        manifest
+            .entities
+            .insert(fragment.to_string(), IpldLink::new(&entity_cid));
+
+        let new_cid = crate::kubo::dag_put(&inner.kubo_url, &manifest).await?;
+        if let Err(e) = crate::kubo::pin_update(&inner.kubo_url, &old_cid, &new_cid).await {
+            warn!(old = %old_cid, new = %new_cid, error = %e, "manifest pin_update failed");
+        }
+
+        guard.clone_from(&new_cid);
+        inner.stats.write().await.root_cid = Some(new_cid.clone());
+        self.persist_root_cid(&new_cid).await;
+        Ok(new_cid)
+    }
 }
 
 impl std::fmt::Debug for ManifestWriter {

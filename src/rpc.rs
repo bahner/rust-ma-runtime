@@ -11,7 +11,9 @@ use ma_core::{
 use tracing::{debug, info, warn};
 
 use crate::acl::{check_full, AclCache, AclMap, GroupCache, CAP_RPC};
-use crate::entity::{CastInput, IpldLink, Lifecycle, LocalMessage, PluginMsg, SendEnvelope};
+use crate::entity::{
+    CastInput, IpldLink, Lifecycle, LocalMessage, PluginMsg, SendEnvelope, SetBehaviourRequest,
+};
 use crate::plugin::EntityRegistry;
 use crate::status::SharedStats;
 
@@ -69,6 +71,109 @@ async fn public_plugin_config_for_rpc(
         crate::kubo::dag_get(&ctx.kubo_rpc_url, &root_cid).await?;
     let cfg = ctx.shared_config.read().await;
     Ok(crate::crud::config::public_plugin_config(&manifest, &cfg))
+}
+
+fn normalize_behaviour_cid(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("behaviour reference is empty"));
+    }
+    if let Some(cid) = trimmed.strip_prefix("/ipfs/") {
+        if cid.is_empty() {
+            return Err(anyhow!("/ipfs/ behaviour reference is missing a CID"));
+        }
+        return Ok(cid.to_string());
+    }
+    if trimmed.starts_with("/ipns/") {
+        return Err(anyhow!("/ipns/ behaviour references are not supported here; publish the code to /ipfs/<cid> first"));
+    }
+    Ok(trimmed.to_string())
+}
+
+async fn load_entity_node_for_update(
+    ctx: &RpcHandlerCtx,
+    fragment: &str,
+    behaviour_cid: Option<&str>,
+) -> Result<crate::entity::EntityNode> {
+    let root_cid = ctx
+        .stats
+        .read()
+        .await
+        .root_cid
+        .clone()
+        .ok_or_else(|| anyhow!("no manifest root CID available"))?;
+    let manifest: crate::entity::RuntimeManifest =
+        crate::kubo::dag_get(&ctx.kubo_rpc_url, &root_cid).await?;
+    let link = manifest
+        .entities
+        .get(fragment)
+        .ok_or_else(|| anyhow!("entity '{fragment}' is not in the manifest"))?;
+    let mut node: crate::entity::EntityNode =
+        crate::kubo::dag_get(&ctx.kubo_rpc_url, &link.cid).await?;
+    node.behaviour = behaviour_cid.map(IpldLink::new);
+    Ok(node)
+}
+
+async fn apply_behaviour_request(req: SetBehaviourRequest, ctx: &RpcHandlerCtx) -> Result<()> {
+    let behaviour_cid = req
+        .behaviour_cid
+        .as_deref()
+        .map(normalize_behaviour_cid)
+        .transpose()?;
+    let updated_node =
+        load_entity_node_for_update(ctx, &req.fragment, behaviour_cid.as_deref()).await?;
+    let kind_node = ctx
+        .kind_registry
+        .read()
+        .await
+        .get(&updated_node.kind)
+        .cloned()
+        .ok_or_else(|| anyhow!("kind '{}' is not in registry", updated_node.kind))?;
+    let (iroh_node_id, started_at) = {
+        let s = ctx.stats.read().await;
+        (s.endpoint_id.clone(), s.started_at)
+    };
+    let runtime_config = public_plugin_config_for_rpc(ctx).await.unwrap_or_else(|e| {
+        warn!(error = %e, "ma_set_behaviour: failed to build public plugin config; continuing with entity-local config only");
+        std::collections::BTreeMap::new()
+    });
+    let (plugin, lifecycle) = crate::plugin::EntityPlugin::load(
+        req.fragment.clone(),
+        &updated_node,
+        &kind_node,
+        &ctx.our_did,
+        &ctx.kubo_rpc_url,
+        ctx.envelope_tx.clone(),
+        ctx.entity_registry.clone(),
+        ctx.avatar_key,
+        &iroh_node_id,
+        started_at,
+        runtime_config,
+        None,
+    )
+    .await?;
+    let plugin = Arc::new(plugin);
+    let state_bytes = plugin.trigger_save(&ctx.kubo_rpc_url).await.ok().flatten();
+
+    let root_cid = ctx
+        .manifest_writer
+        .set_entity_behaviour(&req.fragment, behaviour_cid.as_deref())
+        .await?;
+    if let Some(state_cid) = state_bytes {
+        if let Err(e) = ctx
+            .manifest_writer
+            .set_entity_state(&req.fragment, &state_cid)
+            .await
+        {
+            warn!(fragment = %req.fragment, cid = %state_cid, error = %e, "ma_set_behaviour: failed to persist reloaded entity state");
+        }
+    }
+    ctx.entity_registry
+        .write()
+        .await
+        .insert(req.fragment.clone(), plugin);
+    info!(fragment = %req.fragment, ?lifecycle, %root_cid, "entity behaviour updated via ma_set_behaviour");
+    Ok(())
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
@@ -340,7 +445,13 @@ async fn handle_entity_plugin_message(
 
         let entity_node = crate::entity::EntityNode {
             kind: req.kind_protocol.clone(),
-            behaviour: req.behaviour_cid.as_deref().map(IpldLink::new),
+            behaviour: req
+                .behaviour_cid
+                .as_deref()
+                .map(normalize_behaviour_cid)
+                .transpose()?
+                .as_deref()
+                .map(IpldLink::new),
             acl: entity.acl.clone(),
             state: None,
             parent: Some(entity.fragment.clone()),
@@ -472,6 +583,10 @@ async fn handle_entity_plugin_message(
 
         ctx.entity_registry.write().await.remove(&target_fragment);
         info!(caller = %entity.fragment, target = %target_fragment, "entity deleted via ma_delete_entity");
+    }
+
+    for req in result.behaviour_requests {
+        apply_behaviour_request(req, ctx).await?;
     }
 
     Ok(())

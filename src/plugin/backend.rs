@@ -14,7 +14,9 @@ use tokio::sync::{
 };
 use tracing::warn;
 
-use crate::entity::{CastInput, CreateEntityRequest, Lifecycle, ReplyRequest, SendEnvelope};
+use crate::entity::{
+    CastInput, CreateEntityRequest, Lifecycle, ReplyRequest, SendEnvelope, SetBehaviourRequest,
+};
 
 use super::{DispatchResult, EntityMsg, EntityRegistry, NativeActor, NativeSignal};
 
@@ -161,6 +163,47 @@ host_fn!(ma_create_entity_fn(user_data: CreateEntityCtx; input: Vec<u8>) -> Vec<
         .map_err(|e| extism::Error::msg(format!("ma_create_entity: CBOR encode: {e}")))?;
     Ok(out)
 });
+
+// ── ma_set_behaviour host function ───────────────────────────────────────────
+
+struct SetBehaviourCtx {
+    pending: Vec<SetBehaviourRequest>,
+    self_fragment: String,
+}
+
+host_fn!(ma_set_behaviour_fn(user_data: SetBehaviourCtx; input: Vec<u8>) -> Vec<u8> {
+    let behaviour = String::from_utf8(input)
+        .map_err(|e| extism::Error::msg(format!("ma_set_behaviour: invalid UTF-8: {e}")))?;
+    let behaviour = normalize_behaviour_ref(&behaviour)
+        .map_err(|e| extism::Error::msg(format!("ma_set_behaviour: {e}")))?;
+    let arc = user_data.get()?;
+    {
+        let mut ctx = arc.lock().unwrap();
+        let fragment = ctx.self_fragment.clone();
+        ctx.pending.push(SetBehaviourRequest {
+            fragment,
+            behaviour_cid: behaviour,
+        });
+    }
+    Ok(Vec::new())
+});
+
+fn normalize_behaviour_ref(value: &str) -> Result<Option<String>> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == "#f" {
+        return Ok(None);
+    }
+    if let Some(cid) = trimmed.strip_prefix("/ipfs/") {
+        if cid.is_empty() {
+            return Err(anyhow!("/ipfs/ behaviour reference is missing a CID"));
+        }
+        return Ok(Some(cid.to_string()));
+    }
+    if trimmed.starts_with("/ipns/") {
+        return Err(anyhow!("/ipns/ behaviour references are not supported here; publish the code to /ipfs/<cid> first"));
+    }
+    Ok(Some(trimmed.to_string()))
+}
 
 // ── ma_entity_exists host function ───────────────────────────────────────────
 
@@ -418,6 +461,7 @@ struct WasmThreadState {
     state: UserData<StateCtx>,
     create_queue: UserData<CreateEntityCtx>,
     delete_queue: UserData<DeleteEntityCtx>,
+    behaviour_queue: UserData<SetBehaviourCtx>,
 }
 
 /// Build the flat config map injected into the extism `Manifest` for this
@@ -474,6 +518,10 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
         self_terminate: false,
         self_fragment: cfg.fragment.clone(),
     });
+    let behaviour_queue: UserData<SetBehaviourCtx> = UserData::new(SetBehaviourCtx {
+        pending: Vec::new(),
+        self_fragment: cfg.fragment.clone(),
+    });
     let avatar_id_ctx: UserData<AvatarIdCtx> = UserData::new(AvatarIdCtx {
         key: cfg.avatar_key,
     });
@@ -493,6 +541,7 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
             state: state.clone(),
             create_queue: create_queue.clone(),
             delete_queue: delete_queue.clone(),
+            behaviour_queue: behaviour_queue.clone(),
             avatar_id_ctx,
             entity_exists_ctx,
             behaviour,
@@ -514,6 +563,7 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
         state,
         create_queue,
         delete_queue,
+        behaviour_queue,
     })
 }
 
@@ -522,6 +572,7 @@ struct HostFunctionCtx {
     state: UserData<StateCtx>,
     create_queue: UserData<CreateEntityCtx>,
     delete_queue: UserData<DeleteEntityCtx>,
+    behaviour_queue: UserData<SetBehaviourCtx>,
     avatar_id_ctx: UserData<AvatarIdCtx>,
     entity_exists_ctx: UserData<EntityExistsCtx>,
     behaviour: UserData<BehaviourCtx>,
@@ -596,6 +647,16 @@ fn build_host_functions(
                 [PTR],
                 ctx.delete_queue,
                 ma_delete_entity_fn,
+            ),
+        ),
+        (
+            "ma_set_behaviour",
+            Function::new(
+                "ma_set_behaviour",
+                [PTR],
+                [PTR],
+                ctx.behaviour_queue,
+                ma_set_behaviour_fn,
             ),
         ),
         (
@@ -790,11 +851,22 @@ fn execute_dispatch(
         reqs
     };
 
+    let behaviour_requests = ts
+        .behaviour_queue
+        .get()
+        .map_err(|e| anyhow!("behaviour_queue error: {e}"))?
+        .lock()
+        .map_err(|e| anyhow!("behaviour_queue poisoned: {e}"))?
+        .pending
+        .drain(..)
+        .collect();
+
     Ok(DispatchResult {
         output,
         pending_state,
         create_requests,
         delete_requests,
+        behaviour_requests,
     })
 }
 

@@ -695,6 +695,12 @@ pub struct CreateEntityRequest {
     pub parent: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct SetBehaviourRequest {
+    pub fragment: String,
+    pub behaviour_cid: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
