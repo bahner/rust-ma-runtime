@@ -34,6 +34,7 @@ impl MockKubo {
             .route("/api/v0/dag/put", post(dag_put))
             .route("/api/v0/dag/get", post(dag_get))
             .route("/api/v0/dag/resolve", post(dag_resolve))
+            .route("/api/v0/block/get", post(block_get))
             .route("/api/v0/cat", post(cat))
             .route("/api/v0/pin/update", post(pin_ok))
             .route("/api/v0/pin/add", post(pin_ok))
@@ -125,6 +126,11 @@ async fn dag_get(State(store): State<Store>, RawQuery(q): RawQuery) -> Vec<u8> {
 }
 
 async fn cat(State(store): State<Store>, RawQuery(q): RawQuery) -> Vec<u8> {
+    let cid = query_arg(q, "arg").unwrap_or_default();
+    store.0.lock().await.get(&cid).cloned().unwrap_or_default()
+}
+
+async fn block_get(State(store): State<Store>, RawQuery(q): RawQuery) -> Vec<u8> {
     let cid = query_arg(q, "arg").unwrap_or_default();
     store.0.lock().await.get(&cid).cloned().unwrap_or_default()
 }

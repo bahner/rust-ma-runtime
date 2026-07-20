@@ -89,8 +89,8 @@ async fn publish_current_root(
     let Some((doc_cbor, ipns_key)) = build_did_publish_payload(context, latest_root_cid) else {
         return false;
     };
-    let did_ok = publish_did_document(context, latest_root_cid, cid_changed, doc_cbor, ipns_key)
-        .await;
+    let did_ok =
+        publish_did_document(context, latest_root_cid, cid_changed, doc_cbor, ipns_key).await;
     let ipns_ok = publish_runtime_ipns(context, latest_root_cid, cid_changed).await;
 
     did_ok && ipns_ok

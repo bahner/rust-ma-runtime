@@ -68,6 +68,7 @@ pub fn spawn_status_server(stats: SharedStats, acl: SharedAcl, status_bind: Sock
         .route("/bootstrap.yaml", get(handle_bootstrap_yaml))
         .route("/ipfs/*path", get(handle_ipfs_path))
         .route("/ipns/*path", get(handle_ipns_path))
+        .route("/ipld/*path", get(handle_ipld_path))
         .route("/zion", get(handle_zion_redirect))
         .route("/zion/", get(handle_zion_index))
         .route("/zion/*path", get(handle_zion_path))
@@ -339,6 +340,39 @@ async fn handle_ipns_path(
     handle_gateway_path(state, "ipns", path).await
 }
 
+async fn handle_ipld_path(
+    State(state): State<StatusState>,
+    Path(path): Path<String>,
+) -> impl IntoResponse {
+    let path = path.trim_start_matches('/');
+    if path.is_empty() || path.split('/').any(|part| part == "..") {
+        return text_response(StatusCode::BAD_REQUEST, "invalid IPLD path");
+    }
+
+    let ipfs_path = if path.starts_with("ipfs/") || path.starts_with("ipns/") {
+        format!("/{path}")
+    } else {
+        format!("/ipfs/{path}")
+    };
+    let kubo_rpc_url = state.stats.read().await.kubo_rpc_url.clone();
+    match kubo_block_get_ipld_path(&kubo_rpc_url, &ipfs_path).await {
+        Ok(Some(bytes)) => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "application/octet-stream"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Ok(None) => text_response(StatusCode::NOT_FOUND, "IPLD path not found"),
+        Err(e) => {
+            warn!(path = %ipfs_path, error = %e, "failed to relay IPLD block from Kubo");
+            text_response(StatusCode::BAD_GATEWAY, "failed to fetch IPLD block")
+        }
+    }
+}
+
 async fn handle_gateway_path(
     state: StatusState,
     namespace: &'static str,
@@ -416,6 +450,26 @@ async fn kubo_cat_ipfs_path(kubo_url: &str, ipfs_path: &str) -> anyhow::Result<O
     let response = reqwest::Client::new()
         .post(format!("{base}/api/v0/cat"))
         .query(&[("arg", ipfs_path)])
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Ok(None);
+    }
+    let bytes = response.bytes().await?;
+    Ok(Some(bytes.to_vec()))
+}
+
+async fn kubo_block_get_ipld_path(
+    kubo_url: &str,
+    ipfs_path: &str,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    let Ok(cid) = crate::kubo::dag_resolve(kubo_url, ipfs_path).await else {
+        return Ok(None);
+    };
+    let base = kubo_url.trim_end_matches('/');
+    let response = reqwest::Client::new()
+        .post(format!("{base}/api/v0/block/get"))
+        .query(&[("arg", cid.as_str())])
         .send()
         .await?;
     if !response.status().is_success() {
@@ -673,7 +727,10 @@ pub async fn bootstrap_minimal_manifest(
 
 #[cfg(test)]
 mod tests {
-    use super::{default_config_string, normalize_zion_source, zion_asset_path, ZION_CONFIG_KEY};
+    use super::{
+        default_config_string, kubo_block_get_ipld_path, normalize_zion_source, zion_asset_path,
+        ZION_CONFIG_KEY,
+    };
     use crate::crud::config::DEFAULT_ZION_SOURCE;
 
     #[test]
@@ -721,5 +778,20 @@ mod tests {
             zion_asset_path("/ipfs/bafybeigdyrzt/", "style/zion.css"),
             "/ipfs/bafybeigdyrzt/style/zion.css"
         );
+    }
+
+    #[tokio::test]
+    async fn block_get_fetches_ipfs_path_bytes() {
+        let kubo = crate::testkubo::MockKubo::start().await;
+        let bytes = vec![0xa1, 0x61, b'*', 0x81, 0x63, b'r', b'p', b'c'];
+        let cid = kubo.add_bytes(bytes.clone()).await;
+        let path = format!("/ipfs/{cid}");
+
+        let fetched = kubo_block_get_ipld_path(kubo.url(), &path)
+            .await
+            .expect("block get should succeed")
+            .expect("block should exist");
+
+        assert_eq!(fetched, bytes);
     }
 }
