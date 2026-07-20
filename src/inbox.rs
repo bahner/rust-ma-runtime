@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::entity::{CastInput, LocalMessage, PluginMsg};
 use crate::plugin::EntityRegistry;
@@ -21,6 +21,17 @@ pub struct InboxHandlerCtx {
 }
 
 pub async fn handle_inbox_message(message: &ma_core::Message, ctx: &InboxHandlerCtx) -> Result<()> {
+    if message.payload().is_empty() {
+        error!(
+            from = %message.from,
+            to = %message.to,
+            id = %message.id,
+            message_type = %message.message_type,
+            "inbox: empty payload dropped"
+        );
+        return Ok(());
+    }
+
     let fragment = extract_fragment(&message.to, &ctx.our_did);
 
     let Some(fragment) = fragment else {

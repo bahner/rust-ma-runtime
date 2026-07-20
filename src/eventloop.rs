@@ -58,27 +58,6 @@ fn local_target_fragment<'a>(target: &'a str, our_did: &str) -> Option<&'a str> 
     (!target.contains('#') && !target.contains('/')).then_some(target)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::local_target_fragment;
-
-    #[test]
-    fn local_target_fragment_accepts_local_forms_only() {
-        let our_did = "did:ma:local";
-
-        assert_eq!(local_target_fragment("#room", our_did), Some("room"));
-        assert_eq!(local_target_fragment("room", our_did), Some("room"));
-        assert_eq!(
-            local_target_fragment("did:ma:local#room", our_did),
-            Some("room")
-        );
-
-        assert_eq!(local_target_fragment("did:ma:local", our_did), None);
-        assert_eq!(local_target_fragment("did:ma:remote#room", our_did), None);
-        assert_eq!(local_target_fragment("/entities/room", our_did), None);
-    }
-}
-
 async fn dispatch_local_plugin_envelope(
     sender_fragment: &str,
     target_fragment: &str,
@@ -88,7 +67,16 @@ async fn dispatch_local_plugin_envelope(
     manifest_writer: &ManifestWriter,
     kubo_url: &str,
 ) {
-    let entity = entity_registry.read().await.get(target_fragment).cloned();
+    let mut entity = None;
+    for attempt in 0..40 {
+        entity = entity_registry.read().await.get(target_fragment).cloned();
+        if entity.is_some() {
+            break;
+        }
+        if attempt < 39 {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
     let Some(entity) = entity else {
         warn!(fragment = %sender_fragment, to = %env.to, target = %target_fragment, "plugin envelope: unknown local recipient; skipped");
         return;
@@ -109,8 +97,28 @@ async fn dispatch_local_plugin_envelope(
         msg: PluginMsg::from(&local_msg),
     };
 
+    debug!(
+        fragment = %sender_fragment,
+        target = %target_fragment,
+        from = %local_msg.from,
+        to = %local_msg.to,
+        id = %local_msg.id,
+        reply_to = ?local_msg.reply_to,
+        msg_type = %local_msg.message_type,
+        "plugin envelope: local dispatch start"
+    );
     let result = match entity.on_message(&cast_input).await {
-        Ok(result) => result,
+        Ok(result) => {
+            debug!(
+                fragment = %sender_fragment,
+                target = %target_fragment,
+                from = %local_msg.from,
+                to = %local_msg.to,
+                id = %local_msg.id,
+                "plugin envelope: local dispatch finish"
+            );
+            result
+        }
         Err(err) => {
             warn!(fragment = %target_fragment, from = %local_msg.from, error = %err, "plugin envelope: local dispatch failed");
             return;
@@ -362,16 +370,37 @@ pub async fn run(
                             .unwrap_or_else(|| MESSAGE_TYPE_RPC.to_string())
                     };
                     if let Some(target_fragment) = local_target_fragment(&env.to, &our_did).map(str::to_string) {
-                        dispatch_local_plugin_envelope(
-                            &fragment,
-                            &target_fragment,
-                            env,
-                            &msg_type,
-                            &entity_registry,
-                            &manifest_writer,
-                            &kubo_url,
-                        )
-                        .await;
+                        if env.reply_to.is_some() {
+                            debug!(
+                                fragment = %fragment,
+                                target = %target_fragment,
+                                reply_to = ?env.reply_to,
+                                "plugin envelope: local RPC reply dropped (no local reply waiter)"
+                            );
+                            continue;
+                        }
+                        let entity_registry = entity_registry.clone();
+                        let manifest_writer = manifest_writer.clone();
+                        let kubo_url = kubo_url.clone();
+                        tokio::spawn(async move {
+                            if tokio::time::timeout(
+                                Duration::from_secs(30),
+                                dispatch_local_plugin_envelope(
+                                    &fragment,
+                                    &target_fragment,
+                                    env,
+                                    &msg_type,
+                                    &entity_registry,
+                                    &manifest_writer,
+                                    &kubo_url,
+                                ),
+                            )
+                            .await
+                            .is_err()
+                            {
+                                warn!(fragment = %fragment, target = %target_fragment, "plugin envelope: local dispatch timed out");
+                            }
+                        });
                         continue;
                     }
                     let sender_did_url = format!("{our_did}#{fragment}");
@@ -497,4 +526,25 @@ pub async fn run(
     }
     info!("{}", i18n::t("shutdown-complete"));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_target_fragment;
+
+    #[test]
+    fn local_target_fragment_accepts_local_forms_only() {
+        let our_did = "did:ma:local";
+
+        assert_eq!(local_target_fragment("#room", our_did), Some("room"));
+        assert_eq!(local_target_fragment("room", our_did), Some("room"));
+        assert_eq!(
+            local_target_fragment("did:ma:local#room", our_did),
+            Some("room")
+        );
+
+        assert_eq!(local_target_fragment("did:ma:local", our_did), None);
+        assert_eq!(local_target_fragment("did:ma:remote#room", our_did), None);
+        assert_eq!(local_target_fragment("/entities/room", our_did), None);
+    }
 }

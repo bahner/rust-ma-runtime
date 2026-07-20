@@ -592,6 +592,15 @@ async fn handle_claim(
         (s.owners.clone(), s.config_path.clone())
     };
 
+    if owners.iter().any(|owner| owner == &body.owner) {
+        return (
+            axum::http::StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            serde_json::json!({"owners": owners, "status": "already-claimed"}).to_string(),
+        )
+            .into_response();
+    }
+
     if !owners.is_empty() {
         return (
             axum::http::StatusCode::CONFLICT,

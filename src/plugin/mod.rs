@@ -18,7 +18,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{anyhow, Context, Result};
 use ma_core::{cat_bytes, ipfs_add};
 use tokio::sync::{mpsc::UnboundedSender, oneshot, RwLock};
-use tracing::info;
+use tracing::{debug, info, warn};
 
 use crate::entity::{
     CastInput, CreateEntityRequest, EntityNode, Evaluator, KindNode, Lifecycle, PluginKind,
@@ -142,6 +142,12 @@ pub struct DispatchResult {
     pub delete_requests: Vec<String>,
     /// Self-behaviour update requests enqueued via `ma_set_behaviour`.
     pub behaviour_requests: Vec<SetBehaviourRequest>,
+}
+
+impl DispatchResult {
+    fn pending_state_len(&self) -> usize {
+        self.pending_state.as_ref().map_or(0, Vec::len)
+    }
 }
 
 // ── Registry type alias ───────────────────────────────────────────────────────
@@ -452,8 +458,56 @@ impl EntityPlugin {
     /// call automatically based on `self.kind` (stateful vs stateless) —
     /// callers never need to branch on kind themselves.
     pub async fn on_message(&self, input: &CastInput) -> Result<DispatchResult> {
-        self.dispatch(self.kind == PluginKind::Stateful, input)
-            .await
+        let before_rss = current_rss_kib();
+        debug!(
+            fragment = %self.fragment,
+            from = %input.msg.from,
+            to = %input.msg.to,
+            id = %input.msg.id,
+            content_len = input.msg.content.len(),
+            "plugin dispatch start"
+        );
+        let result = self
+            .dispatch(self.kind == PluginKind::Stateful, input)
+            .await;
+        match &result {
+            Ok(result) => debug!(
+                fragment = %self.fragment,
+                from = %input.msg.from,
+                to = %input.msg.to,
+                id = %input.msg.id,
+                content_len = input.msg.content.len(),
+                pending_state_bytes = result.pending_state_len(),
+                create_requests = result.create_requests.len(),
+                delete_requests = result.delete_requests.len(),
+                behaviour_requests = result.behaviour_requests.len(),
+                "plugin dispatch finish"
+            ),
+            Err(error) => warn!(
+                fragment = %self.fragment,
+                from = %input.msg.from,
+                to = %input.msg.to,
+                id = %input.msg.id,
+                content_len = input.msg.content.len(),
+                error = %error,
+                "plugin dispatch failed"
+            ),
+        }
+        if let (Some(before), Some(after)) = (before_rss, current_rss_kib()) {
+            let delta = after.saturating_sub(before);
+            let threshold = memory_growth_log_threshold_kib();
+            if delta >= threshold {
+                warn!(
+                    fragment = %self.fragment,
+                    rss_before_kib = before,
+                    rss_after_kib = after,
+                    rss_delta_kib = delta,
+                    threshold_kib = threshold,
+                    "plugin dispatch increased process RSS"
+                );
+            }
+        }
+        result
     }
 
     /// Send a dispatch to the worker thread and await the result.
@@ -530,6 +584,21 @@ impl EntityPlugin {
             Ok(None)
         }
     }
+}
+
+fn memory_growth_log_threshold_kib() -> u64 {
+    std::env::var("MA_MEMORY_GROWTH_LOG_THRESHOLD_KIB")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(16 * 1024)
+}
+
+fn current_rss_kib() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    status.lines().find_map(|line| {
+        let value = line.strip_prefix("VmRSS:")?;
+        value.split_whitespace().next()?.parse().ok()
+    })
 }
 
 fn run_native_lifecycle(

@@ -99,11 +99,24 @@ async fn dispatch_management(message: &ma_core::Message, ctx: &CrudHandlerCtx) -
         .await;
     }
 
+    let payload = message.payload();
+    if payload.is_empty() {
+        let reason = "empty CRUD payload";
+        tracing::error!(
+            from = %message.from,
+            to = %message.to,
+            id = %message.id,
+            message_type = %message.message_type,
+            "CRUD message rejected: empty payload"
+        );
+        return helpers::send_crud_error(message, MESSAGE_TYPE_CRUD_REPLY, ctx, reason).await;
+    }
+
     let path_owned: String;
     let tail_owned: Option<String>;
     let args: Vec<CborValue>;
 
-    match helpers::decode_crud_payload(&message.payload())? {
+    match helpers::decode_crud_payload(&payload)? {
         helpers::CrudOp::Get(path) => {
             path_owned = path;
             tail_owned = None;

@@ -8,7 +8,7 @@ use ma_core::{
     ipfs_add, Did, DidDocumentResolver, IpfsGatewayResolver, Ipld, SigningKey, CONTENT_TYPE_TERM,
     MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::acl::{check_full, AclCache, AclMap, GroupCache, CAP_RPC};
 use crate::entity::{
@@ -120,6 +120,20 @@ async fn apply_behaviour_request(req: SetBehaviourRequest, ctx: &RpcHandlerCtx) 
         .as_deref()
         .map(normalize_behaviour_cid)
         .transpose()?;
+    let current_entity = ctx.entity_registry.read().await.get(&req.fragment).cloned();
+    if let Some(current) = current_entity {
+        match current.trigger_save(&ctx.kubo_rpc_url).await {
+            Ok(Some(state_cid)) => {
+                ctx.manifest_writer
+                    .set_entity_state(&req.fragment, &state_cid)
+                    .await?;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(fragment = %req.fragment, error = %e, "ma_set_behaviour: failed to persist current entity state before reload");
+            }
+        }
+    }
     let updated_node =
         load_entity_node_for_update(ctx, &req.fragment, behaviour_cid.as_deref()).await?;
     let kind_node = ctx
@@ -225,8 +239,21 @@ pub async fn handle_rpc_message(
         ));
     }
 
-    let term: CborValue = ciborium::de::from_reader(message.payload().as_slice())
-        .context("invalid CBOR in RPC message")?;
+    let payload = message.payload();
+    if payload.is_empty() {
+        let reason = "empty RPC payload";
+        error!(
+            from = %message.from,
+            to = %message.to,
+            id = %message.id,
+            message_type = %message.message_type,
+            "RPC message rejected: empty payload"
+        );
+        return send_rpc_error_reply(message, ctx, reason);
+    }
+
+    let term: CborValue =
+        ciborium::de::from_reader(payload.as_slice()).context("invalid CBOR in RPC message")?;
 
     // Fragment routing: entity plugin dispatch.
     if let Some(fragment) = extract_fragment(&message.to, &ctx.our_did) {
@@ -321,6 +348,16 @@ async fn handle_entity_plugin_message(
         }
         _ => None,
     };
+    info!(
+        fragment = %entity.fragment,
+        from = %message.from,
+        to = %message.to,
+        id = %message.id,
+        reply_to = ?message.reply_to,
+        verb = ?verb_str,
+        term = ?term,
+        "entity RPC dispatch"
+    );
 
     // Empty acl field → deny-all (fail-closed). Matches EntityNode.acl doc contract.
     if entity.acl.is_empty() {

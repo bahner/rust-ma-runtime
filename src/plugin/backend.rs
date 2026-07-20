@@ -303,6 +303,13 @@ pub(super) fn wasm_call_timeout() -> std::time::Duration {
     env_secs("MA_WASM_CALL_TIMEOUT_SECS", 30)
 }
 
+fn wasm_max_pages() -> u32 {
+    std::env::var("MA_WASM_MAX_PAGES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4096)
+}
+
 fn env_bytes(var: &str, default: u64) -> u64 {
     std::env::var(var)
         .ok()
@@ -549,6 +556,7 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
     );
 
     let manifest = Manifest::new([Wasm::data(cfg.wasm_bytes.clone())])
+        .with_memory_max(wasm_max_pages())
         .with_timeout(wasm_call_timeout())
         .with_config(build_plugin_config(cfg).into_iter());
     let plugin = PluginBuilder::new(manifest)
