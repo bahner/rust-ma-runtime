@@ -9,7 +9,7 @@ use ma_core::{
     Did, DidDocumentResolver, IpfsGatewayResolver, Ipld, CONTENT_TYPE_TERM, CONTENT_TYPE_TERM_CBOR,
     CONTENT_TYPE_TERM_YAML,
 };
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::entity::{EntityNode, KindNode, RuntimeManifest};
 
@@ -450,7 +450,7 @@ pub(super) fn spawn_entity_reload(
                                 .await
                             {
                                 Ok(root_cid) => {
-                                    debug!(name = %name, cid = %new_cid, root_cid = %root_cid, "updated entity lifecycle in manifest");
+                                    info!(name = %name, cid = %new_cid, root_cid = %root_cid, "updated entity lifecycle in manifest");
                                 }
                                 Err(e) => {
                                     warn!(name = %name, error = %e, "failed to update manifest with new entity lifecycle CID");

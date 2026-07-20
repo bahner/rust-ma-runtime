@@ -18,7 +18,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{anyhow, Context, Result};
 use ma_core::{cat_bytes, ipfs_add};
 use tokio::sync::{mpsc::UnboundedSender, oneshot, RwLock};
-use tracing::debug;
+use tracing::info;
 
 use crate::entity::{
     CastInput, CreateEntityRequest, EntityNode, Evaluator, KindNode, Lifecycle, PluginKind,
@@ -295,7 +295,7 @@ impl EntityPlugin {
             &kind_node.cid
         {
             let wasm_cid = shared_cid.cid.clone();
-            debug!(fragment = %fragment, cid = %wasm_cid, kind = ?kind, wasi = wasi, "loading entity plugin (shared binary)");
+            info!(fragment = %fragment, cid = %wasm_cid, kind = ?kind, wasi = wasi, "loading entity plugin (shared binary)");
             let wasm_bytes = cat_bytes(kubo_url, &wasm_cid)
                 .await
                 .with_context(|| format!("fetching wasm for '{fragment}' from {wasm_cid}"))?;
@@ -358,7 +358,7 @@ impl EntityPlugin {
                         kind_node.protocol
                     )
                 })?;
-            debug!(fragment = %fragment, cid = %entity_cid, kind = ?kind, wasi = wasi, "loading entity plugin (own binary via behaviour)");
+            info!(fragment = %fragment, cid = %entity_cid, kind = ?kind, wasi = wasi, "loading entity plugin (own binary via behaviour)");
             let wasm_bytes = cat_bytes(kubo_url, &entity_cid)
                 .await
                 .with_context(|| format!("fetching wasm for '{fragment}' from {entity_cid}"))?;
