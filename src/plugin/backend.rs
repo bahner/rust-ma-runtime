@@ -554,6 +554,7 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
     let plugin = PluginBuilder::new(manifest)
         .with_functions(host_fns)
         .with_wasi(cfg.wasi)
+        .with_cache_disabled()
         .with_wasmtime_config(wasmtime_config())
         .build()
         .map_err(|e| anyhow!("failed to create extism plugin for '{}': {e}", cfg.fragment))?;
