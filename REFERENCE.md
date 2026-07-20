@@ -731,8 +731,10 @@ persist across restarts because they live in IPFS.
 | `i18n_cid` | string | IPFS CID of the compiled locale DAG-CBOR node (set by `make src/i18n.yaml`) |
 | other | any | Free-form runtime metadata |
 
-Runtime root CID publishing uses a deterministic Kubo key alias derived from the
-`runtime_ipns` key in `SecretBundle`.
+Runtime-owned IPNS keys use deterministic Kubo aliases with the local runtime
+slug so multiple local runtimes can share one Kubo daemon. The runtime DID
+document uses `ma-runtime-<slug>-<hash>`; the internal `runtime_ipns` manifest
+root uses `ma-runtime-<slug>-runtime-<hash>`.
 
 ---
 

@@ -263,6 +263,7 @@ async fn main() -> Result<()> {
     // Først: bygg ma-extension uten runtime-link for å få DID
     let ma_base = endpoint
         .ma_extension()
+        .kind("runtime")
         .extra("protocol", Ipld::String("/ma/runtime/0.0.1".to_string()));
     let our_document_base = secrets
         .build_document(ma_base.clone())
@@ -302,12 +303,14 @@ async fn main() -> Result<()> {
 
     let ipns_key = secrets.ipns_secret_key.to_vec();
     let kubo_url_clone = config.kubo_rpc_url.clone();
+    let runtime_slug = config.slug.clone();
     let did_for_log = our_did.clone();
     tokio::spawn(async move {
         let result = tokio::time::timeout(
             Duration::from_secs(did_publish_timeout_secs),
             ipfs::do_publish_own_document(
                 kubo_url_clone,
+                runtime_slug,
                 doc_cbor,
                 ipns_key,
                 did_publish_lifetime_hours,
@@ -649,6 +652,7 @@ async fn main() -> Result<()> {
     republish::spawn_periodic_did_publish(
         stats.clone(),
         config.kubo_rpc_url.clone(),
+        config.slug.clone(),
         ma_base.clone(),
         runtime_ipns_key,
         config.effective_secret_bundle()?,
@@ -692,6 +696,7 @@ async fn main() -> Result<()> {
         signing_key,
         avatar_key,
         runtime_ipns_key,
+        config.slug.clone(),
         did_publish_timeout_secs,
         did_publish_lifetime_hours,
         cli.poll_ms,

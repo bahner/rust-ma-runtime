@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
+use ma_core::ipfs::ipns_key_name_for_parts;
 use ma_core::ipfs::IpfsDidPublisher;
-use ma_core::ipfs::MA_IPNS_ALIAS_HASH_PREFIX;
 use ma_core::ipfs_add;
 use ma_core::{
     ipns_from_secret, resolve_endpoint_for_protocol, validate_identity_publish_message,
@@ -61,6 +61,7 @@ pub struct IpfsHandlerCtx<'a> {
 
 pub async fn do_publish_own_document(
     kubo_url: String,
+    runtime_slug: String,
     doc_cbor: Vec<u8>,
     ipns_secret_key: Vec<u8>,
     publish_lifetime_hours: u64,
@@ -77,9 +78,7 @@ pub async fn do_publish_own_document(
         .map_err(|e| anyhow!("invalid own DID document dag-cbor: {e}"))?;
     let document_did = Did::try_from(document.id.as_str())
         .map_err(|e| anyhow!("invalid own DID '{}': {e}", document.id))?;
-
-    let hash = blake3::hash(document_did.ipns.as_bytes());
-    let key_name = format!("{}{}", MA_IPNS_ALIAS_HASH_PREFIX, &hash.to_hex()[..16]);
+    let key_name = ipns_key_name_for_parts(&["runtime", &runtime_slug], &document_did.ipns);
 
     ensure_kubo_ipns_key(&kubo_url, &key_name, &document_did.ipns, &ipns_secret_key).await?;
     let cid = dag_put_cbor(&kubo_url, &doc_cbor).await?;
@@ -113,14 +112,14 @@ pub async fn resolve_runtime_root_cid_by_ipns_id(
 /// into Kubo on first use (idempotent).
 pub async fn publish_runtime_root_cid(
     kubo_url: &str,
+    runtime_slug: &str,
     runtime_ipns_key: &[u8; 32],
     root_cid: &str,
     publish_lifetime_hours: u64,
 ) -> Result<String> {
     let runtime_ipns_id =
         ipns_from_secret(*runtime_ipns_key).context("failed to derive runtime IPNS id")?;
-    let hash = blake3::hash(runtime_ipns_id.as_bytes());
-    let key_name = format!("{}{}", MA_IPNS_ALIAS_HASH_PREFIX, &hash.to_hex()[..16]);
+    let key_name = ipns_key_name_for_parts(&["runtime", runtime_slug, "runtime"], &runtime_ipns_id);
     ensure_kubo_ipns_key(kubo_url, &key_name, &runtime_ipns_id, runtime_ipns_key).await?;
     name_publish(kubo_url, &key_name, root_cid, publish_lifetime_hours).await
 }

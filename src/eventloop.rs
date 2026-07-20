@@ -64,6 +64,7 @@ pub async fn run(
     signing_key: SigningKey,
     avatar_key: [u8; 32],
     runtime_ipns_key: [u8; 32],
+    runtime_slug: String,
     did_publish_timeout_secs: u64,
     did_publish_lifetime_hours: u64,
     poll_ms: u64,
@@ -342,6 +343,7 @@ pub async fn run(
                         Duration::from_secs(did_publish_timeout_secs),
                         ipfs::publish_runtime_root_cid(
                             &kubo_url,
+                            &runtime_slug,
                             &runtime_ipns_key,
                             &latest_root_cid,
                             did_publish_lifetime_hours,

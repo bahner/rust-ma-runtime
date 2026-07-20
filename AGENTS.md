@@ -132,7 +132,7 @@ axum = { version = "0.7", default-features = false, features = ["http1", "tokio"
 ciborium = "0.2"
 clap = { version = "4", features = ["derive"] }
 directories = "5"
-ma-core = { version = "0.10.15", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
+ma-core = { version = "0.12", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
 serde_json = "1"
 serde_yaml = "0.9"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
@@ -140,12 +140,8 @@ tracing = "0.1"
 zeroize = "1"
 ```
 
-`ma-core 0.10.10` exposes everything this daemon uses for DID handling, so no
+`ma-core 0.12` exposes everything this daemon uses for DID handling, so no
 direct `ma-did` dependency is required.
-
-> **Development note:** A `[patch.crates-io] ma-core = { path = "../rust-ma-core" }`
-> is active in `Cargo.toml` during development. Remove the patch and update the
-> version when publishing.
 
 ## Configuration
 
