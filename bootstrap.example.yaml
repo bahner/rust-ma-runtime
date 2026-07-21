@@ -118,5 +118,5 @@ runtime:
       kind: /ma/scheduler/0.0.1
       acl: scheduler
 
-    # #root, #house, #avatar deferred — add scheme-actor entities here later
+    # #root and #avatar deferred — add scheme-actor entities here later
     # (each needs its own published .ma source CID; see HOWTO.md Step 10).

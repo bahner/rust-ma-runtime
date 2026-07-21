@@ -266,7 +266,7 @@ struct AvatarIdCtx {
 // The key is derived from the runtime's IPNS secret, so:
 //   - Same DID → same avatar_id within this runtime (deterministic across restarts).
 //   - Different runtimes → different avatar_ids (privacy across worlds).
-//   - The DID is never stored by house/avatar plugins; only the avatar_id is kept.
+//   - The DID is never stored by avatar plugins; only the avatar_id is kept.
 host_fn!(ma_avatar_id_fn(user_data: AvatarIdCtx; input: Vec<u8>) -> Vec<u8> {
     let did = String::from_utf8(input)
         .map_err(|e| extism::Error::msg(format!("ma_avatar_id: invalid UTF-8: {e}")))?;

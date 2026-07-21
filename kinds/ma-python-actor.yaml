@@ -1,6 +1,6 @@
 # Generic "bring-your-own-compiled-actor" template for Python.
 #
-# Unlike avatar/house/room/root/counter/register/set (which each share ONE
+# Unlike avatar/room/root/counter/register/set (which each share ONE
 # published Wasm binary across every entity of the kind), this kind has NO
 # shared `cid` — every entity you create from it supplies its OWN,
 # independently compiled Wasm binary via `EntityNode.behaviour` (see
