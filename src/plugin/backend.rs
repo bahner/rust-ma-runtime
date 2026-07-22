@@ -151,16 +151,42 @@ struct CreateEntityInput {
     fragment_hint: Option<String>,
 }
 
+const ENTITY_FRAGMENT_CONTEXT: &str = "ma entity-fragment v1";
+
+/// Derive a deterministic, URL-safe lower-hex ID from a keyed blake3 hash of
+/// `context || NUL || hint`.
+fn context_derived_id(key: &[u8; 32], context: &str, hint: &str, bytes: usize) -> String {
+    let mut input = Vec::with_capacity(context.len() + 1 + hint.len());
+    input.extend_from_slice(context.as_bytes());
+    input.push(0);
+    input.extend_from_slice(hint.as_bytes());
+    let hash = blake3::keyed_hash(key, &input);
+    bytes_to_hex(&hash.as_bytes()[..bytes])
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        hex.push(b"0123456789abcdef"[(b >> 4) as usize] as char);
+        hex.push(b"0123456789abcdef"[(b & 0x0f) as usize] as char);
+    }
+    hex
+}
+
 /// Derive a deterministic, URL-safe 16-character fragment from a keyed blake3
 /// hash of `hint`.  The result is the lower-hex encoding of the first 8 bytes
 /// of the hash output — 64 bits of keyed pseudorandom output is ample for
 /// uniqueness across any realistic number of entities.
 fn fragment_from_hint(key: &[u8; 32], hint: &str) -> String {
     let hash = blake3::keyed_hash(key, hint.as_bytes());
-    hash.as_bytes()[..8]
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    bytes_to_hex(&hash.as_bytes()[..8])
+}
+
+fn derived_id(key: &[u8; 32], context: &str, hint: &str, bytes: usize) -> String {
+    if context == ENTITY_FRAGMENT_CONTEXT && bytes == 8 {
+        return fragment_from_hint(key, hint);
+    }
+    context_derived_id(key, context, hint, bytes)
 }
 
 host_fn!(ma_create_entity_fn(user_data: CreateEntityCtx; input: Vec<u8>) -> Vec<u8> {
@@ -252,6 +278,29 @@ host_fn!(ma_entity_exists_fn(user_data: EntityExistsCtx; input: Vec<u8>) -> Vec<
         .as_deref()
         .is_some_and(|fragment| registry.blocking_read().contains_key(fragment));
     Ok(if exists { b"true".to_vec() } else { b"false".to_vec() })
+});
+
+// ── ma_derived_id host function ──────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct DerivedIdInput {
+    context: String,
+    hint: String,
+    bytes: u8,
+}
+
+// `ma_derived_id` host function: compute a runtime-scoped deterministic ID.
+//
+// Input is CBOR-encoded `{ "context": text, "hint": text, "bytes": int }`.
+// Output is raw UTF-8 lower-hex, two chars per requested byte.
+host_fn!(ma_derived_id_fn(user_data: AvatarIdCtx; input: Vec<u8>) -> Vec<u8> {
+    let req: DerivedIdInput = from_cbor_bytes(&input)?;
+    if req.bytes == 0 || req.bytes > 32 {
+        return Err(extism::Error::msg("ma_derived_id: bytes must be in 1..=32"));
+    }
+    let arc = user_data.get()?;
+    let key = arc.lock().unwrap().key;
+    Ok(derived_id(&key, &req.context, &req.hint, req.bytes as usize).into_bytes())
 });
 
 fn entity_fragment(target: &str, our_did: &str) -> Option<String> {
@@ -657,7 +706,7 @@ fn build_host_functions(
                 "ma_avatar_id",
                 [PTR],
                 [PTR],
-                ctx.avatar_id_ctx,
+                ctx.avatar_id_ctx.clone(),
                 ma_avatar_id_fn,
             ),
         ),
@@ -709,6 +758,16 @@ fn build_host_functions(
                 [PTR],
                 ctx.entity_exists_ctx,
                 ma_entity_exists_fn,
+            ),
+        ),
+        (
+            "ma_derived_id",
+            Function::new(
+                "ma_derived_id",
+                [PTR],
+                [PTR],
+                ctx.avatar_id_ctx,
+                ma_derived_id_fn,
             ),
         ),
     ];
@@ -1014,7 +1073,7 @@ fn from_cbor_bytes<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::generate_fragment;
+    use super::{derived_id, fragment_from_hint, generate_fragment, ENTITY_FRAGMENT_CONTEXT};
 
     #[test]
     fn generate_fragment_is_8_alphanumeric() {
@@ -1027,5 +1086,16 @@ mod tests {
     fn generate_fragment_varies() {
         let set: std::collections::HashSet<_> = (0..5).map(|_| generate_fragment()).collect();
         assert!(set.len() > 1, "fragments should not all be identical");
+    }
+
+    #[test]
+    fn fragment_from_hint_uses_entity_fragment_derivation() {
+        let key = [7; 32];
+        let hint = "did:ma:k51user";
+        assert_eq!(
+            fragment_from_hint(&key, hint),
+            derived_id(&key, ENTITY_FRAGMENT_CONTEXT, hint, 8)
+        );
+        assert_eq!(fragment_from_hint(&key, hint).len(), 16);
     }
 }
