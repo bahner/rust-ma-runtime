@@ -280,7 +280,7 @@ pub async fn handle_rpc_message(
         };
     }
 
-    // Unfragmented: only :ping.
+    // Unfragmented: root runtime verbs.
     let ping_text = match &term {
         CborValue::Text(s) => s.as_str(),
         _ => {
@@ -294,7 +294,40 @@ pub async fn handle_rpc_message(
             .context("encode :pong")?;
         return send_rpc_reply(message, ctx, &pong);
     }
+    if ping_text == ":name" {
+        let value = runtime_config_text_value(ctx, "name").await?;
+        let mut payload = Vec::new();
+        ciborium::ser::into_writer(&CborValue::Text(value), &mut payload)
+            .context("encode :name reply")?;
+        return send_rpc_reply(message, ctx, &payload);
+    }
+    if ping_text == ":description" {
+        let value = runtime_config_text_value(ctx, "description").await?;
+        let mut payload = Vec::new();
+        ciborium::ser::into_writer(&CborValue::Text(value), &mut payload)
+            .context("encode :description reply")?;
+        return send_rpc_reply(message, ctx, &payload);
+    }
     send_rpc_i18n_error(message, ctx, "rpc-unknown-verb").await
+}
+
+async fn runtime_config_text_value(ctx: &RpcHandlerCtx, key: &str) -> Result<String> {
+    let root_cid = ctx
+        .stats
+        .read()
+        .await
+        .root_cid
+        .clone()
+        .ok_or_else(|| anyhow!("no manifest root CID available"))?;
+    let manifest: crate::entity::RuntimeManifest =
+        crate::kubo::dag_get(&ctx.kubo_rpc_url, &root_cid).await?;
+
+    match manifest.config.get(key).and_then(serde_yaml::Value::as_str) {
+        Some(value) => Ok(value.to_string()),
+        None => crate::crud::config::default_manifest_config_value(key)
+            .and_then(|value| value.as_str().map(str::to_string))
+            .ok_or_else(|| anyhow!("config key not found: {key}")),
+    }
 }
 
 // ── Fragment extraction ────────────────────────────────────────────────────────

@@ -717,9 +717,20 @@ pub async fn bootstrap_minimal_manifest(
     let mut grp = std::collections::HashMap::new();
     grp.insert("owners".to_string(), IpldLink::new(&owners_cid));
 
+    let mut config = std::collections::BTreeMap::new();
+    config.insert(
+        "name".to_string(),
+        serde_yaml::Value::String(crate::crud::config::DEFAULT_RUNTIME_NAME.to_string()),
+    );
+    config.insert(
+        "description".to_string(),
+        serde_yaml::Value::String(crate::crud::config::DEFAULT_RUNTIME_DESCRIPTION.to_string()),
+    );
+
     let manifest = RuntimeManifest {
         acl: Some(IpldLink::new(&acl_cid)),
         grp,
+        config,
         ..Default::default()
     };
 

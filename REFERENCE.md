@@ -104,7 +104,7 @@ document to IPFS/IPNS, and then enters the main event loop.
 ```
 zion (browser WASM) ──iroh QUIC──► /ma/rpc/0.0.1
                                        │
-                                       ├─ (unfragmented) → ping
+                                       ├─ (unfragmented) → ping, name, description
                                        └─ #<name>        → Wasm plugin dispatch
                    ──iroh QUIC──► /ma/crud/0.0.1
                                        │
@@ -414,10 +414,18 @@ DELETE: [":delete", ".ns.key"]
 | `:config` | Get entire config map | — | — |
 | `:config.<key>` | Get value | Set value | Delete key |
 
-#### Ping (RPC)
+#### Root RPC metadata lookups
 
-Send `:ping` as a CBOR atom on `/ma/rpc/0.0.1` to any entity fragment
-(`did:ma:<runtime>#ping`) — the entity plugin handles it.
+Send a CBOR text atom to the bare runtime DID on `/ma/rpc/0.0.1`:
+
+| Verb | Reply | Backing config key | Default |
+|------|-------|--------------------|---------|
+| `:ping` | `:pong` | — | — |
+| `:name` | runtime name string | `config.name` | `間trix` |
+| `:description` | runtime description string | `config.description` | `A 間 runtime with a lazy owner.` |
+
+`name` and `description` are read via root RPC for display/discovery, but are
+still changed through CRUD (`:config.name:` and `:config.description:`).
 
 #### From zion terminal
 
@@ -439,6 +447,10 @@ Send `:ping` as a CBOR atom on `/ma/rpc/0.0.1` to any entity fragment
 
 # set a config key
 @sky:config.poll_interval_ms: 250
+
+# set runtime name/description (reflected by @sky:name / @sky:description)
+@sky:config.name: "間trix"
+@sky:config.description: "A 間 runtime with a lazy owner."
 ```
 
 ### Plugin ABI
@@ -740,6 +752,8 @@ persist across restarts because they live in IPFS.
 
 | Key | Type | Description |
 |-----|------|-------------|
+| `name` | string | Runtime display name, used by root RPC `:name` (default `間trix`). |
+| `description` | string | Runtime description text, used by root RPC `:description` (default `A 間 runtime with a lazy owner.`). |
 | `i18n` | string | Active language BCP-47 tag (e.g. `nb`, `zh-Hans`). Setting via `:config.i18n: nb` reloads translations immediately. |
 | `i18n_cid` | string | IPFS CID of the compiled locale DAG-CBOR node (set by `make src/i18n.yaml`) |
 | other | any | Free-form runtime metadata |

@@ -86,6 +86,15 @@ pub fn runtime_manifest_config(
     let mut out = std::collections::BTreeMap::new();
 
     out.insert(
+        "name".to_string(),
+        serde_yaml::Value::String(crate::crud::config::DEFAULT_RUNTIME_NAME.to_string()),
+    );
+    out.insert(
+        "description".to_string(),
+        serde_yaml::Value::String(crate::crud::config::DEFAULT_RUNTIME_DESCRIPTION.to_string()),
+    );
+
+    out.insert(
         "did_resolver_positive_ttl_secs".to_string(),
         serde_yaml::Value::from(get_u64_setting(
             config,

@@ -32,6 +32,8 @@ const MANIFEST_CONFIG_KEYS: &[&str] = &[
     "root",
     "start",
     "zion",
+    "name",
+    "description",
     "i18n",
     "did_document_publishing_interval_secs",
     "did_document_publishing_timeout_secs",
@@ -43,6 +45,20 @@ const MANIFEST_CONFIG_KEYS: &[&str] = &[
 
 pub const DEFAULT_ZION_SOURCE: &str =
     "/ipns/k51qzi5uqu5djnoah9igllgb3zsn0sfy75glxdjf8glaozybubkm13nuqbfvpm";
+
+pub const DEFAULT_RUNTIME_NAME: &str = "間trix";
+pub const DEFAULT_RUNTIME_DESCRIPTION: &str = "A 間 runtime with a lazy owner.";
+
+pub fn default_manifest_config_value(key: &str) -> Option<serde_yaml::Value> {
+    match key {
+        "zion" => Some(serde_yaml::Value::String(DEFAULT_ZION_SOURCE.to_string())),
+        "name" => Some(serde_yaml::Value::String(DEFAULT_RUNTIME_NAME.to_string())),
+        "description" => Some(serde_yaml::Value::String(
+            DEFAULT_RUNTIME_DESCRIPTION.to_string(),
+        )),
+        _ => None,
+    }
+}
 
 /// Keys that are never exposed or writable via CRUD.
 /// Any key beginning with `secret` is also blocked dynamically.
@@ -119,6 +135,15 @@ pub fn public_plugin_config(
         let value = daemon_config_key_value_pub(cfg, key);
         if let Some(value) = yaml_config_value_to_string(&value) {
             out.insert((*key).to_string(), value);
+        }
+    }
+    for key in ["name", "description"] {
+        if !out.contains_key(key) {
+            if let Some(value) = default_manifest_config_value(key)
+                .and_then(|value| yaml_config_value_to_string(&value))
+            {
+                out.insert(key.to_string(), value);
+            }
         }
     }
     out
@@ -255,9 +280,11 @@ pub(super) async fn handle_config_ns(
             (None, []) => {
                 let manifest = load_manifest(ctx).await?;
                 let mut combined = manifest.config.clone();
-                combined
-                    .entry("zion".to_string())
-                    .or_insert_with(|| serde_yaml::Value::String(DEFAULT_ZION_SOURCE.to_string()));
+                for key in ["zion", "name", "description"] {
+                    if let Some(default_value) = default_manifest_config_value(key) {
+                        combined.entry(key.to_string()).or_insert(default_value);
+                    }
+                }
                 {
                     let cfg = ctx.shared_config.read().await;
                     for key in DAEMON_CONFIG_KEYS {
@@ -302,12 +329,13 @@ pub(super) async fn handle_config_ns(
                 let manifest = load_manifest(ctx).await?;
                 match manifest.config.get(key.as_str()) {
                     Some(v) => v.clone(),
-                    None if key == "zion" => {
-                        serde_yaml::Value::String(DEFAULT_ZION_SOURCE.to_string())
-                    }
-                    None => {
-                        return send_crud_error(message, reply_type, ctx, "config-not-found").await;
-                    }
+                    None => match default_manifest_config_value(key) {
+                        Some(default_value) => default_value,
+                        None => {
+                            return send_crud_error(message, reply_type, ctx, "config-not-found")
+                                .await;
+                        }
+                    },
                 }
             };
             if let serde_yaml::Value::String(ref s) = val {
@@ -426,7 +454,10 @@ pub(super) async fn handle_config_ns(
 
 #[cfg(test)]
 mod tests {
-    use super::{cbor_to_yaml, is_protected_config_key_pub, public_plugin_config};
+    use super::{
+        cbor_to_yaml, default_manifest_config_value, is_protected_config_key_pub,
+        public_plugin_config, DEFAULT_RUNTIME_DESCRIPTION, DEFAULT_RUNTIME_NAME,
+    };
     use ciborium::Value as CborValue;
     use ma_core::Config;
 
@@ -524,8 +555,29 @@ mod tests {
             view.get("kubo_rpc_url").map(String::as_str),
             Some("http://127.0.0.1:5001")
         );
+        assert_eq!(
+            view.get("name").map(String::as_str),
+            Some(DEFAULT_RUNTIME_NAME)
+        );
+        assert_eq!(
+            view.get("description").map(String::as_str),
+            Some(DEFAULT_RUNTIME_DESCRIPTION)
+        );
         assert!(!view.contains_key("absent"));
         assert!(!view.contains_key("secret_bundle_passphrase"));
         assert!(!view.contains_key("config_path"));
+    }
+
+    #[test]
+    fn default_manifest_config_value_exposes_runtime_metadata_defaults() {
+        assert_eq!(
+            default_manifest_config_value("name").and_then(|v| v.as_str().map(str::to_string)),
+            Some(DEFAULT_RUNTIME_NAME.to_string())
+        );
+        assert_eq!(
+            default_manifest_config_value("description")
+                .and_then(|v| v.as_str().map(str::to_string)),
+            Some(DEFAULT_RUNTIME_DESCRIPTION.to_string())
+        );
     }
 }
