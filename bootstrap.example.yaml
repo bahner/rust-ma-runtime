@@ -38,7 +38,8 @@ runtime:
       "+owners": ["*"]
       "*": []
     scheduler:
-      "#": [handle_cast]
+      "*": [":help"]
+      "#": [":cron", ":interval", ":at", ":random"]
 
   # Root transport-gate ACL.
   # Published to IPFS at bootstrap; loaded at startup when no --acl-file is given.

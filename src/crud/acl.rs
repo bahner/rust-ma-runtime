@@ -5,8 +5,8 @@ use tracing::info;
 use crate::entity::IpldLink;
 
 use super::helpers::{
-    acl_cache_update, load_manifest, resolve_ipfs_ref, send_crud_error, send_crud_i18n_error,
-    send_crud_ok_cid, send_crud_reply_cbor, with_manifest_crud,
+    load_manifest, resolve_ipfs_ref, send_crud_error, send_crud_i18n_error, send_crud_ok_cid,
+    send_crud_reply_cbor, with_manifest_crud,
 };
 use super::CrudHandlerCtx;
 
@@ -58,6 +58,13 @@ pub(super) async fn handle_root_acls(
             let Some(cid) = resolve_ipfs_ref(&ctx.kubo_rpc_url, raw).await? else {
                 return send_crud_i18n_error(message, reply_type, ctx, "cidv1-required").await;
             };
+            // Validate ACL document shape before accepting it as a named ACL.
+            // This prevents silent cache misses later during entity dispatch.
+            let acl_map = crate::acl::load_acl_from_cid(&ctx.kubo_rpc_url, &cid)
+                .await
+                .with_context(|| {
+                    format!("loading named ACL '{acl_name}' from /ipfs/{cid}")
+                })?;
             let acl_name = acl_name.clone();
             let new_root = with_manifest_crud(ctx, |m| {
                 m.acls.insert(acl_name.clone(), IpldLink::new(&cid));
@@ -65,7 +72,7 @@ pub(super) async fn handle_root_acls(
             })
             .await?;
             let cache_key = format!("acls.{acl_name}");
-            acl_cache_update(ctx, &cache_key, &cid).await;
+            ctx.acl_cache.write().await.insert(cache_key, acl_map);
             send_crud_ok_cid(message, reply_type, ctx, &new_root).await
         }
         // Delete a named ACL.

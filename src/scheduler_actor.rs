@@ -24,15 +24,15 @@
 //! ## ACL
 //!
 //! `#scheduler` uses the `"scheduler"` ACL entry from the root manifest.
-//! The default ACL (`default.acl`) restricts registration to local entities
-//! only (`"#": [handle_cast]`).  Remote peers cannot register schedules
-//! unless the operator explicitly opens the ACL.
+//! A typical ACL grants `:help` to everyone while keeping registration verbs
+//! local-only, for example `"*": [":help"]` together with
+//! `"#": [":cron", ":interval", ":at", ":random"]`.
 //!
 //! ## Kind
 //!
 //! Kind protocol: [`SCHEDULER_KIND`] (`/ma/scheduler/0.0.1`)
 //! Evaluator: `native`
-//! API: `["handle_cast"]`
+//! Dispatch surface: `on_message`
 
 use std::sync::Arc;
 use std::{collections::HashMap, sync::Mutex};
@@ -62,139 +62,23 @@ pub fn native_actor(
     sched: Arc<tokio_cron_scheduler::JobScheduler>,
     ctx: SchedulerCtx,
 ) -> NativeActor {
-    // Stable map from <msg.from>-<name> to tracked scheduler job metadata.
-    let jobs_by_schedule = Arc::new(Mutex::new(HashMap::<String, TrackedJob>::new()));
+    let schedule_registry = ScheduleRegistry::new();
     NativeActor::new(move |input: &CastInput| -> Result<DispatchResult> {
         let term: CborValue = ciborium::de::from_reader(input.msg.content.as_slice())
             .map_err(|e| anyhow!("scheduler: invalid CBOR in message: {e}"))?;
 
         if is_help_request(&term) {
-            let mut out = Vec::new();
-            ciborium::ser::into_writer(&CborValue::Text(scheduler_help_text().to_string()), &mut out)
-                .map_err(|e| anyhow!("scheduler: CBOR encode help: {e}"))?;
-            return Ok(DispatchResult {
-                output: out,
-                pending_state: None,
-                create_requests: vec![],
-                delete_requests: vec![],
-                behaviour_requests: vec![],
-            });
+            return help_dispatch_result();
         }
 
         let req = parse_schedule_request(term, &input.msg.from)?;
-
-        let sched = Arc::clone(&sched);
-        let ctx = ctx.clone();
-        let jobs_by_schedule = Arc::clone(&jobs_by_schedule);
-        let from = input.msg.from.clone();
-        tokio::spawn(async move {
-            let (new_version, previous_job) = {
-                let mut map = jobs_by_schedule.lock().expect("jobs map poisoned");
-                let previous = map.get(&req.schedule_key).copied();
-                let version = previous.map_or(1, |entry| entry.version.saturating_add(1));
-                map.insert(
-                    req.schedule_key.clone(),
-                    TrackedJob {
-                        version,
-                        job_id: None,
-                    },
-                );
-                (version, previous.and_then(|entry| entry.job_id))
-            };
-
-            trace!(
-                from = %from,
-                target = %req.fragment,
-                schedule = %req.schedule_key,
-                version = new_version,
-                previous_job = ?previous_job,
-                "scheduler: processing registration"
-            );
-
-            if let Some(job_id) = previous_job {
-                if let Err(e) = sched.remove(&job_id).await {
-                    warn!(from = %from, schedule = %req.schedule_key, error = %e, "scheduler: failed to remove previous schedule job");
-                } else {
-                    trace!(
-                        from = %from,
-                        schedule = %req.schedule_key,
-                        previous_job = %job_id,
-                        "scheduler: removed previous schedule job"
-                    );
-                }
-            }
-
-            let active_guard = make_active_guard(
-                Arc::clone(&jobs_by_schedule),
-                req.schedule_key.clone(),
-                new_version,
-            );
-
-            match register_schedule(
-                &sched,
-                ctx,
-                req.fragment.clone(),
-                Some(req.schedule_key.clone()),
-                Some(active_guard),
-                req.request,
-            )
-            .await
-            {
-                Ok(job_id) => {
-                    let superseded = {
-                        let mut map = jobs_by_schedule.lock().expect("jobs map poisoned");
-                        if map
-                            .get(&req.schedule_key)
-                            .is_some_and(|entry| entry.version == new_version)
-                        {
-                            map.insert(
-                                req.schedule_key.clone(),
-                                TrackedJob {
-                                    version: new_version,
-                                    job_id: Some(job_id),
-                                },
-                            );
-                            false
-                        } else {
-                            true
-                        }
-                    };
-
-                    if superseded {
-                        if let Err(e) = sched.remove(&job_id).await {
-                            warn!(from = %from, schedule = %req.schedule_key, error = %e, "scheduler: failed to remove superseded schedule job");
-                        } else {
-                            trace!(
-                                from = %from,
-                                schedule = %req.schedule_key,
-                                version = new_version,
-                                job_id = %job_id,
-                                "scheduler: removed superseded job registered by stale task"
-                            );
-                        }
-                    } else {
-                        trace!(
-                            from = %from,
-                            target = %req.fragment,
-                            schedule = %req.schedule_key,
-                            version = new_version,
-                            job_id = %job_id,
-                            "scheduler: registered active schedule job"
-                        );
-                    }
-                }
-                Err(e) => {
-                    let mut map = jobs_by_schedule.lock().expect("jobs map poisoned");
-                    if map
-                        .get(&req.schedule_key)
-                        .is_some_and(|entry| entry.version == new_version)
-                    {
-                        map.remove(&req.schedule_key);
-                    }
-                    warn!(target = %req.fragment, from = %from, schedule = %req.schedule_key, error = %e, "scheduler: failed to register schedule");
-                }
-            }
-        });
+        tokio::spawn(process_schedule_registration(
+            Arc::clone(&sched),
+            ctx.clone(),
+            schedule_registry.clone(),
+            input.msg.from.clone(),
+            req,
+        ));
 
         let mut out = Vec::new();
         ciborium::ser::into_writer(&CborValue::Text(":ok".to_string()), &mut out)
@@ -240,16 +124,204 @@ struct TrackedJob {
     job_id: Option<uuid::Uuid>,
 }
 
-fn make_active_guard(
-    jobs_by_schedule: Arc<Mutex<HashMap<String, TrackedJob>>>,
-    schedule_key: String,
+type ScheduleJobs = Arc<Mutex<HashMap<String, TrackedJob>>>;
+
+#[derive(Clone)]
+struct ScheduleRegistry {
+    jobs: ScheduleJobs,
+}
+
+struct RegistrationAttempt {
     version: u64,
-) -> ActiveScheduleGuard {
-    Arc::new(move || {
-        let map = jobs_by_schedule.lock().expect("jobs map poisoned");
-        map.get(&schedule_key)
+    previous_job: Option<uuid::Uuid>,
+}
+
+enum RegistrationCommit {
+    Active,
+    Superseded,
+}
+
+impl ScheduleRegistry {
+    fn new() -> Self {
+        Self {
+            jobs: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn begin_registration(&self, schedule_key: &str) -> RegistrationAttempt {
+        let mut map = self.jobs.lock().expect("jobs map poisoned");
+        let previous = map.get(schedule_key).copied();
+        let version = previous.map_or(1, |entry| entry.version.saturating_add(1));
+        map.insert(
+            schedule_key.to_string(),
+            TrackedJob {
+                version,
+                job_id: None,
+            },
+        );
+        drop(map);
+        RegistrationAttempt {
+            version,
+            previous_job: previous.and_then(|entry| entry.job_id),
+        }
+    }
+
+    fn active_guard(&self, schedule_key: String, version: u64) -> ActiveScheduleGuard {
+        let jobs = Arc::clone(&self.jobs);
+        Arc::new(move || {
+            let map = jobs.lock().expect("jobs map poisoned");
+            map.get(&schedule_key)
+                .is_some_and(|entry| entry.version == version)
+        })
+    }
+
+    fn commit_registration(
+        &self,
+        schedule_key: &str,
+        version: u64,
+        job_id: uuid::Uuid,
+    ) -> RegistrationCommit {
+        let mut map = self.jobs.lock().expect("jobs map poisoned");
+        if map
+            .get(schedule_key)
             .is_some_and(|entry| entry.version == version)
+        {
+            map.insert(
+                schedule_key.to_string(),
+                TrackedJob {
+                    version,
+                    job_id: Some(job_id),
+                },
+            );
+            RegistrationCommit::Active
+        } else {
+            RegistrationCommit::Superseded
+        }
+    }
+
+    fn rollback_registration(&self, schedule_key: &str, version: u64) {
+        let mut map = self.jobs.lock().expect("jobs map poisoned");
+        if map
+            .get(schedule_key)
+            .is_some_and(|entry| entry.version == version)
+        {
+            map.remove(schedule_key);
+        }
+    }
+}
+
+fn help_dispatch_result() -> Result<DispatchResult> {
+    let mut out = Vec::new();
+    ciborium::ser::into_writer(
+        &CborValue::Text(scheduler_help_text().to_string()),
+        &mut out,
+    )
+    .map_err(|e| anyhow!("scheduler: CBOR encode help: {e}"))?;
+    Ok(DispatchResult {
+        output: out,
+        pending_state: None,
+        create_requests: vec![],
+        delete_requests: vec![],
+        behaviour_requests: vec![],
     })
+}
+
+async fn process_schedule_registration(
+    sched: Arc<tokio_cron_scheduler::JobScheduler>,
+    ctx: SchedulerCtx,
+    schedule_registry: ScheduleRegistry,
+    from: String,
+    req: ParsedRequest,
+) {
+    let attempt = schedule_registry.begin_registration(&req.schedule_key);
+
+    trace!(
+        from = %from,
+        target = %req.fragment,
+        schedule = %req.schedule_key,
+        version = attempt.version,
+        previous_job = ?attempt.previous_job,
+        "scheduler: processing registration"
+    );
+
+    if let Some(job_id) = attempt.previous_job {
+        if let Err(e) = sched.remove(&job_id).await {
+            warn!(from = %from, schedule = %req.schedule_key, error = %e, "scheduler: failed to remove previous schedule job");
+        } else {
+            trace!(
+                from = %from,
+                schedule = %req.schedule_key,
+                previous_job = %job_id,
+                "scheduler: removed previous schedule job"
+            );
+        }
+    }
+
+    let active_guard = schedule_registry.active_guard(req.schedule_key.clone(), attempt.version);
+
+    match register_schedule(
+        &sched,
+        ctx,
+        req.fragment.clone(),
+        Some(req.schedule_key.clone()),
+        Some(active_guard),
+        req.request,
+    )
+    .await
+    {
+        Ok(job_id) => {
+            handle_registered_schedule_job(
+                &sched,
+                &schedule_registry,
+                &from,
+                &req.fragment,
+                &req.schedule_key,
+                attempt.version,
+                job_id,
+            )
+            .await;
+        }
+        Err(e) => {
+            schedule_registry.rollback_registration(&req.schedule_key, attempt.version);
+            warn!(target = %req.fragment, from = %from, schedule = %req.schedule_key, error = %e, "scheduler: failed to register schedule");
+        }
+    }
+}
+
+async fn handle_registered_schedule_job(
+    sched: &tokio_cron_scheduler::JobScheduler,
+    schedule_registry: &ScheduleRegistry,
+    from: &str,
+    fragment: &str,
+    schedule_key: &str,
+    new_version: u64,
+    job_id: uuid::Uuid,
+) {
+    match schedule_registry.commit_registration(schedule_key, new_version, job_id) {
+        RegistrationCommit::Superseded => {
+            if let Err(e) = sched.remove(&job_id).await {
+                warn!(from = %from, schedule = %schedule_key, error = %e, "scheduler: failed to remove superseded schedule job");
+            } else {
+                trace!(
+                    from = %from,
+                    schedule = %schedule_key,
+                    version = new_version,
+                    job_id = %job_id,
+                    "scheduler: removed superseded job registered by stale task"
+                );
+            }
+        }
+        RegistrationCommit::Active => {
+            trace!(
+                from = %from,
+                target = %fragment,
+                schedule = %schedule_key,
+                version = new_version,
+                job_id = %job_id,
+                "scheduler: registered active schedule job"
+            );
+        }
+    }
 }
 
 fn is_help_request(term: &CborValue) -> bool {
@@ -262,7 +334,7 @@ fn is_help_request(term: &CborValue) -> bool {
     }
 }
 
-fn scheduler_help_text() -> &'static str {
+const fn scheduler_help_text() -> &'static str {
     "scheduler help\n\
 format: [name, :type, spec, verb_or_array, extra_args...]\n\
 types: :cron, :interval, :at, :random\n\
@@ -388,12 +460,9 @@ fn encode_verb_content(items: &[CborValue]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
-
     use super::{
-        encode_verb_content, is_help_request, make_active_guard, parse_schedule_request,
-        scheduler_help_text, TrackedJob,
+        encode_verb_content, is_help_request, parse_schedule_request, scheduler_help_text,
+        RegistrationCommit, ScheduleRegistry,
     };
     use crate::schedule::ScheduleRequest;
     use ciborium::Value as CborValue;
@@ -514,39 +583,34 @@ mod tests {
     #[test]
     fn random_overwrite_race_disables_stale_generation() {
         let key = "did:ma:abc#duck-quack".to_string();
-        let jobs_by_schedule = Arc::new(Mutex::new(HashMap::<String, TrackedJob>::new()));
-
-        {
-            let mut map = jobs_by_schedule.lock().unwrap();
-            map.insert(
-                key.clone(),
-                TrackedJob {
-                    version: 1,
-                    job_id: None,
-                },
-            );
-        }
-
-        let stale_guard = make_active_guard(Arc::clone(&jobs_by_schedule), key.clone(), 1);
+        let registry = ScheduleRegistry::new();
+        let first = registry.begin_registration(&key);
+        let stale_guard = registry.active_guard(key.clone(), first.version);
 
         // Simulate overwrite race: before stale callback executes, version 2 wins.
-        {
-            let mut map = jobs_by_schedule.lock().unwrap();
-            map.insert(
-                key.clone(),
-                TrackedJob {
-                    version: 2,
-                    job_id: None,
-                },
-            );
-        }
+        let second = registry.begin_registration(&key);
+        assert_eq!(second.version, first.version + 1);
 
         // Stale generation must be blocked both at dispatch and at re-schedule check.
         assert!(!stale_guard());
         assert!(!stale_guard());
 
-        let latest_guard = make_active_guard(Arc::clone(&jobs_by_schedule), key, 2);
+        let latest_guard = registry.active_guard(key, second.version);
         assert!(latest_guard());
+    }
+
+    #[test]
+    fn commit_registration_rejects_stale_version() {
+        let key = "did:ma:abc#duck-quack";
+        let registry = ScheduleRegistry::new();
+        let first = registry.begin_registration(key);
+        let second = registry.begin_registration(key);
+
+        let first_commit = registry.commit_registration(key, first.version, uuid::Uuid::nil());
+        let second_commit = registry.commit_registration(key, second.version, uuid::Uuid::nil());
+
+        assert!(matches!(first_commit, RegistrationCommit::Superseded));
+        assert!(matches!(second_commit, RegistrationCommit::Active));
     }
 
     #[test]

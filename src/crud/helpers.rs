@@ -135,23 +135,6 @@ pub(super) async fn runtime_config_snapshot(
     Ok(super::config::public_plugin_config(&manifest, &cfg))
 }
 
-/// Load an ACL from `cid`, insert it into `acl_cache` under `cache_key`.
-/// Logs success or failure; non-fatal either way.
-pub(super) async fn acl_cache_update(ctx: &CrudHandlerCtx, cache_key: &str, cid: &str) {
-    match crate::acl::load_acl_from_cid(&ctx.kubo_rpc_url, cid).await {
-        Ok(acl_map) => {
-            ctx.acl_cache
-                .write()
-                .await
-                .insert(cache_key.to_string(), acl_map);
-            info!(key = %cache_key, %cid, "ACL loaded into cache");
-        }
-        Err(e) => {
-            warn!(key = %cache_key, %cid, error = %e, "failed to load ACL into cache");
-        }
-    }
-}
-
 /// Fetch a group's flat `Vec<String>` DID-list document by `cid`, insert it
 /// into `group_cache` under `name`. Logs success or failure; non-fatal either
 /// way — a group that fails to load simply resolves to no members.

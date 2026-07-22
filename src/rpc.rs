@@ -261,7 +261,12 @@ pub async fn handle_rpc_message(
         return if let Some(entity) = ep {
             let fragment_for_log = entity.fragment.clone();
             match handle_entity_plugin_message(message, term, entity, ctx).await {
-                Ok(()) => Ok(()),
+                Ok(reply) => {
+                    if let Some(content) = reply {
+                        send_rpc_reply(message, ctx, &content)?;
+                    }
+                    Ok(())
+                }
                 Err(err) => {
                     let reason = err.to_string();
                     warn!(
@@ -280,35 +285,53 @@ pub async fn handle_rpc_message(
         };
     }
 
-    // Unfragmented: root runtime verbs.
-    let ping_text = match &term {
+    handle_root_runtime_rpc(message, ctx, &term).await
+}
+
+async fn handle_root_runtime_rpc(
+    message: &ma_core::Message,
+    ctx: &RpcHandlerCtx,
+    term: &CborValue,
+) -> Result<()> {
+    let ping_text = match term {
         CborValue::Text(s) => s.as_str(),
-        _ => {
-            return send_rpc_i18n_error(message, ctx, "rpc-not-text-atom").await;
-        }
+        _ => return send_rpc_i18n_error(message, ctx, "rpc-not-text-atom").await,
     };
-    if ping_text == ":ping" {
-        debug!("{}", crate::i18n::t("ping-received"));
-        let mut pong = Vec::new();
-        ciborium::ser::into_writer(&CborValue::Text(":pong".to_string()), &mut pong)
-            .context("encode :pong")?;
-        return send_rpc_reply(message, ctx, &pong);
+
+    match ping_text {
+        ":ping" => {
+            debug!("{}", crate::i18n::t("ping-received"));
+            let mut pong = Vec::new();
+            ciborium::ser::into_writer(&CborValue::Text(":pong".to_string()), &mut pong)
+                .context("encode :pong")?;
+            send_rpc_reply(message, ctx, &pong)
+        }
+        ":name" => send_text_atom_reply(
+            message,
+            ctx,
+            &runtime_config_text_value(ctx, "name").await?,
+            "encode :name reply",
+        ),
+        ":description" => send_text_atom_reply(
+            message,
+            ctx,
+            &runtime_config_text_value(ctx, "description").await?,
+            "encode :description reply",
+        ),
+        _ => send_rpc_i18n_error(message, ctx, "rpc-unknown-verb").await,
     }
-    if ping_text == ":name" {
-        let value = runtime_config_text_value(ctx, "name").await?;
-        let mut payload = Vec::new();
-        ciborium::ser::into_writer(&CborValue::Text(value), &mut payload)
-            .context("encode :name reply")?;
-        return send_rpc_reply(message, ctx, &payload);
-    }
-    if ping_text == ":description" {
-        let value = runtime_config_text_value(ctx, "description").await?;
-        let mut payload = Vec::new();
-        ciborium::ser::into_writer(&CborValue::Text(value), &mut payload)
-            .context("encode :description reply")?;
-        return send_rpc_reply(message, ctx, &payload);
-    }
-    send_rpc_i18n_error(message, ctx, "rpc-unknown-verb").await
+}
+
+fn send_text_atom_reply(
+    message: &ma_core::Message,
+    ctx: &RpcHandlerCtx,
+    value: &str,
+    encode_context: &str,
+) -> Result<()> {
+    let mut payload = Vec::new();
+    ciborium::ser::into_writer(&CborValue::Text(value.to_string()), &mut payload)
+        .with_context(|| encode_context.to_string())?;
+    send_rpc_reply(message, ctx, &payload)
 }
 
 async fn runtime_config_text_value(ctx: &RpcHandlerCtx, key: &str) -> Result<String> {
@@ -322,12 +345,18 @@ async fn runtime_config_text_value(ctx: &RpcHandlerCtx, key: &str) -> Result<Str
     let manifest: crate::entity::RuntimeManifest =
         crate::kubo::dag_get(&ctx.kubo_rpc_url, &root_cid).await?;
 
-    match manifest.config.get(key).and_then(serde_yaml::Value::as_str) {
-        Some(value) => Ok(value.to_string()),
-        None => crate::crud::config::default_manifest_config_value(key)
-            .and_then(|value| value.as_str().map(str::to_string))
-            .ok_or_else(|| anyhow!("config key not found: {key}")),
-    }
+    manifest
+        .config
+        .get(key)
+        .and_then(serde_yaml::Value::as_str)
+        .map_or_else(
+            || {
+                crate::crud::config::default_manifest_config_value(key)
+                    .and_then(|value| value.as_str().map(str::to_string))
+                    .ok_or_else(|| anyhow!("config key not found: {key}"))
+            },
+            |value| Ok(value.to_string()),
+        )
 }
 
 // ── Fragment extraction ────────────────────────────────────────────────────────
@@ -365,7 +394,7 @@ async fn handle_entity_plugin_message(
     term: CborValue,
     entity: Arc<crate::plugin::EntityPlugin>,
     ctx: &RpcHandlerCtx,
-) -> Result<()> {
+) -> Result<Option<Vec<u8>>> {
     debug!(fragment = %entity.fragment, from = %message.from, "{}", crate::i18n::t("entity-dispatched"));
 
     // Entity verb-ACL enforcement.
@@ -659,7 +688,7 @@ async fn handle_entity_plugin_message(
         apply_behaviour_request(req, ctx).await?;
     }
 
-    Ok(())
+    Ok((entity.is_native() && !result.output.is_empty()).then_some(result.output))
 }
 
 // ── Generic reply helper ───────────────────────────────────────────────────────
@@ -759,9 +788,22 @@ fn send_rpc_error_reply(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    use crate::acl::{new_acl_cache, new_group_cache, AclMap, CapabilityEntry};
+    use crate::entity::{new_kind_registry, EntityNode, Evaluator, KindNode, RuntimeManifest};
+    use crate::manifest::ManifestWriter;
+    use crate::plugin::new_entity_registry;
+    use crate::schedule::SchedulerCtx;
+    use crate::scheduler_actor;
+    use crate::status::Stats;
+    use crate::testkubo::MockKubo;
+
     use ma_core::{MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY};
 
-    use super::{extract_fragment, rpc_message_kind, RpcMessageKind};
+    use super::{extract_fragment, handle_entity_plugin_message, rpc_message_kind, RpcMessageKind, RPC_PROTOCOL_ID};
 
     #[test]
     fn strips_matching_did_prefix() {
@@ -789,5 +831,169 @@ mod tests {
             RpcMessageKind::Reply
         );
         assert_eq!(rpc_message_kind("text/plain"), RpcMessageKind::Unsupported);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn scheduler_help_native_output_is_exposed_to_reply_layer() {
+        let kubo = MockKubo::start().await;
+        let initial_root = crate::kubo::dag_put(kubo.url(), &RuntimeManifest::default())
+            .await
+            .unwrap();
+        let stats = Arc::new(RwLock::new(Stats {
+            root_cid: Some(initial_root.clone()),
+            ..Default::default()
+        }));
+        let manifest_writer = ManifestWriter::new(
+            initial_root,
+            kubo.url().to_string(),
+            stats.clone(),
+            None,
+            None,
+        );
+
+        let mut transport_acl = AclMap::new();
+        transport_acl.insert(
+            "*".to_string(),
+            CapabilityEntry::from_caps([crate::acl::CAP_RPC]),
+        );
+        let mut scheduler_acl = AclMap::new();
+        scheduler_acl.insert("*".to_string(), CapabilityEntry::from_caps([":help"]));
+
+        let kind_registry = new_kind_registry();
+        let entity_registry = new_entity_registry();
+        let (envelope_tx, _envelope_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(String, crate::entity::SendEnvelope)>();
+
+        let runtime_did = ma_core::Did::new_url("k51qzi5uqu5runtime", None::<String>).unwrap();
+        let runtime_signing = ma_core::SigningKey::generate(
+            ma_core::Did::new_url("k51qzi5uqu5runtime", Some("sign")).unwrap(),
+        )
+        .unwrap();
+        let sender_did = ma_core::Did::new_url("k51qzi5uqu5sender", None::<String>).unwrap();
+        let sender_signing = ma_core::SigningKey::generate(
+            ma_core::Did::new_url("k51qzi5uqu5sender", Some("sign")).unwrap(),
+        )
+        .unwrap();
+
+        let mut runtime_endpoint_box = ma_core::new_ma_endpoint([11u8; 32], false).await.unwrap();
+        let _runtime_rpc_inbox = runtime_endpoint_box.service(RPC_PROTOCOL_ID);
+        let runtime_endpoint: Arc<dyn ma_core::MaEndpoint> = Arc::from(runtime_endpoint_box);
+
+        let scheduler_kind = KindNode {
+            protocol: scheduler_actor::SCHEDULER_KIND.to_string(),
+            cid: None,
+            kind_type: Evaluator::Native,
+            behaviour: None,
+            behaviour_chain: Vec::new(),
+            host_functions: vec![],
+            attributes: BTreeMap::new(),
+            extends: None,
+        };
+        kind_registry.write().await.insert(
+            scheduler_kind.protocol.clone(),
+            Arc::new(scheduler_kind.clone()),
+        );
+
+        let scheduler_node = EntityNode {
+            kind: scheduler_actor::SCHEDULER_KIND.to_string(),
+            behaviour: None,
+            acl: "scheduler".to_string(),
+            state: None,
+            parent: None,
+            label: None,
+            attributes: BTreeMap::new(),
+            init: None,
+            initialized: true,
+        };
+        let job_scheduler = Arc::new(tokio_cron_scheduler::JobScheduler::new().await.unwrap());
+        let native_actor = scheduler_actor::native_actor(
+            job_scheduler,
+            SchedulerCtx {
+                entity_registry: entity_registry.clone(),
+                kubo_rpc_url: kubo.url().to_string(),
+                our_did: runtime_did.base_id(),
+            },
+        );
+        let (scheduler_plugin, _) = crate::plugin::EntityPlugin::new_native(
+            "scheduler",
+            &scheduler_node,
+            &scheduler_kind,
+            native_actor,
+            Vec::new(),
+            None,
+        )
+        .unwrap();
+        entity_registry
+            .write()
+            .await
+            .insert("scheduler".to_string(), Arc::new(scheduler_plugin));
+
+        let acl_cache = new_acl_cache();
+        acl_cache
+            .write()
+            .await
+            .insert("acls.scheduler".to_string(), scheduler_acl);
+
+        let ctx = super::RpcHandlerCtx {
+            our_did: Arc::from(runtime_did.base_id()),
+            signing_key: Arc::new(runtime_signing),
+            endpoint: runtime_endpoint,
+            kubo_rpc_url: Arc::from(kubo.url().to_string()),
+            resolver: Arc::new(ma_core::IpfsGatewayResolver::new("http://127.0.0.1:9")),
+            entity_registry: entity_registry.clone(),
+            kind_registry,
+            envelope_tx,
+            stats,
+            acl_cache,
+            group_cache: new_group_cache(),
+            avatar_key: [5u8; 32],
+            manifest_writer,
+            shared_config: Arc::new(RwLock::new(ma_core::Config {
+                slug: "ma".to_string(),
+                log_level: "info".to_string(),
+                log_level_stdout: "info".to_string(),
+                did_resolver_positive_ttl_secs: 0,
+                did_resolver_negative_ttl_secs: 0,
+                log_file: None,
+                kubo_rpc_url: kubo.url().to_string(),
+                kubo_key_alias: "ma".to_string(),
+                secret_bundle: None,
+                secret_bundle_passphrase: None,
+                config_path: None,
+                extra: serde_yaml::Mapping::new(),
+            })),
+        };
+
+        let mut payload = Vec::new();
+        ciborium::ser::into_writer(&ciborium::Value::Text(":help".to_string()), &mut payload)
+            .unwrap();
+        let incoming = ma_core::Message::new(
+            &sender_did.base_id(),
+            &format!("{}#scheduler", runtime_did.base_id()),
+            MESSAGE_TYPE_RPC,
+            ma_core::CONTENT_TYPE_TERM,
+            &payload,
+            &sender_signing,
+        )
+        .unwrap();
+
+        let reply = handle_entity_plugin_message(
+            &incoming,
+            ciborium::Value::Text(":help".to_string()),
+            entity_registry.read().await.get("scheduler").unwrap().clone(),
+            &ctx,
+        )
+            .await
+            .unwrap();
+
+        let payload = reply.expect("native scheduler help should produce a reply payload");
+        let term: ciborium::Value = ciborium::de::from_reader(payload.as_slice()).unwrap();
+        match term {
+            ciborium::Value::Text(text) => {
+                assert!(text.contains("scheduler help"));
+                assert!(text.contains(":cron"));
+            }
+            other => panic!("expected text help reply, got {other:?}"),
+        }
     }
 }

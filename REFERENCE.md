@@ -275,14 +275,14 @@ runtime:
         protocol: /ma/stateless/ping/0.0.1
         wasi: false             # Rust/native Extism plugin
         api:
-          - handle_cast         # fn handle_cast() — process incoming message
+          - on_message          # fn on_message() — process incoming message
         host_functions:
           - ma_send             # full-control outbound envelope
       python:
         protocol: /ma/stateless/python/0.0.1
         wasi: true              # Python/WASI plugin
         api:
-          - handle_cast
+          - on_message
         host_functions:
           - ma_reply            # reply to sender
           - ma_send
@@ -566,7 +566,17 @@ dispatch and MUST NOT self-reschedule.
 ### ACL
 
 Scheduled dispatch **bypasses all ACL checks**. The runtime is the trusted
-caller. Never expose the scheduler fragment to untrusted peers in an ACL.
+caller. A typical scheduler ACL exposes `:help` publicly while keeping
+schedule registration local-only:
+
+```yaml
+scheduler:
+  "*": [":help"]
+  "#": [":cron", ":interval", ":at", ":random"]
+```
+
+This allows foreign DIDs to ask `#scheduler:help` directly without letting
+them register schedules on that runtime.
 
 ---
 

@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::acl::AclMap;
@@ -255,6 +255,21 @@ async fn publish_entities(
                 attributes,
                 init,
             } => {
+                // Validate that the entity's ACL name exists in the manifest
+                // (if the entity specifies a non-empty ACL).
+                if !acl.is_empty() && !cfg.acls.contains_key(acl.as_str()) {
+                    let available: Vec<&String> = cfg.acls.keys().collect();
+                    return Err(anyhow!(
+                        "entity '{}' references unknown ACL '{}' (available: {})",
+                        name,
+                        acl,
+                        available
+                            .iter()
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
                 let node = EntityNode {
                     kind: kind.clone(),
                     behaviour: behaviour.clone(),

@@ -1,12 +1,13 @@
-BINARY   := ma
-CARGO    := cargo
-RELEASE  := target/release/$(BINARY)
-DEBUG    := target/debug/$(BINARY)
+BINARY				:= ma
+CARGO    			:= cargo
+RELEASE  			:= target/release/$(BINARY)
+DEBUG    			:= target/debug/$(BINARY)
 CLIPPY_STRICT := --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery
-SRCS     := Cargo.toml Cargo.lock src/i18n.yaml $(shell find src -name '*.rs')
-PREFIX   ?= $(HOME)/.local/bin
-PUBLISH  := ma:bin/
-RUN_ARGS ?=
+SRCS					:= Cargo.toml Cargo.lock src/i18n.yaml $(shell find src -name '*.rs')
+PREFIX   			?= $(HOME)/.local/bin
+PUBLISH  			:= ma:bin/
+PUBLISH_SH    := .publish.sh
+RUN_ARGS			?=
 
 .PHONY: all clean distclean install lint publish test
 
@@ -55,7 +56,7 @@ install: $(RELEASE)
 
 publish: $(RELEASE)
 	scp $(RELEASE) $(PUBLISH)
-	test -x .publish.sh && bash publish.sh
+	test -f $(PUBLISH_SH) && bash $(PUBLISH_SH)
 
 distclean: clean
 	rm -rf target

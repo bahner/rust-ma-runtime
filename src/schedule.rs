@@ -98,13 +98,15 @@ pub async fn register_schedule(
                     let schedule_id = schedule_id.clone();
                     let active_guard = active_guard.clone();
                     Box::pin(async move {
-                        if let Some(is_active) = active_guard.as_ref() {
-                            if !is_active() {
-                                trace!(fragment = %fragment, schedule_id = ?schedule_id, "scheduled dispatch skipped: stale cron schedule");
-                                return;
-                            }
-                        }
-                        dispatch_scheduled(&ctx, &fragment, schedule_id.as_deref(), &content).await;
+                        dispatch_if_active(
+                            &ctx,
+                            &fragment,
+                            schedule_id.as_ref(),
+                            active_guard.as_ref(),
+                            &content,
+                            "cron",
+                        )
+                        .await;
                     })
                 }
             })?;
@@ -124,13 +126,15 @@ pub async fn register_schedule(
                     let schedule_id = schedule_id.clone();
                     let active_guard = active_guard.clone();
                     Box::pin(async move {
-                        if let Some(is_active) = active_guard.as_ref() {
-                            if !is_active() {
-                                trace!(fragment = %fragment, schedule_id = ?schedule_id, "scheduled dispatch skipped: stale interval schedule");
-                                return;
-                            }
-                        }
-                        dispatch_scheduled(&ctx, &fragment, schedule_id.as_deref(), &content).await;
+                        dispatch_if_active(
+                            &ctx,
+                            &fragment,
+                            schedule_id.as_ref(),
+                            active_guard.as_ref(),
+                            &content,
+                            "interval",
+                        )
+                        .await;
                     })
                 }
             })?;
@@ -141,53 +145,112 @@ pub async fn register_schedule(
             timestamp_ms,
             content,
         } => {
-            let now_ms = i64::try_from(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis(),
+            add_at_schedule_job(
+                sched,
+                ctx,
+                fragment,
+                schedule_id,
+                active_guard,
+                content,
+                timestamp_ms,
             )
-            .unwrap_or(i64::MAX);
-            let delay_ms = u64::try_from((timestamp_ms - now_ms).max(0)).unwrap_or(0);
-            let job = Job::new_one_shot_async(Duration::from_millis(delay_ms), {
-                let ctx = ctx.clone();
-                let fragment = fragment.clone();
-                let schedule_id = schedule_id.clone();
-                let active_guard = active_guard.clone();
-                move |_, _| {
-                    let ctx = ctx.clone();
-                    let fragment = fragment.clone();
-                    let content = content.clone();
-                    let schedule_id = schedule_id.clone();
-                    let active_guard = active_guard.clone();
-                    Box::pin(async move {
-                        if let Some(is_active) = active_guard.as_ref() {
-                            if !is_active() {
-                                trace!(fragment = %fragment, schedule_id = ?schedule_id, "scheduled dispatch skipped: stale one-shot schedule");
-                                return;
-                            }
-                        }
-                        dispatch_scheduled(&ctx, &fragment, schedule_id.as_deref(), &content).await;
-                    })
-                }
-            })?;
-            sched.add(job).await?
+            .await?
         }
 
         ScheduleRequest::Random { max_secs, content } => {
-            let job = make_random_job(
-                sched.clone(),
+            add_random_schedule_job(
+                sched,
                 ctx,
                 fragment,
                 schedule_id,
                 active_guard,
                 content,
                 max_secs,
-            )?;
-            sched.add(job).await?
+            )
+            .await?
         }
     };
     Ok(id)
+}
+
+async fn add_random_schedule_job(
+    sched: &JobScheduler,
+    ctx: SchedulerCtx,
+    fragment: String,
+    schedule_id: Option<String>,
+    active_guard: Option<ActiveScheduleGuard>,
+    content: Vec<u8>,
+    max_secs: u64,
+) -> Result<uuid::Uuid> {
+    let job = make_random_job(
+        sched.clone(),
+        ctx,
+        fragment,
+        schedule_id,
+        active_guard,
+        content,
+        max_secs,
+    )?;
+    sched.add(job).await.map_err(Into::into)
+}
+
+async fn add_at_schedule_job(
+    sched: &JobScheduler,
+    ctx: SchedulerCtx,
+    fragment: String,
+    schedule_id: Option<String>,
+    active_guard: Option<ActiveScheduleGuard>,
+    content: Vec<u8>,
+    timestamp_ms: i64,
+) -> Result<uuid::Uuid> {
+    let now_ms = i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(i64::MAX);
+    let delay_ms = u64::try_from((timestamp_ms - now_ms).max(0)).unwrap_or(0);
+    let job = Job::new_one_shot_async(Duration::from_millis(delay_ms), {
+        let ctx = ctx.clone();
+        let fragment = fragment.clone();
+        let schedule_id = schedule_id.clone();
+        let active_guard = active_guard.clone();
+        move |_, _| {
+            let ctx = ctx.clone();
+            let fragment = fragment.clone();
+            let content = content.clone();
+            let schedule_id = schedule_id.clone();
+            let active_guard = active_guard.clone();
+            Box::pin(async move {
+                dispatch_if_active(
+                    &ctx,
+                    &fragment,
+                    schedule_id.as_ref(),
+                    active_guard.as_ref(),
+                    &content,
+                    "one-shot",
+                )
+                .await;
+            })
+        }
+    })?;
+    sched.add(job).await.map_err(Into::into)
+}
+
+async fn dispatch_if_active(
+    ctx: &SchedulerCtx,
+    fragment: &str,
+    schedule_id: Option<&String>,
+    active_guard: Option<&ActiveScheduleGuard>,
+    content: &[u8],
+    schedule_kind: &str,
+) {
+    if !active_guard.is_none_or(|is_active| is_active()) {
+        trace!(fragment = %fragment, schedule_id = ?schedule_id, "scheduled dispatch skipped: stale {schedule_kind} schedule");
+        return;
+    }
+    dispatch_scheduled(ctx, fragment, schedule_id.map(String::as_str), content).await;
 }
 
 /// Create a self-rescheduling one-shot random job.
@@ -212,20 +275,18 @@ pub fn make_random_job(
         let active_guard = active_guard.clone();
         let content = content.clone();
         Box::pin(async move {
-            if let Some(is_active) = active_guard.as_ref() {
-                if !is_active() {
-                    trace!(fragment = %fragment, schedule_id = ?schedule_id, "scheduled dispatch skipped: stale random schedule");
-                    return;
-                }
-            }
-
-            dispatch_scheduled(&ctx, &fragment, schedule_id.as_deref(), &content).await;
+            dispatch_if_active(
+                &ctx,
+                &fragment,
+                schedule_id.as_ref(),
+                active_guard.as_ref(),
+                &content,
+                "random",
+            )
+            .await;
 
             // Re-schedule only while this schedule definition is still current.
-            let should_reschedule = match active_guard.as_ref() {
-                Some(is_active) => is_active(),
-                None => true,
-            };
+            let should_reschedule = active_guard.as_ref().is_none_or(|is_active| is_active());
             if should_reschedule {
                 match make_random_job(
                     sched.clone(),
