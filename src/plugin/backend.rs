@@ -124,17 +124,21 @@ struct CreateEntityCtx {
     pending: Vec<CreateEntityRequest>,
     /// Fragment of the calling (parent) entity.
     caller_fragment: String,
+    /// Derived from the runtime IPNS secret; used for deterministic fragment
+    /// generation when a `fragment_hint` is provided by the caller.
+    avatar_key: [u8; 32],
 }
 
 // `ma_create_entity` host function: plugin requests creation of a new entity.
 //
 // Input is CBOR-encoded `{ "kind": "/ma/…/0.0.1", "behaviour": "bafyCID",
-// "init": <payload> }`. For shared-binary scriptable kinds, `behaviour`
-// is appended after kind-level behaviour layers; `init` is the opaque `:init` signal creation
-// payload (§14.2.1). Both are optional. The runtime generates a nanoid
-// fragment, queues the request, and returns the fragment string
-// (CBOR-encoded) to the plugin immediately. Actual plugin loading and
-// manifest persistence happen after dispatch returns.
+// "init": <payload>, "fragment_hint": "<string>" }`. For shared-binary
+// scriptable kinds, `behaviour` is appended after kind-level behaviour layers;
+// `init` is the opaque `:init` signal creation payload (§14.2.1). Both are
+// optional. When `fragment_hint` is present the runtime derives a deterministic
+// fragment via `blake3::keyed_hash(avatar_key, hint)`; otherwise a random
+// nanoid fragment is generated. Actual plugin loading and manifest persistence
+// happen after dispatch returns.
 #[derive(serde::Deserialize)]
 struct CreateEntityInput {
     kind: String,
@@ -142,13 +146,31 @@ struct CreateEntityInput {
     behaviour: Option<String>,
     #[serde(default, with = "serde_bytes")]
     init: Option<Vec<u8>>,
+    /// Optional hint for deterministic fragment derivation.
+    #[serde(default)]
+    fragment_hint: Option<String>,
+}
+
+/// Derive a deterministic, URL-safe 16-character fragment from a keyed blake3
+/// hash of `hint`.  The result is the lower-hex encoding of the first 8 bytes
+/// of the hash output — 64 bits of keyed pseudorandom output is ample for
+/// uniqueness across any realistic number of entities.
+fn fragment_from_hint(key: &[u8; 32], hint: &str) -> String {
+    let hash = blake3::keyed_hash(key, hint.as_bytes());
+    hash.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 host_fn!(ma_create_entity_fn(user_data: CreateEntityCtx; input: Vec<u8>) -> Vec<u8> {
     let req: CreateEntityInput = from_cbor_bytes(&input)?;
-    let fragment = generate_fragment();
     let arc = user_data.get()?;
     let mut ctx = arc.lock().unwrap();
+    let fragment = match req.fragment_hint {
+        Some(ref hint) => fragment_from_hint(&ctx.avatar_key, hint),
+        None => generate_fragment(),
+    };
     let parent = ctx.caller_fragment.clone();
     ctx.pending.push(CreateEntityRequest {
         fragment: fragment.clone(),
@@ -519,6 +541,7 @@ fn build_wasm_plugin(cfg: &WasmThreadCfg) -> Result<WasmThreadState> {
     let create_queue: UserData<CreateEntityCtx> = UserData::new(CreateEntityCtx {
         pending: Vec::new(),
         caller_fragment: cfg.fragment.clone(),
+        avatar_key: cfg.avatar_key,
     });
     let delete_queue: UserData<DeleteEntityCtx> = UserData::new(DeleteEntityCtx {
         pending: Vec::new(),

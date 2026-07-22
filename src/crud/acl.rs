@@ -62,9 +62,7 @@ pub(super) async fn handle_root_acls(
             // This prevents silent cache misses later during entity dispatch.
             let acl_map = crate::acl::load_acl_from_cid(&ctx.kubo_rpc_url, &cid)
                 .await
-                .with_context(|| {
-                    format!("loading named ACL '{acl_name}' from /ipfs/{cid}")
-                })?;
+                .with_context(|| format!("loading named ACL '{acl_name}' from /ipfs/{cid}"))?;
             let acl_name = acl_name.clone();
             let new_root = with_manifest_crud(ctx, |m| {
                 m.acls.insert(acl_name.clone(), IpldLink::new(&cid));

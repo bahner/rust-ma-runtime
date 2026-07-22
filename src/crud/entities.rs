@@ -378,9 +378,11 @@ mod tests {
 
     use super::handle_entity_acl_field;
     use crate::acl::{new_acl_cache, new_group_cache, new_shared_acl, AclMap};
-    use crate::entity::{new_kind_registry, EntityNode, Evaluator, IpldLink, KindNode, RuntimeManifest};
-    use crate::manifest::ManifestWriter;
     use crate::entity::SendEnvelope;
+    use crate::entity::{
+        new_kind_registry, EntityNode, Evaluator, IpldLink, KindNode, RuntimeManifest,
+    };
+    use crate::manifest::ManifestWriter;
     use crate::plugin::{new_entity_registry, EntityPlugin};
     use crate::status::Stats;
     use crate::testkubo::MockKubo;
@@ -472,7 +474,10 @@ mod tests {
                     return;
                 }
             }
-            assert!(tokio::time::Instant::now() < deadline, "timed out waiting for entity ACL '{expected_acl}'");
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for entity ACL '{expected_acl}'"
+            );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
@@ -483,9 +488,15 @@ mod tests {
         let wasm_cid = kubo.add_bytes(wat::parse_str(GOOD_WAT).unwrap()).await;
         let kind = kind_node(&wasm_cid);
 
-        let open_acl_cid = crate::kubo::dag_put(kubo.url(), &AclMap::new()).await.unwrap();
-        let locked_acl_cid = crate::kubo::dag_put(kubo.url(), &AclMap::new()).await.unwrap();
-        let entity_cid = crate::kubo::dag_put(kubo.url(), &entity_node("open")).await.unwrap();
+        let open_acl_cid = crate::kubo::dag_put(kubo.url(), &AclMap::new())
+            .await
+            .unwrap();
+        let locked_acl_cid = crate::kubo::dag_put(kubo.url(), &AclMap::new())
+            .await
+            .unwrap();
+        let entity_cid = crate::kubo::dag_put(kubo.url(), &entity_node("open"))
+            .await
+            .unwrap();
 
         let mut manifest = RuntimeManifest::default();
         manifest
@@ -556,9 +567,7 @@ mod tests {
         let mut sender_doc = ma_core::Document::new(&sender_did, &sender_did);
         let assertion_vm = ma_core::VerificationMethod::try_from(&sender_signing).unwrap();
         sender_doc.verification_method.push(assertion_vm.clone());
-        sender_doc
-            .assertion_method
-            .push(assertion_vm.id.clone());
+        sender_doc.assertion_method.push(assertion_vm.id.clone());
         sender_doc.set_ma_extension(endpoint.ma_extension());
         sender_doc.sign(&sender_signing, &assertion_vm).unwrap();
         let gateway_url = spawn_did_gateway(sender_doc.encode().unwrap()).await;
@@ -606,8 +615,9 @@ mod tests {
         wait_for_entity_acl(&entity_registry, "room", "locked").await;
 
         let updated_root = stats.read().await.root_cid.clone().unwrap();
-        let updated_manifest: RuntimeManifest =
-            crate::kubo::dag_get(kubo.url(), &updated_root).await.unwrap();
+        let updated_manifest: RuntimeManifest = crate::kubo::dag_get(kubo.url(), &updated_root)
+            .await
+            .unwrap();
         let updated_link = updated_manifest.entities.get("room").unwrap();
         let updated_entity: EntityNode = crate::kubo::dag_get(kubo.url(), &updated_link.cid)
             .await
@@ -625,8 +635,12 @@ mod tests {
         let wasm_cid = kubo.add_bytes(wat::parse_str(GOOD_WAT).unwrap()).await;
         let kind = kind_node(&wasm_cid);
 
-        let open_acl_cid = crate::kubo::dag_put(kubo.url(), &AclMap::new()).await.unwrap();
-        let entity_cid = crate::kubo::dag_put(kubo.url(), &entity_node("open")).await.unwrap();
+        let open_acl_cid = crate::kubo::dag_put(kubo.url(), &AclMap::new())
+            .await
+            .unwrap();
+        let entity_cid = crate::kubo::dag_put(kubo.url(), &entity_node("open"))
+            .await
+            .unwrap();
 
         let mut manifest = RuntimeManifest::default();
         manifest
@@ -694,9 +708,7 @@ mod tests {
         let mut sender_doc = ma_core::Document::new(&sender_did, &sender_did);
         let assertion_vm = ma_core::VerificationMethod::try_from(&sender_signing).unwrap();
         sender_doc.verification_method.push(assertion_vm.clone());
-        sender_doc
-            .assertion_method
-            .push(assertion_vm.id.clone());
+        sender_doc.assertion_method.push(assertion_vm.id.clone());
         sender_doc.set_ma_extension(endpoint.ma_extension());
         sender_doc.sign(&sender_signing, &assertion_vm).unwrap();
         let gateway_url = spawn_did_gateway(sender_doc.encode().unwrap()).await;
@@ -744,8 +756,9 @@ mod tests {
         wait_for_entity_acl(&entity_registry, "room", "").await;
 
         let updated_root = stats.read().await.root_cid.clone().unwrap();
-        let updated_manifest: RuntimeManifest =
-            crate::kubo::dag_get(kubo.url(), &updated_root).await.unwrap();
+        let updated_manifest: RuntimeManifest = crate::kubo::dag_get(kubo.url(), &updated_root)
+            .await
+            .unwrap();
         let updated_link = updated_manifest.entities.get("room").unwrap();
         let updated_entity: EntityNode = crate::kubo::dag_get(kubo.url(), &updated_link.cid)
             .await

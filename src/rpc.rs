@@ -803,7 +803,10 @@ mod tests {
 
     use ma_core::{MESSAGE_TYPE_RPC, MESSAGE_TYPE_RPC_REPLY};
 
-    use super::{extract_fragment, handle_entity_plugin_message, rpc_message_kind, RpcMessageKind, RPC_PROTOCOL_ID};
+    use super::{
+        extract_fragment, handle_entity_plugin_message, rpc_message_kind, RpcMessageKind,
+        RPC_PROTOCOL_ID,
+    };
 
     #[test]
     fn strips_matching_did_prefix() {
@@ -980,11 +983,16 @@ mod tests {
         let reply = handle_entity_plugin_message(
             &incoming,
             ciborium::Value::Text(":help".to_string()),
-            entity_registry.read().await.get("scheduler").unwrap().clone(),
+            entity_registry
+                .read()
+                .await
+                .get("scheduler")
+                .unwrap()
+                .clone(),
             &ctx,
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         let payload = reply.expect("native scheduler help should produce a reply payload");
         let term: ciborium::Value = ciborium::de::from_reader(payload.as_slice()).unwrap();
