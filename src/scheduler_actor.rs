@@ -10,14 +10,16 @@
 //! `did:ma:<our_did>#scheduler` to register a scheduled dispatch:
 //!
 //! ```text
-//! [":cron",     spec_str,     target_frag, verb_or_array, extra_args…]
-//! [":interval", duration_str, target_frag, verb_or_array, extra_args…]
-//! [":at",       timestamp_ms, target_frag, verb_or_array, extra_args…]
-//! [":random",   max_secs_int, target_frag, verb_or_array, extra_args…]
+//! [name, ":cron",     spec_str,     verb_or_array, extra_args…]
+//! [name, ":interval", duration_str, verb_or_array, extra_args…]
+//! [name, ":at",       timestamp_ms, verb_or_array, extra_args…]
+//! [name, ":random",   max_secs_int, verb_or_array, extra_args…]
 //! ```
 //!
-//! `target_frag` is a bare fragment name (`"fortune"`) or a full DID-URL
-//! (`did:ma:<ipns>#fortune`).  The scheduler normalises it to the bare name.
+//! Schedules are caller-owned. The dispatch target is always `msg.from`
+//! (the registering entity). The scheduler keys jobs by
+//! `<msg.from>-<name>`, so re-registering the same `name` from the same sender
+//! replaces the previous job deterministically.
 //!
 //! ## ACL
 //!
@@ -33,14 +35,17 @@
 //! API: `["handle_cast"]`
 
 use std::sync::Arc;
+use std::{collections::HashMap, sync::Mutex};
 
 use anyhow::{anyhow, Result};
 use ciborium::Value as CborValue;
-use tracing::warn;
+use tracing::{trace, warn};
 
 use crate::entity::CastInput;
 use crate::plugin::{DispatchResult, NativeActor, NativeFactory, NativeSignal};
-use crate::schedule::{parse_duration, register_schedule, ScheduleRequest, SchedulerCtx};
+use crate::schedule::{
+    parse_duration, register_schedule, ActiveScheduleGuard, ScheduleRequest, SchedulerCtx,
+};
 
 /// Kind protocol ID for the native scheduler entity.
 pub const SCHEDULER_KIND: &str = "/ma/scheduler/0.0.1";
@@ -57,20 +62,137 @@ pub fn native_actor(
     sched: Arc<tokio_cron_scheduler::JobScheduler>,
     ctx: SchedulerCtx,
 ) -> NativeActor {
+    // Stable map from <msg.from>-<name> to tracked scheduler job metadata.
+    let jobs_by_schedule = Arc::new(Mutex::new(HashMap::<String, TrackedJob>::new()));
     NativeActor::new(move |input: &CastInput| -> Result<DispatchResult> {
         let term: CborValue = ciborium::de::from_reader(input.msg.content.as_slice())
             .map_err(|e| anyhow!("scheduler: invalid CBOR in message: {e}"))?;
+
+        if is_help_request(&term) {
+            let mut out = Vec::new();
+            ciborium::ser::into_writer(&CborValue::Text(scheduler_help_text().to_string()), &mut out)
+                .map_err(|e| anyhow!("scheduler: CBOR encode help: {e}"))?;
+            return Ok(DispatchResult {
+                output: out,
+                pending_state: None,
+                create_requests: vec![],
+                delete_requests: vec![],
+                behaviour_requests: vec![],
+            });
+        }
 
         let req = parse_schedule_request(term, &input.msg.from)?;
 
         let sched = Arc::clone(&sched);
         let ctx = ctx.clone();
+        let jobs_by_schedule = Arc::clone(&jobs_by_schedule);
         let from = input.msg.from.clone();
         tokio::spawn(async move {
-            if let Err(e) =
-                register_schedule(&sched, ctx, req.fragment.clone(), None, req.request).await
+            let (new_version, previous_job) = {
+                let mut map = jobs_by_schedule.lock().expect("jobs map poisoned");
+                let previous = map.get(&req.schedule_key).copied();
+                let version = previous.map_or(1, |entry| entry.version.saturating_add(1));
+                map.insert(
+                    req.schedule_key.clone(),
+                    TrackedJob {
+                        version,
+                        job_id: None,
+                    },
+                );
+                (version, previous.and_then(|entry| entry.job_id))
+            };
+
+            trace!(
+                from = %from,
+                target = %req.fragment,
+                schedule = %req.schedule_key,
+                version = new_version,
+                previous_job = ?previous_job,
+                "scheduler: processing registration"
+            );
+
+            if let Some(job_id) = previous_job {
+                if let Err(e) = sched.remove(&job_id).await {
+                    warn!(from = %from, schedule = %req.schedule_key, error = %e, "scheduler: failed to remove previous schedule job");
+                } else {
+                    trace!(
+                        from = %from,
+                        schedule = %req.schedule_key,
+                        previous_job = %job_id,
+                        "scheduler: removed previous schedule job"
+                    );
+                }
+            }
+
+            let active_guard = make_active_guard(
+                Arc::clone(&jobs_by_schedule),
+                req.schedule_key.clone(),
+                new_version,
+            );
+
+            match register_schedule(
+                &sched,
+                ctx,
+                req.fragment.clone(),
+                Some(req.schedule_key.clone()),
+                Some(active_guard),
+                req.request,
+            )
+            .await
             {
-                warn!(target = %req.fragment, from = %from, error = %e, "scheduler: failed to register schedule");
+                Ok(job_id) => {
+                    let superseded = {
+                        let mut map = jobs_by_schedule.lock().expect("jobs map poisoned");
+                        if map
+                            .get(&req.schedule_key)
+                            .is_some_and(|entry| entry.version == new_version)
+                        {
+                            map.insert(
+                                req.schedule_key.clone(),
+                                TrackedJob {
+                                    version: new_version,
+                                    job_id: Some(job_id),
+                                },
+                            );
+                            false
+                        } else {
+                            true
+                        }
+                    };
+
+                    if superseded {
+                        if let Err(e) = sched.remove(&job_id).await {
+                            warn!(from = %from, schedule = %req.schedule_key, error = %e, "scheduler: failed to remove superseded schedule job");
+                        } else {
+                            trace!(
+                                from = %from,
+                                schedule = %req.schedule_key,
+                                version = new_version,
+                                job_id = %job_id,
+                                "scheduler: removed superseded job registered by stale task"
+                            );
+                        }
+                    } else {
+                        trace!(
+                            from = %from,
+                            target = %req.fragment,
+                            schedule = %req.schedule_key,
+                            version = new_version,
+                            job_id = %job_id,
+                            "scheduler: registered active schedule job"
+                        );
+                    }
+                }
+                Err(e) => {
+                    let mut map = jobs_by_schedule.lock().expect("jobs map poisoned");
+                    if map
+                        .get(&req.schedule_key)
+                        .is_some_and(|entry| entry.version == new_version)
+                    {
+                        map.remove(&req.schedule_key);
+                    }
+                    warn!(target = %req.fragment, from = %from, schedule = %req.schedule_key, error = %e, "scheduler: failed to register schedule");
+                }
             }
         });
 
@@ -107,8 +229,45 @@ pub fn native_factory(
 // ── Internal types ────────────────────────────────────────────────────────────
 
 struct ParsedRequest {
+    schedule_key: String,
     fragment: String,
     request: ScheduleRequest,
+}
+
+#[derive(Clone, Copy)]
+struct TrackedJob {
+    version: u64,
+    job_id: Option<uuid::Uuid>,
+}
+
+fn make_active_guard(
+    jobs_by_schedule: Arc<Mutex<HashMap<String, TrackedJob>>>,
+    schedule_key: String,
+    version: u64,
+) -> ActiveScheduleGuard {
+    Arc::new(move || {
+        let map = jobs_by_schedule.lock().expect("jobs map poisoned");
+        map.get(&schedule_key)
+            .is_some_and(|entry| entry.version == version)
+    })
+}
+
+fn is_help_request(term: &CborValue) -> bool {
+    match term {
+        CborValue::Text(s) => s == ":help",
+        CborValue::Array(items) if items.len() == 1 => {
+            matches!(items.first(), Some(CborValue::Text(s)) if s == ":help")
+        }
+        _ => false,
+    }
+}
+
+fn scheduler_help_text() -> &'static str {
+    "scheduler help\n\
+format: [name, :type, spec, verb_or_array, extra_args...]\n\
+types: :cron, :interval, :at, :random\n\
+specs: :cron=\"sec min hour day month weekday\", :interval=\"30m\", :at=<unix_ms>, :random=<max_secs>\n\
+ownership: target is always msg.from; same [msg.from + name] overwrites previous schedule"
 }
 
 // ── CBOR schedule-request parser ─────────────────────────────────────────────
@@ -117,51 +276,57 @@ struct ParsedRequest {
 ///
 /// Expected wire format:
 /// ```text
-/// [type_atom, spec, target_frag, verb_or_array, extra_args…]
+/// [name, type_atom, spec, verb_or_array, extra_args…]
 /// ```
 /// where `type_atom` is one of `:cron`, `:interval`, `:at`, `:random`.
-fn parse_schedule_request(term: CborValue, _from: &str) -> Result<ParsedRequest> {
+fn parse_schedule_request(term: CborValue, from: &str) -> Result<ParsedRequest> {
     let items = match term {
         CborValue::Array(a) => a,
         other => return Err(anyhow!("scheduler: expected CBOR array, got {other:?}")),
     };
     if items.len() < 4 {
         return Err(anyhow!(
-            "scheduler: expected [type, spec, target, verb], got {} elements",
+            "scheduler: expected [name, type, spec, verb], got {} elements",
             items.len()
         ));
     }
 
-    let type_verb = match &items[0] {
-        CborValue::Text(s) => s.clone(),
-        _ => return Err(anyhow!("scheduler: first element must be text atom")),
+    let schedule_name = match &items[0] {
+        CborValue::Text(s) if !s.is_empty() => s.clone(),
+        CborValue::Text(_) => return Err(anyhow!("scheduler: schedule name must not be empty")),
+        _ => {
+            return Err(anyhow!(
+                "scheduler: first element must be schedule name text"
+            ))
+        }
     };
 
-    let target = match &items[2] {
+    let type_verb = match &items[1] {
         CborValue::Text(s) => s.clone(),
-        _ => return Err(anyhow!("scheduler: third element must be target fragment")),
+        _ => return Err(anyhow!("scheduler: second element must be text atom")),
     };
 
-    // Normalise target to bare fragment: strip any leading DID-URL.
-    let fragment = if let Some(pos) = target.find('#') {
-        target[pos + 1..].to_string()
-    } else {
-        target
-    };
+    // Ownership is caller-scoped: dispatch target is always the sender fragment.
+    let fragment = from
+        .split_once('#')
+        .map(|(_, frag)| frag.to_string())
+        .filter(|frag| !frag.is_empty())
+        .ok_or_else(|| anyhow!("scheduler: sender must be DID-URL with fragment"))?;
+    let schedule_key = format!("{from}-{schedule_name}");
 
     // Encode verb (4th element) + optional inline args (5th+) as CBOR content bytes.
     let content = encode_verb_content(&items)?;
 
     let request = match type_verb.as_str() {
         ":cron" => {
-            let spec = match &items[1] {
+            let spec = match &items[2] {
                 CborValue::Text(s) => s.clone(),
                 _ => return Err(anyhow!("scheduler :cron: spec must be text")),
             };
             ScheduleRequest::Cron { spec, content }
         }
         ":interval" => {
-            let dur_str = match &items[1] {
+            let dur_str = match &items[2] {
                 CborValue::Text(s) => s.clone(),
                 _ => return Err(anyhow!("scheduler :interval: duration must be text")),
             };
@@ -171,7 +336,7 @@ fn parse_schedule_request(term: CborValue, _from: &str) -> Result<ParsedRequest>
             ScheduleRequest::Interval { secs, content }
         }
         ":at" => {
-            let ts = match &items[1] {
+            let ts = match &items[2] {
                 CborValue::Integer(n) => i64::try_from(i128::from(*n))
                     .map_err(|_| anyhow!("scheduler :at: timestamp out of i64 range"))?,
                 _ => return Err(anyhow!("scheduler :at: timestamp must be integer")),
@@ -182,7 +347,7 @@ fn parse_schedule_request(term: CborValue, _from: &str) -> Result<ParsedRequest>
             }
         }
         ":random" => {
-            let max_secs = match &items[1] {
+            let max_secs = match &items[2] {
                 CborValue::Integer(n) => u64::try_from(i128::from(*n)).unwrap_or(60),
                 _ => return Err(anyhow!("scheduler :random: max_secs must be integer")),
             };
@@ -191,7 +356,11 @@ fn parse_schedule_request(term: CborValue, _from: &str) -> Result<ParsedRequest>
         other => return Err(anyhow!("scheduler: unknown schedule type '{other}'")),
     };
 
-    Ok(ParsedRequest { fragment, request })
+    Ok(ParsedRequest {
+        schedule_key,
+        fragment,
+        request,
+    })
 }
 
 /// Encode the verb (4th element) and any extra args (5th+) as pre-encoded CBOR bytes.
@@ -219,7 +388,13 @@ fn encode_verb_content(items: &[CborValue]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_verb_content, parse_schedule_request};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use super::{
+        encode_verb_content, is_help_request, make_active_guard, parse_schedule_request,
+        scheduler_help_text, TrackedJob,
+    };
     use crate::schedule::ScheduleRequest;
     use ciborium::Value as CborValue;
 
@@ -234,37 +409,38 @@ mod tests {
     #[test]
     fn parses_cron() {
         let term = CborValue::Array(vec![
+            text("tick"),
             text(":cron"),
             text("0 * * * * *"),
-            text("myentity"),
             text(":tick"),
         ]);
-        let p = parse_schedule_request(term, "from").unwrap();
+        let p = parse_schedule_request(term, "did:ma:abc#myentity").unwrap();
         assert_eq!(p.fragment, "myentity");
+        assert_eq!(p.schedule_key, "did:ma:abc#myentity-tick");
         assert!(matches!(p.request, ScheduleRequest::Cron { spec, .. } if spec == "0 * * * * *"));
     }
 
     #[test]
     fn parses_interval_duration_to_seconds() {
         let term = CborValue::Array(vec![
+            text("grow"),
             text(":interval"),
             text("30m"),
-            text("garden"),
             text(":grow"),
         ]);
-        let p = parse_schedule_request(term, "from").unwrap();
+        let p = parse_schedule_request(term, "did:ma:abc#garden").unwrap();
         assert!(matches!(p.request, ScheduleRequest::Interval { secs, .. } if secs == 1_800));
     }
 
     #[test]
     fn parses_at_timestamp() {
         let term = CborValue::Array(vec![
+            text("wake-once"),
             text(":at"),
             int(1_700_000_000_000),
-            text("e"),
             text(":wake"),
         ]);
-        let p = parse_schedule_request(term, "from").unwrap();
+        let p = parse_schedule_request(term, "did:ma:abc#e").unwrap();
         assert!(
             matches!(p.request, ScheduleRequest::At { timestamp_ms, .. } if timestamp_ms == 1_700_000_000_000)
         );
@@ -273,42 +449,48 @@ mod tests {
     #[test]
     fn parses_random_max_secs() {
         let term = CborValue::Array(vec![
+            text("scratch"),
             text(":random"),
             int(300),
-            text("dog"),
             text(":scratch"),
         ]);
-        let p = parse_schedule_request(term, "from").unwrap();
+        let p = parse_schedule_request(term, "did:ma:abc#dog").unwrap();
         assert!(matches!(p.request, ScheduleRequest::Random { max_secs, .. } if max_secs == 300));
     }
 
     #[test]
-    fn normalises_did_url_target_to_bare_fragment() {
+    fn uses_sender_fragment_as_target() {
         let term = CborValue::Array(vec![
+            text("tick"),
             text(":cron"),
             text("* * * * * *"),
-            text("did:ma:abc#myentity"),
             text(":tick"),
         ]);
-        let p = parse_schedule_request(term, "from").unwrap();
+        let p = parse_schedule_request(term, "did:ma:abc#myentity").unwrap();
         assert_eq!(p.fragment, "myentity");
     }
 
     #[test]
     fn rejects_too_few_elements() {
-        let term = CborValue::Array(vec![text(":cron"), text("spec"), text("target")]);
-        assert!(parse_schedule_request(term, "from").is_err());
+        let term = CborValue::Array(vec![text("name"), text(":cron"), text("spec")]);
+        assert!(parse_schedule_request(term, "did:ma:abc#entity").is_err());
     }
 
     #[test]
     fn rejects_unknown_type() {
-        let term = CborValue::Array(vec![text(":weekly"), text("x"), text("t"), text(":v")]);
-        assert!(parse_schedule_request(term, "from").is_err());
+        let term = CborValue::Array(vec![text("name"), text(":weekly"), text("x"), text(":v")]);
+        assert!(parse_schedule_request(term, "did:ma:abc#entity").is_err());
+    }
+
+    #[test]
+    fn rejects_sender_without_fragment() {
+        let term = CborValue::Array(vec![text("name"), text(":cron"), text("x"), text(":v")]);
+        assert!(parse_schedule_request(term, "did:ma:abc").is_err());
     }
 
     #[test]
     fn encode_verb_content_bare_verb_stays_atom() {
-        let items = vec![text(":x"), text("y"), text("t"), text(":grow")];
+        let items = vec![text("n"), text(":x"), text("y"), text(":grow")];
         let content = encode_verb_content(&items).unwrap();
         let decoded: CborValue = ciborium::de::from_reader(content.as_slice()).unwrap();
         assert!(matches!(decoded, CborValue::Text(s) if s == ":grow"));
@@ -317,9 +499,9 @@ mod tests {
     #[test]
     fn encode_verb_content_wraps_extra_args_in_array() {
         let items = vec![
+            text("n"),
             text(":x"),
             text("y"),
-            text("t"),
             text(":grow"),
             text("a"),
             text("b"),
@@ -327,5 +509,60 @@ mod tests {
         let content = encode_verb_content(&items).unwrap();
         let decoded: CborValue = ciborium::de::from_reader(content.as_slice()).unwrap();
         assert!(matches!(decoded, CborValue::Array(a) if a.len() == 3));
+    }
+
+    #[test]
+    fn random_overwrite_race_disables_stale_generation() {
+        let key = "did:ma:abc#duck-quack".to_string();
+        let jobs_by_schedule = Arc::new(Mutex::new(HashMap::<String, TrackedJob>::new()));
+
+        {
+            let mut map = jobs_by_schedule.lock().unwrap();
+            map.insert(
+                key.clone(),
+                TrackedJob {
+                    version: 1,
+                    job_id: None,
+                },
+            );
+        }
+
+        let stale_guard = make_active_guard(Arc::clone(&jobs_by_schedule), key.clone(), 1);
+
+        // Simulate overwrite race: before stale callback executes, version 2 wins.
+        {
+            let mut map = jobs_by_schedule.lock().unwrap();
+            map.insert(
+                key.clone(),
+                TrackedJob {
+                    version: 2,
+                    job_id: None,
+                },
+            );
+        }
+
+        // Stale generation must be blocked both at dispatch and at re-schedule check.
+        assert!(!stale_guard());
+        assert!(!stale_guard());
+
+        let latest_guard = make_active_guard(Arc::clone(&jobs_by_schedule), key, 2);
+        assert!(latest_guard());
+    }
+
+    #[test]
+    fn help_request_detection_supports_atom_and_singleton_array() {
+        assert!(is_help_request(&text(":help")));
+        assert!(is_help_request(&CborValue::Array(vec![text(":help")])));
+        assert!(!is_help_request(&text(":cron")));
+    }
+
+    #[test]
+    fn help_text_mentions_types_and_format() {
+        let help = scheduler_help_text();
+        assert!(help.contains("format:"));
+        assert!(help.contains(":cron"));
+        assert!(help.contains(":interval"));
+        assert!(help.contains(":at"));
+        assert!(help.contains(":random"));
     }
 }

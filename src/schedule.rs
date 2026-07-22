@@ -10,7 +10,7 @@
 //! | `Random` | `max_secs: u64` | Fires after a random 1–N second delay, then self-reschedules. |
 //!
 //! Schedules are registered dynamically by plugins via `ma_send` to `#scheduler`
-//! in their `init()` call.  There are no static schedules in `EntityNode`.
+//! in their `:start` handling. There are no static schedules in `EntityNode`.
 //!
 //! ## ACL
 //!
@@ -24,12 +24,13 @@
 //! The scheduler has no envelope-handling responsibility.
 //! State changes via `ma_set_state` are persisted to IPFS normally.
 
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use ma_core::{ipfs_add, CONTENT_TYPE_TERM, MESSAGE_TYPE_RPC};
 use tokio_cron_scheduler::{Job, JobScheduler};
-use tracing::warn;
+use tracing::{trace, warn};
 
 use crate::entity::{CastInput, LocalMessage};
 use crate::plugin::EntityRegistry;
@@ -63,6 +64,9 @@ pub struct SchedulerCtx {
     pub our_did: String,
 }
 
+/// Guard that returns `true` only while a schedule definition is still current.
+pub type ActiveScheduleGuard = Arc<dyn Fn() -> bool + Send + Sync>;
+
 // ── Job registration ──────────────────────────────────────────────────────────
 
 /// Register a [`ScheduleRequest`] on the scheduler for the named entity.
@@ -77,6 +81,7 @@ pub async fn register_schedule(
     ctx: SchedulerCtx,
     fragment: String,
     schedule_id: Option<String>,
+    active_guard: Option<ActiveScheduleGuard>,
     req: ScheduleRequest,
 ) -> Result<uuid::Uuid> {
     let id = match req {
@@ -85,12 +90,20 @@ pub async fn register_schedule(
                 let ctx = ctx.clone();
                 let fragment = fragment.clone();
                 let schedule_id = schedule_id.clone();
+                let active_guard = active_guard.clone();
                 move |_, _| {
                     let ctx = ctx.clone();
                     let fragment = fragment.clone();
                     let content = content.clone();
                     let schedule_id = schedule_id.clone();
+                    let active_guard = active_guard.clone();
                     Box::pin(async move {
+                        if let Some(is_active) = active_guard.as_ref() {
+                            if !is_active() {
+                                trace!(fragment = %fragment, schedule_id = ?schedule_id, "scheduled dispatch skipped: stale cron schedule");
+                                return;
+                            }
+                        }
                         dispatch_scheduled(&ctx, &fragment, schedule_id.as_deref(), &content).await;
                     })
                 }
@@ -103,12 +116,20 @@ pub async fn register_schedule(
                 let ctx = ctx.clone();
                 let fragment = fragment.clone();
                 let schedule_id = schedule_id.clone();
+                let active_guard = active_guard.clone();
                 move |_, _| {
                     let ctx = ctx.clone();
                     let fragment = fragment.clone();
                     let content = content.clone();
                     let schedule_id = schedule_id.clone();
+                    let active_guard = active_guard.clone();
                     Box::pin(async move {
+                        if let Some(is_active) = active_guard.as_ref() {
+                            if !is_active() {
+                                trace!(fragment = %fragment, schedule_id = ?schedule_id, "scheduled dispatch skipped: stale interval schedule");
+                                return;
+                            }
+                        }
                         dispatch_scheduled(&ctx, &fragment, schedule_id.as_deref(), &content).await;
                     })
                 }
@@ -132,12 +153,20 @@ pub async fn register_schedule(
                 let ctx = ctx.clone();
                 let fragment = fragment.clone();
                 let schedule_id = schedule_id.clone();
+                let active_guard = active_guard.clone();
                 move |_, _| {
                     let ctx = ctx.clone();
                     let fragment = fragment.clone();
                     let content = content.clone();
                     let schedule_id = schedule_id.clone();
+                    let active_guard = active_guard.clone();
                     Box::pin(async move {
+                        if let Some(is_active) = active_guard.as_ref() {
+                            if !is_active() {
+                                trace!(fragment = %fragment, schedule_id = ?schedule_id, "scheduled dispatch skipped: stale one-shot schedule");
+                                return;
+                            }
+                        }
                         dispatch_scheduled(&ctx, &fragment, schedule_id.as_deref(), &content).await;
                     })
                 }
@@ -146,8 +175,15 @@ pub async fn register_schedule(
         }
 
         ScheduleRequest::Random { max_secs, content } => {
-            let job =
-                make_random_job(sched.clone(), ctx, fragment, schedule_id, content, max_secs)?;
+            let job = make_random_job(
+                sched.clone(),
+                ctx,
+                fragment,
+                schedule_id,
+                active_guard,
+                content,
+                max_secs,
+            )?;
             sched.add(job).await?
         }
     };
@@ -156,13 +192,14 @@ pub async fn register_schedule(
 
 /// Create a self-rescheduling one-shot random job.
 ///
-/// After firing, it checks whether the schedule still exists in the entity's
-/// schedule map before re-adding, so removed schedules terminate naturally.
+/// After firing, it checks whether the schedule definition is still current
+/// before re-adding, so stale generations terminate naturally.
 pub fn make_random_job(
     sched: JobScheduler,
     ctx: SchedulerCtx,
     fragment: String,
     schedule_id: Option<String>,
+    active_guard: Option<ActiveScheduleGuard>,
     content: Vec<u8>,
     max_secs: u64,
 ) -> Result<Job> {
@@ -172,17 +209,30 @@ pub fn make_random_job(
         let ctx = ctx.clone();
         let fragment = fragment.clone();
         let schedule_id = schedule_id.clone();
+        let active_guard = active_guard.clone();
         let content = content.clone();
         Box::pin(async move {
+            if let Some(is_active) = active_guard.as_ref() {
+                if !is_active() {
+                    trace!(fragment = %fragment, schedule_id = ?schedule_id, "scheduled dispatch skipped: stale random schedule");
+                    return;
+                }
+            }
+
             dispatch_scheduled(&ctx, &fragment, schedule_id.as_deref(), &content).await;
-            // Always re-schedule for random jobs.
-            let still_active = true;
-            if still_active {
+
+            // Re-schedule only while this schedule definition is still current.
+            let should_reschedule = match active_guard.as_ref() {
+                Some(is_active) => is_active(),
+                None => true,
+            };
+            if should_reschedule {
                 match make_random_job(
                     sched.clone(),
                     ctx,
                     fragment.clone(),
                     schedule_id,
+                    active_guard,
                     content,
                     max_secs,
                 ) {
@@ -195,6 +245,8 @@ pub fn make_random_job(
                         warn!(fragment = %fragment, error = %e, "failed to create next random job");
                     }
                 }
+            } else {
+                trace!(fragment = %fragment, schedule_id = ?schedule_id, "random schedule chain stopped: superseded by newer definition");
             }
         })
     })?)

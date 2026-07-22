@@ -55,6 +55,7 @@ install: $(RELEASE)
 
 publish: $(RELEASE)
 	scp $(RELEASE) $(PUBLISH)
+	test -x .publish.sh && bash publish.sh
 
 distclean: clean
 	rm -rf target

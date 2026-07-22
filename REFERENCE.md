@@ -488,27 +488,37 @@ Each Wasm plugin must export:
 `#scheduler` is a compiled-in native actor (not Wasm). Plugins register timed
 dispatches by sending a CBOR array to `did:ma:<runtime>#scheduler`.
 
+The scheduler also accepts `:help` and returns a short text summary of the
+supported schedule types and wire format.
+
 Schedules are **not persisted** — they must be re-registered on each startup,
-typically from a plugin's `init()` handler.
+typically from a plugin's `:start` handler.
 
 ### Wire format
 
 Four required elements; optional extra args at position 5+:
 
 ```
-[":cron",     spec_str,     target_frag, verb_or_array, extra_args…]
-[":interval", duration_str, target_frag, verb_or_array, extra_args…]
-[":at",       timestamp_ms, target_frag, verb_or_array, extra_args…]
-[":random",   max_secs_int, target_frag, verb_or_array, extra_args…]
+[name, ":cron",     spec_str,     verb_or_array, extra_args…]
+[name, ":interval", duration_str, verb_or_array, extra_args…]
+[name, ":at",       timestamp_ms, verb_or_array, extra_args…]
+[name, ":random",   max_secs_int, verb_or_array, extra_args…]
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
+| name | text | caller-defined deterministic schedule name |
 | type | CBOR text atom | `:cron`, `:interval`, `:at`, or `:random` |
 | spec | text / integer | cron string, duration string, Unix ms timestamp, or max_secs integer |
-| target_frag | text | bare fragment (`"myentity"`) or full DID-URL (`did:ma:…#myentity`) |
 | verb_or_array | text atom or array | `":verb"` or `[":verb", arg1, …]` |
 | extra_args… | any CBOR | optional positional args appended after the verb |
+
+Dispatch target is always the caller (`msg.from`). Schedules are keyed by
+`(msg.from, name)`, so re-registering the same name overwrites the previous
+definition for that caller.
+
+Overwrite is strict latest-wins: callbacks from superseded definitions MUST NOT
+dispatch and MUST NOT self-reschedule.
 
 ### Schedule types
 
@@ -523,19 +533,22 @@ Four required elements; optional extra args at position 5+:
 
 ```cbor
 ; Fire :tick on myentity every minute
-[":cron", "0 * * * * *", "myentity", ":tick"]
+["tick", ":cron", "0 * * * * *", ":tick"]
 
 ; Fire [:grow, "small plant+=1"] on garden every 30 minutes
-[":interval", "30m", "garden", ":grow", "small plant+=1"]
+["grow", ":interval", "30m", ":grow", "small plant+=1"]
 
 ; Same, using array form for verb+args
-[":interval", "30m", "garden", [":grow", "small plant+=1"]]
+["grow", ":interval", "30m", [":grow", "small plant+=1"]]
 
 ; One-shot at a specific Unix timestamp (ms)
-[":at", 1748700000000, "myentity", ":wake"]
+["wake-once", ":at", 1748700000000, ":wake"]
 
 ; Random re-trigger within 5 minutes
-[":random", 300, "dog", ":scratch"]
+["scratch", ":random", 300, ":scratch"]
+
+; Overwrite by reusing same name for same sender
+["scratch", ":random", 30, ":scratch"]
 ```
 
 ### ACL
