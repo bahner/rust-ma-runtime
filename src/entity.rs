@@ -484,7 +484,7 @@ pub const RESERVED_ENTITY_NAMES: &[&str] = &["root", "acl", "scheduler", "runtim
 /// knows whether to keep the loaded entity or discard/report it (e.g.
 /// `ma_create_entity` discards a brand-new entity whose `:init` signal
 /// returned `[:error, …]`). Genesis-ness itself is tracked in the
-/// background via `EntityNode.initialized` (below) — never via this type.
+/// background via `EntityNode.initialised` (below) — never via this type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Lifecycle {
@@ -557,7 +557,7 @@ pub struct EntityNode {
     pub attributes: BTreeMap<String, serde_json::Value>,
     /// Opaque, persisted creation payload — raw ma-scheme source text,
     /// evaluated verbatim via the `:init` signal on this entity's very
-    /// first load only (gated by `initialized`, not by this field's
+    /// first load only (gated by `initialised`, not by this field's
     /// presence). Unlike `CreateEntityRequest.init_payload` (the
     /// `ma_create_entity`/`ma-create-actor` transient argument), this is
     /// part of the entity's own published document, so entities created
@@ -579,7 +579,7 @@ pub struct EntityNode {
     /// (there is no `Stopped`/`Error` tracked here) — that information is
     /// purely transient, see [`Lifecycle`].
     #[serde(default)]
-    pub initialized: bool,
+    pub initialised: bool,
 }
 
 /// Read attribute `key`, checking `entity.attributes` first and falling
@@ -710,12 +710,12 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn kind_tree_nested_serialization() {
+    fn kind_tree_nested_serialisation() {
         let mut tree = KindTree::default();
         tree.insert_protocol("/ma/stateless/python/0.0.1", IpldLink::new("bafyAAA"));
         tree.insert_protocol("/ma/stateful/python/0.0.1", IpldLink::new("bafyBBB"));
 
-        let val = serde_json::to_value(&tree).expect("serialize kind tree");
+        let val = serde_json::to_value(&tree).expect("serialise kind tree");
         // Verify nested structure accessible via path segments.
         assert_eq!(
             val["ma"]["stateless"]["python"]["0.0.1"]["/"], "bafyAAA",
@@ -765,10 +765,10 @@ mod tests {
             label: None,
             attributes: BTreeMap::new(),
             init: None,
-            initialized: false,
+            initialised: false,
         };
 
-        let value = serde_json::to_value(&node).expect("serialize entity node");
+        let value = serde_json::to_value(&node).expect("serialise entity node");
         assert!(
             value.get("state").is_none(),
             "state must be omitted when None"
@@ -788,12 +788,12 @@ mod tests {
             label: None,
             attributes: BTreeMap::new(),
             init: None,
-            initialized: false,
+            initialised: false,
         };
-        let value = serde_json::to_value(&node).expect("serialize entity node");
+        let value = serde_json::to_value(&node).expect("serialise entity node");
         assert!(
             value.get("acl").is_some(),
-            "acl must always be present in serialized form"
+            "acl must always be present in serialised form"
         );
     }
 
@@ -820,7 +820,7 @@ mod tests {
             label: None,
             attributes: BTreeMap::new(),
             init: None,
-            initialized: false,
+            initialised: false,
         }
     }
 
@@ -1018,10 +1018,10 @@ mod tests {
             "acl": ""
         }"#;
 
-        let node: EntityNode = serde_json::from_str(raw).expect("deserialize entity node");
+        let node: EntityNode = serde_json::from_str(raw).expect("deserialise entity node");
         assert!(
             node.state.is_none(),
-            "missing state should deserialize as None"
+            "missing state should deserialise as None"
         );
     }
 
@@ -1034,10 +1034,10 @@ mod tests {
             "state": null
         }"#;
 
-        let node: EntityNode = serde_json::from_str(raw).expect("deserialize entity node");
+        let node: EntityNode = serde_json::from_str(raw).expect("deserialise entity node");
         assert!(
             node.state.is_none(),
-            "null state should deserialize as None"
+            "null state should deserialise as None"
         );
     }
 
@@ -1048,10 +1048,10 @@ mod tests {
             "acl": "open"
         }"#;
 
-        let node: EntityNode = serde_json::from_str(raw).expect("deserialize entity node");
+        let node: EntityNode = serde_json::from_str(raw).expect("deserialise entity node");
         assert!(
             node.behaviour.is_none(),
-            "missing behaviour should deserialize as None (native entity)"
+            "missing behaviour should deserialise as None (native entity)"
         );
     }
 }

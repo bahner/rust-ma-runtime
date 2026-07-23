@@ -279,7 +279,7 @@ async fn publish_entities(
                     label: None,
                     attributes: attributes.clone(),
                     init: init.clone(),
-                    initialized: false,
+                    initialised: false,
                 };
                 let cid = kubo::dag_put(kubo_url, &node)
                     .await
@@ -487,7 +487,7 @@ pub async fn load_entities(
         };
 
         if let Some(result) = load_result {
-            if let Some(new_link) = result.initialized_link {
+            if let Some(new_link) = result.initialised_link {
                 manifest.entities.insert(name.clone(), new_link);
                 manifest_updated = true;
             }
@@ -607,7 +607,7 @@ struct LoadEntityArgs<'a> {
 }
 
 struct LoadedEntity {
-    initialized_link: Option<IpldLink>,
+    initialised_link: Option<IpldLink>,
 }
 
 async fn load_wasm_entity(args: LoadEntityArgs<'_>) -> Option<LoadedEntity> {
@@ -634,13 +634,13 @@ async fn load_wasm_entity(args: LoadEntityArgs<'_>) -> Option<LoadedEntity> {
             if let Ok(Some(cid)) = ep.trigger_save(args.kubo_url).await {
                 node.state = Some(IpldLink::new(cid));
             }
-            let updated_link = persist_initialized_transition(&args, &node, &lifecycle).await;
+            let updated_link = persist_initialised_transition(&args, &node, &lifecycle).await;
             args.registry
                 .write()
                 .await
                 .insert(args.name.to_string(), Arc::new(ep));
             Some(LoadedEntity {
-                initialized_link: updated_link,
+                initialised_link: updated_link,
             })
         }
         Err(e) => {
@@ -675,13 +675,13 @@ async fn load_native_entity(
             if let Ok(Some(cid)) = ep.trigger_save(args.kubo_url).await {
                 node.state = Some(IpldLink::new(cid));
             }
-            let updated_link = persist_initialized_transition(&args, &node, &lifecycle).await;
+            let updated_link = persist_initialised_transition(&args, &node, &lifecycle).await;
             args.registry
                 .write()
                 .await
                 .insert(args.name.to_string(), Arc::new(ep));
             Some(LoadedEntity {
-                initialized_link: updated_link,
+                initialised_link: updated_link,
             })
         }
         Err(e) => {
@@ -703,7 +703,7 @@ async fn load_initial_state(node: &EntityNode, kind_node: &KindNode, kubo_url: &
     }
 }
 
-async fn persist_initialized_transition(
+async fn persist_initialised_transition(
     args: &LoadEntityArgs<'_>,
     node: &EntityNode,
     lifecycle: &crate::entity::Lifecycle,
@@ -715,11 +715,11 @@ async fn persist_initialized_transition(
     let mut updated = node.clone();
     let state_changed = args.node.state.as_ref().map(|l| l.cid.as_str())
         != updated.state.as_ref().map(|l| l.cid.as_str());
-    let initialized_changed = !args.node.initialized;
-    if initialized_changed {
-        updated.initialized = true;
+    let initialised_changed = !args.node.initialised;
+    if initialised_changed {
+        updated.initialised = true;
     }
-    if !initialized_changed && !state_changed {
+    if !initialised_changed && !state_changed {
         return None;
     }
     match kubo::dag_put(args.kubo_url, &updated).await {

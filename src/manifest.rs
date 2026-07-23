@@ -276,7 +276,7 @@ mod tests {
             label: None,
             attributes: std::collections::BTreeMap::new(),
             init: None,
-            initialized: false,
+            initialised: false,
         };
         let entity_cid = crate::kubo::dag_put(kubo.url(), &entity_node)
             .await

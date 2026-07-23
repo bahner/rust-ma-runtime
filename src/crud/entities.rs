@@ -420,7 +420,7 @@ mod tests {
             label: None,
             attributes: BTreeMap::new(),
             init: None,
-            initialized: false,
+            initialised: false,
         }
     }
 

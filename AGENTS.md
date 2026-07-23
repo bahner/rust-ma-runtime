@@ -25,6 +25,12 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
 - **No backward compatibility.** This is active development. Clean, simple code
   is preferred over compatibility shims for hypothetical users. Remove old forms
   without hesitation when a better design emerges.
+- **British English for project-owned language.** Use British English in naming,
+  code comments, docs, log/i18n keys, local protocol fields, and schema fields:
+  `behaviour`, `authorise`, `authorised`, `authorisation`, `initialise`,
+  `initialised`, `serialise`, `colour`, and `licence`. Keep externally mandated
+  API names unchanged, such as Rust/serde `Serialize`/`Deserialize`, CSS
+  `color`, HTTP/Web/API terms, crate names, and upstream protocol names.
 - **Two services, nothing more.** Only `/ma/ipfs/0.0.1` and `/ma/rpc/0.0.1`
   are registered. No gossip, no additional RPC.
 - **No local protocol code.** All publish logic, validation, secret-bundle
@@ -326,7 +332,7 @@ internal implementation detail of `crate::kubo` and is invisible to peers.
 
 **Extism host-function traffic is a separate wire boundary from the above,
 and is just raw bytes — not CBOR by default.** `extism-pdk`'s `#[host_fn]`
-macro (guest side) serializes `String`/`Vec<u8>` arguments and return values
+macro (guest side) serialises `String`/`Vec<u8>` arguments and return values
 via `ToBytes`/`FromBytes`, both **identity** for those two types (raw UTF-8
 bytes / raw bytes, no envelope of any kind). Any CBOR seen on a host
 function's `input`/return bytes (e.g. `ma_set_state`) is a **calling-

@@ -408,15 +408,15 @@ pub(super) fn spawn_entity_reload(
                 info!(name = %name, lifecycle = %lifecycle, "{}", crate::i18n::t("entity-reloaded"));
                 // Persist lifecycle/state changes to IPFS, exactly like
                 // bootstrap::load_entities does at startup. Otherwise a later
-                // daemon restart re-reads stale state and/or `initialized`.
+                // daemon restart re-reads stale state and/or `initialised`.
                 let state_changed = entity_node.state.as_ref().map(|l| l.cid.as_str())
                     != updated_node.state.as_ref().map(|l| l.cid.as_str());
                 if lifecycle == crate::entity::Lifecycle::Running
-                    && (!entity_node.initialized || state_changed)
+                    && (!entity_node.initialised || state_changed)
                 {
                     let mut updated = updated_node;
-                    if !entity_node.initialized {
-                        updated.initialized = true;
+                    if !entity_node.initialised {
+                        updated.initialised = true;
                     }
                     match crate::kubo::dag_put(&kubo_rpc_url, &updated).await {
                         Ok(new_cid) => {

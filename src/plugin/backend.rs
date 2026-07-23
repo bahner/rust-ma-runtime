@@ -101,6 +101,19 @@ impl StateCtx {
             dirty: false,
         }
     }
+
+    fn mark_saved(&mut self, bytes: Vec<u8>) {
+        self.persisted = Some(bytes.clone());
+        if self.pending.as_deref() == Some(bytes.as_slice()) {
+            self.pending = None;
+            self.dirty = false;
+        } else {
+            self.dirty = self
+                .pending
+                .as_deref()
+                .is_some_and(|pending| Some(pending) != self.persisted.as_deref());
+        }
+    }
 }
 
 // `ma_set_state` host function: plugin calls this to queue a new state.
@@ -914,7 +927,7 @@ fn execute_dispatch(
         .lock()
         .map_err(|e| anyhow!("state poisoned: {e}"))?
         .pending
-        .take();
+        .clone();
 
     let create_requests = ts
         .create_queue
@@ -1008,14 +1021,13 @@ pub(super) fn run_wasm_thread(
                     .state
                     .get()
                     .ok()
-                    .and_then(|arc| arc.lock().ok().and_then(|mut c| c.pending.take()));
+                    .and_then(|arc| arc.lock().ok().and_then(|c| c.pending.clone()));
                 let _ = reply.send(pending);
             }
             EntityMsg::MarkSaved(bytes) => {
                 if let Ok(arc) = ts.state.get() {
                     if let Ok(mut c) = arc.lock() {
-                        c.persisted = Some(bytes);
-                        c.dirty = false;
+                        c.mark_saved(bytes);
                     }
                 }
             }
@@ -1073,7 +1085,9 @@ fn from_cbor_bytes<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{derived_id, fragment_from_hint, generate_fragment, ENTITY_FRAGMENT_CONTEXT};
+    use super::{
+        derived_id, fragment_from_hint, generate_fragment, StateCtx, ENTITY_FRAGMENT_CONTEXT,
+    };
 
     #[test]
     fn generate_fragment_is_8_alphanumeric() {
@@ -1097,5 +1111,25 @@ mod tests {
             derived_id(&key, ENTITY_FRAGMENT_CONTEXT, hint, 8)
         );
         assert_eq!(fragment_from_hint(&key, hint).len(), 16);
+    }
+
+    #[test]
+    fn mark_saved_keeps_newer_pending_state() {
+        let mut state = StateCtx::new(b"initial".to_vec());
+        state.pending = Some(b"old".to_vec());
+        state.dirty = true;
+
+        state.pending = Some(b"new".to_vec());
+        state.mark_saved(b"old".to_vec());
+
+        assert_eq!(state.persisted.as_deref(), Some(b"old".as_slice()));
+        assert_eq!(state.pending.as_deref(), Some(b"new".as_slice()));
+        assert!(state.dirty);
+
+        state.mark_saved(b"new".to_vec());
+
+        assert_eq!(state.persisted.as_deref(), Some(b"new".as_slice()));
+        assert!(state.pending.is_none());
+        assert!(!state.dirty);
     }
 }

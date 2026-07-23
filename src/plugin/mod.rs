@@ -210,7 +210,7 @@ impl EntityPlugin {
     ) -> Result<(Self, Lifecycle)> {
         let fragment = fragment.into();
         let kind = kind_node.plugin_kind();
-        let is_genesis = !node.initialized;
+        let is_genesis = !node.initialised;
         run_native_lifecycle(&fragment, &actor, is_genesis, init_state, init_payload)?;
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<EntityMsg>();
@@ -249,7 +249,7 @@ impl EntityPlugin {
     /// `init_payload` is the opaque creation payload for the `:init` signal
     /// (§14.2.1); pass `None` for an ordinary reload (bootstrap/restart) of
     /// an already-existing entity. It is only meaningful when
-    /// `node.initialized` is `false` (this entity's very first load) —
+    /// `node.initialised` is `false` (this entity's very first load) —
     /// `:init` fires exactly once, ever, for a given entity.
     ///
     /// Returns `(handle, Lifecycle::Running)` on success, or
@@ -383,7 +383,7 @@ impl EntityPlugin {
             Vec::new()
         };
 
-        let is_genesis = !node.initialized;
+        let is_genesis = !node.initialised;
 
         // Assemble all Send-able data the worker thread needs.  The Wasm
         // Plugin and its host Functions are built *on* the thread.
@@ -697,7 +697,7 @@ mod hostile {
             label: None,
             attributes: BTreeMap::new(),
             init: None,
-            initialized: false,
+            initialised: false,
         }
     }
 

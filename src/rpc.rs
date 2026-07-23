@@ -557,7 +557,7 @@ async fn handle_entity_plugin_message(
             label: None,
             attributes: std::collections::BTreeMap::new(),
             init: None,
-            initialized: false,
+            initialised: false,
         };
 
         let (iroh_node_id, started_at) = {
@@ -587,7 +587,7 @@ async fn handle_entity_plugin_message(
         {
             Ok((ep, Lifecycle::Running)) => {
                 let mut running_node = entity_node.clone();
-                running_node.initialized = true;
+                running_node.initialised = true;
                 if let Ok(Some(cid)) = ep.trigger_save(&ctx.kubo_rpc_url).await {
                     running_node.state = Some(IpldLink::new(cid));
                 }
@@ -660,10 +660,10 @@ async fn handle_entity_plugin_message(
             continue;
         };
 
-        // Authorization: caller must be the target's parent (or self-delete).
-        let authorized = target.parent.as_deref() == Some(entity.fragment.as_str())
+        // Authorisation: caller must be the target's parent (or self-delete).
+        let authorised = target.parent.as_deref() == Some(entity.fragment.as_str())
             || target_fragment == entity.fragment;
-        if !authorized {
+        if !authorised {
             warn!(caller = %entity.fragment, target = %target_fragment,
                 "ma_delete_entity: caller is not parent; denied");
             continue;
@@ -906,7 +906,7 @@ mod tests {
             label: None,
             attributes: BTreeMap::new(),
             init: None,
-            initialized: true,
+            initialised: true,
         };
         let job_scheduler = Arc::new(tokio_cron_scheduler::JobScheduler::new().await.unwrap());
         let native_actor = scheduler_actor::native_actor(
