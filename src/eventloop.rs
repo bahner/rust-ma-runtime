@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::Result;
 use ma_core::config::Config;
 use ma_core::{
-    Did, Inbox, IpfsGatewayResolver, MaEndpoint, Message, SigningKey, INBOX_PROTOCOL_ID,
+    ipfs_add, Did, Inbox, IpfsGatewayResolver, MaEndpoint, Message, SigningKey, INBOX_PROTOCOL_ID,
     IPFS_PROTOCOL_ID, MESSAGE_TYPE_CRUD, MESSAGE_TYPE_CRUD_REPLY,
     MESSAGE_TYPE_IDENTITY_PUBLISH_REQUEST, MESSAGE_TYPE_IPFS_REQUEST, MESSAGE_TYPE_RPC,
     MESSAGE_TYPE_RPC_REPLY,
@@ -130,7 +130,7 @@ async fn dispatch_local_plugin_envelope(
         let writer = manifest_writer.clone();
         let kubo_url = kubo_url.to_string();
         tokio::spawn(async move {
-            match crate::kubo::dag_put(&kubo_url, &state_bytes).await {
+            match ipfs_add(&kubo_url, state_bytes.clone()).await {
                 Ok(cid) => match writer.set_entity_state(&entity_arc.fragment, &cid).await {
                     Ok(root_cid) => {
                         entity_arc.mark_saved(state_bytes);
