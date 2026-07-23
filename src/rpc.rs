@@ -121,7 +121,7 @@ async fn apply_behaviour_request(req: SetBehaviourRequest, ctx: &RpcHandlerCtx) 
         .map(normalize_behaviour_cid)
         .transpose()?;
     let current_entity = ctx.entity_registry.read().await.get(&req.fragment).cloned();
-    if let Some(current) = current_entity {
+    if let Some(ref current) = current_entity {
         match current.trigger_save(&ctx.kubo_rpc_url).await {
             Ok(Some(state_cid)) => {
                 ctx.manifest_writer
@@ -134,8 +134,11 @@ async fn apply_behaviour_request(req: SetBehaviourRequest, ctx: &RpcHandlerCtx) 
             }
         }
     }
-    let updated_node =
+    let mut updated_node =
         load_entity_node_for_update(ctx, &req.fragment, behaviour_cid.as_deref()).await?;
+    if current_entity.is_some() {
+        updated_node.initialised = true;
+    }
     let kind_node = ctx
         .kind_registry
         .read()

@@ -164,6 +164,7 @@ impl ManifestWriter {
         let mut entity_node: EntityNode =
             crate::kubo::dag_get(&inner.kubo_url, &entity_link.cid).await?;
         entity_node.behaviour = behaviour_cid.map(IpldLink::new);
+        entity_node.initialised = true;
         let entity_cid = crate::kubo::dag_put(&inner.kubo_url, &entity_node).await?;
         manifest
             .entities
@@ -307,6 +308,51 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(updated_node.state.unwrap().cid, "bafystate");
+    }
+
+    #[tokio::test]
+    async fn set_entity_behaviour_marks_entity_initialised() {
+        let kubo = MockKubo::start().await;
+        let entity_node = crate::entity::EntityNode {
+            kind: "/ma/room/0.0.1".to_string(),
+            behaviour: None,
+            acl: "open".to_string(),
+            state: None,
+            parent: None,
+            label: None,
+            attributes: std::collections::BTreeMap::new(),
+            init: Some("(set-prop! \"name\" \"Construct\")".to_string()),
+            initialised: false,
+        };
+        let entity_cid = crate::kubo::dag_put(kubo.url(), &entity_node)
+            .await
+            .unwrap();
+        let mut manifest = RuntimeManifest::default();
+        manifest
+            .entities
+            .insert("construct".to_string(), IpldLink::new(entity_cid));
+        let initial = crate::kubo::dag_put(kubo.url(), &manifest).await.unwrap();
+        let stats = Arc::new(RwLock::new(Stats {
+            root_cid: Some(initial.clone()),
+            ..Default::default()
+        }));
+        let writer =
+            ManifestWriter::new(initial, kubo.url().to_string(), stats.clone(), None, None);
+
+        let root_cid = writer
+            .set_entity_behaviour("construct", Some("bafybehaviour"))
+            .await
+            .unwrap();
+
+        let updated_manifest: RuntimeManifest =
+            crate::kubo::dag_get(kubo.url(), &root_cid).await.unwrap();
+        let updated_link = updated_manifest.entities.get("construct").unwrap();
+        let updated_node: crate::entity::EntityNode =
+            crate::kubo::dag_get(kubo.url(), &updated_link.cid)
+                .await
+                .unwrap();
+        assert!(updated_node.initialised);
+        assert_eq!(updated_node.behaviour.unwrap().cid, "bafybehaviour");
     }
 
     #[tokio::test]
