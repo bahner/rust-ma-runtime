@@ -477,14 +477,14 @@ struct BehaviourCtx {
 // reference (ma-scheme-v1.md §11.1) -- a literal `#!/ipfs/<cid>` or
 // `#!/ipns/<key>` token -- to its raw content bytes. A single, flat fetch;
 // all recursion/depth/cycle tracking is the guest's own responsibility
-// (`rust-ma-scheme-actor`'s `src/include.rs`), not this host function's.
+// (`lambda-ma/scheme-actor`), not this host function's.
 //
 // Input is raw UTF-8 bytes, NOT CBOR: extism-pdk's `#[host_fn]` macro
 // sends a `String` argument via `ToBytes for String` (identity — the raw
 // bytes of the string), not through CBOR encoding. Unlike the
 // CBOR-encoded inputs elsewhere in this file (written to match Python
 // actors manually constructing CBOR payloads), this host function is
-// called only by the Rust ma-scheme-actor guest via that macro, so it
+// called only by the Rust ma-scheme actor guest via that macro, so it
 // must match what the macro actually sends.
 host_fn!(ma_ipfs_include_fn(user_data: BehaviourCtx; input: Vec<u8>) -> Vec<u8> {
     let reference = String::from_utf8(input)

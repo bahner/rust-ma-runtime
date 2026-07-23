@@ -308,18 +308,20 @@ stored automatically.
 
 ---
 
-## Step 8 — Bootstrap with kinds
+## Step 8 — Bootstrap a world manifest
 
 Kinds define the protocol a plugin speaks — its API, host functions, and
 whether it is stateful.  They live in the `RuntimeManifest` on IPFS and
 are the contract that lets `ma` load and dispatch any plugin that conforms.
 
-Before you can load entities you need kinds in your manifest.  The easiest
-way is to bootstrap from `bootstrap.example.yaml` (already in the repo):
+`ma` knows how to publish a bootstrap YAML, but concrete kind catalogues are
+world/profile data. The λ-間 world keeps its kind descriptors and generated
+bootstrap in the `lambda-ma` workspace. Build that profile there, then point
+this runtime at the generated YAML:
 
 ```sh
 # Publish the manifest tree to IPFS, get back the root CID
-ma --gen-root-cid bootstrap.example.yaml
+ma --gen-root-cid ../lambda-ma/dist/lambda-ma.yaml
 
 # Output:
 # bafyreiabc123…
@@ -329,16 +331,6 @@ echo "root_cid: bafyreiabc123…" >> ~/.config/ma/ma.yaml
 ```
 
 Then restart `ma` and it will load the kinds and entities from the new manifest.
-
-The example bootstrap ships with these standard kinds out of the box:
-
-| Kind | Protocol | Description |
-|------|----------|-------------|
-| `root` | `/ma/python/root/0.0.1` | Entity lifecycle orchestrator |
-| `counter` | `/ma/python/counter/0.0.1` | Atomic integer with `:get/:inc/:dec/:set` |
-| `register` | `/ma/python/register/0.0.1` | Bijective key↔value map |
-| `set` | `/ma/python/set/0.0.1` | Unordered unique-value collection |
-| `fortune` | `/ma/python/actor/0.0.1` | Stateless-style Python handler (own Wasm via `behaviour`) |
 
 Kinds are the most important architectural decision in your runtime.  A
 kind defines the whole contract — changing a kind after entities use it is

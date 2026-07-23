@@ -227,12 +227,13 @@ To add a permanent ACL to the manifest:
 @ma:acl: <cid>   # set an AclMap CID as the root transport-gate ACL
 ```
 
-### 3. Bootstrap entities and locales (optional)
+### 3. Bootstrap a world manifest (optional)
 
-Run once after Kubo is ready to set up the entity system:
+Run once after Kubo is ready to set up the entity system from a world/profile
+bootstrap. For λ-間:
 
 ```sh
-ma --gen-root-cid bootstrap.example.yaml
+ma --gen-root-cid ../lambda-ma/dist/lambda-ma.yaml
 ```
 
 This publishes kind nodes, entity nodes, and the root `RuntimeManifest` as

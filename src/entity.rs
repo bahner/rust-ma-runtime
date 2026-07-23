@@ -196,7 +196,7 @@ pub enum PluginKind {
 /// integers in the uint32 range triggered a broken
 /// `struct.unpack_from('>I',…)` code path in **extism-py** WASM builds,
 /// crashing every `handle_call`). That was a Python-guest-specific bug —
-/// the reference Rust guest (`rust-ma-scheme-actor`, via `ciborium`) has no
+/// the reference Rust guest (`lambda-ma/scheme-actor`, via `ciborium`) has no
 /// such issue, and ma-scheme-v1.md §4 requires `msg-created-at`/`msg-exp`
 /// accessors, so both fields are reinstated here. A Python plugin built
 /// against the old extism-py would need its own fix on that side before

@@ -10,8 +10,8 @@
 //! ma-scheme-level concern, handled by the dialect's own
 //! `ma-include-ipfs` primitive, which calls `ma_ipfs_include` once per
 //! reference it encounters and performs its own recursion/depth/cycle
-//! tracking on the guest side (see `rust-ma-scheme-actor`'s
-//! `src/include.rs`). This module is now a single, flat,
+//! tracking on the guest side (see `lambda-ma/scheme-actor`). This module is
+//! now a single, flat,
 //! reference-to-bytes resolver — nothing more.
 
 use anyhow::{anyhow, Context, Result};

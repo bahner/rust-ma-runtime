@@ -42,8 +42,6 @@ src/i18n.yaml: $(wildcard i18n/*.ftl)
 	} > src/i18n.yaml; \
 	echo "Written src/i18n.yaml (i18n_cid=$$lang_cid)"
 
-gen-kinds-cids:
-
 $(RELEASE): $(SRCS)
 	$(CARGO) build --release
 

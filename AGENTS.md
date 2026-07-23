@@ -339,8 +339,8 @@ function's `input`/return bytes (e.g. `ma_set_state`) is a **calling-
 convention choice made by that specific guest library** (Python actors
 manually CBOR-encode via `cbor2` to match what `python-ma-actors`' actor
 library expects), not something Extism or this runtime imposes. A Rust
-guest calling a host function via the `#[host_fn]` macro (e.g.
-`rust-ma-scheme-actor`) gets raw bytes both ways unless it manually
+guest calling a host function via the `#[host_fn]` macro (e.g. the
+`lambda-ma/scheme-actor` guest) gets raw bytes both ways unless it manually
 CBOR-encodes/decodes itself — **the host-side implementation of any given
 host function must match whatever encoding its actual callers use**, not
 assume CBOR uniformly. Mixing this up (host expects CBOR, guest sends raw

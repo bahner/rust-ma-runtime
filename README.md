@@ -220,14 +220,17 @@ owners:
 
 ### Bootstrap (optional)
 
-To pre-populate entity kinds and a runtime manifest from a YAML description:
+To pre-populate entity kinds and a runtime manifest from a YAML description,
+use a world/profile bootstrap such as λ-間's generated file:
 
 ```sh
-ma --gen-root-cid bootstrap.example.yaml
+ma --gen-root-cid ../lambda-ma/dist/lambda-ma.yaml
 # prints a root_cid — add it to ma.yaml or pass via --root-cid
 ```
 
-See [REFERENCE.md](REFERENCE.md) for the full bootstrap YAML schema.
+See [REFERENCE.md](REFERENCE.md) for the full bootstrap YAML schema. The local
+[bootstrap.example.yaml](bootstrap.example.yaml) is a minimal schema skeleton;
+concrete kind descriptors are maintained by the profile that owns them.
 
 ### Run
 
