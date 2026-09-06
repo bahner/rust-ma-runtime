@@ -1,3 +1,9 @@
+ma-runtime (0.6.1-1) UNRELEASED; urgency=medium
+
+  * Update ma-core 
+
+ -- Lars Bahner <bahner@debian.org>  Sun, 06 Sep 2026 18:21:34 +0200
+
 ma-runtime (0.6.0-1) unstable; urgency=medium
 
   * SImply just a lotta upgrades and a new "major" version 

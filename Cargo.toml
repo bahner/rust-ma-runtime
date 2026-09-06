@@ -34,6 +34,10 @@ time = { version = "0.3", features = ["std"] }
 uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
 unic-langid = "0.9"
+# Keep in lockstep with `extism`: we pass a `wasmtime::Config` into
+# `extism::PluginBuilder::with_wasmtime_config`, so both crates must resolve
+# to the same wasmtime version. Bump `extism` and `wasmtime` together once
+# extism ships a release on wasmtime 48 (extism commit d5da297).
 wasmtime = "43"
 zeroize = "1"
 
