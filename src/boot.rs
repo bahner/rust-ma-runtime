@@ -50,6 +50,13 @@ pub fn generate_and_persist_headless_config(ma_args: &MaArgs) -> Result<()> {
     Ok(())
 }
 
+/// Filesystem path for the embedded IPFS node's blockstore.
+fn ipfs_repo_path() -> Result<std::path::PathBuf> {
+    let dirs = directories::ProjectDirs::from("", "ma", "ma")
+        .ok_or_else(|| anyhow!("cannot determine XDG base directories"))?;
+    Ok(dirs.data_dir().join("ipfs"))
+}
+
 /// Waits for the Kubo RPC API at `kubo_rpc_url` to become reachable.
 async fn wait_for_kubo_ready(kubo_rpc_url: &str, context_msg: &'static str) -> Result<()> {
     let publisher = IpfsDidPublisher::new(kubo_rpc_url)
@@ -1036,6 +1043,17 @@ impl Boot {
             .ok_or_else(|| anyhow!("secret bundle is missing extra key 'runtime_ipns'"))?;
         let runtime_ipns_id = ipns_from_secret(runtime_ipns_key)
             .context("failed to derive runtime IPNS id from 'runtime_ipns' key")?;
+
+        // ── Embedded IPFS node (replaces the external Kubo daemon) ────────────
+        let node = crate::node::IpfsNode::start(
+            ipfs_repo_path()?,
+            secrets.ipns_secret_key,
+            runtime_ipns_key,
+            &[],
+        )
+        .await
+        .context("failed to start embedded IPFS node")?;
+        crate::node::set_global(node).context("IPFS node already initialised")?;
 
         let crud_enabled = self
             .config

@@ -11,6 +11,7 @@ mod i18n;
 mod ipfs;
 mod kubo;
 mod manifest;
+mod node;
 mod plugin;
 mod republish;
 mod routing;
