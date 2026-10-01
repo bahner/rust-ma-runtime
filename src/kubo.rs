@@ -1,16 +1,31 @@
-//! Thin block/IPLD operations backed by the embedded IPFS node.
+//! Thin Kubo RPC block/IPLD operations.
 //!
-//! These were formerly Kubo HTTP API wrappers. The runtime now runs its own
-//! node, so every operation delegates to [`crate::node::global`]. The `kubo_url`
-//! parameters are vestigial and retained only so call sites keep compiling
-//! during the migration; they are removed in the final cleanup pass.
+//! Kubo RPC (`http://127.0.0.1:5001` by default) is the runtime's single IPFS
+//! backend — publishing, DID/IPNS resolution and content reads all go through
+//! the Kubo RPC API, and the runtime always requires a running Kubo daemon.
+//! `ma-core` owns the higher-level publish/DID logic; this module is the
+//! runtime-local glue for the raw DAG block operations that `ma-core`
+//! deliberately does not re-export (`dag_put`, `dag_get`, `dag_resolve`, pin
+//! management). Clients that cannot reach Kubo (e.g. browser wasm) supply their
+//! own IPFS instead.
+//!
+//! Every request is bounded by a client timeout and passes through a small
+//! semaphore gate: `dag/get` on a CID that is not in the local store makes Kubo
+//! search the network, and without a client-side bound that request (and
+//! whatever task awaits it) would hang indefinitely.
 
-use anyhow::Result;
-use serde::{de::DeserializeOwned, Serialize};
+use anyhow::{anyhow, Result};
+use reqwest::multipart;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::sync::OnceLock;
+use std::time::Duration;
+use tokio::sync::{Semaphore, SemaphorePermit};
 
-/// HTTP client kept for the status-server gateway relay until that path is
-/// migrated to the embedded node as well.
+const MAX_CONCURRENT_KUBO_REQUESTS: usize = 16;
+const KUBO_PERMIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Shared HTTP client with hard timeouts, also used by the runtime's other
+/// Kubo RPC call sites (`ipfs.rs`, `status.rs`).
 pub fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -23,42 +38,273 @@ pub fn client() -> &'static reqwest::Client {
     })
 }
 
-fn node() -> Result<crate::node::IpfsNode> {
-    crate::node::global()
+fn request_gate() -> &'static Semaphore {
+    static GATE: OnceLock<Semaphore> = OnceLock::new();
+    GATE.get_or_init(|| Semaphore::new(MAX_CONCURRENT_KUBO_REQUESTS))
 }
 
-/// Publish a serialisable value as a `dag-cbor` node via the embedded node.
-pub async fn dag_put<T: Serialize + Sync>(_kubo_url: &str, value: &T) -> Result<String> {
-    node()?.put_dag(value).await
+async fn acquire_request_permit(op: &str) -> Result<SemaphorePermit<'static>> {
+    tokio::time::timeout(KUBO_PERMIT_TIMEOUT, request_gate().acquire())
+        .await
+        .map_err(|_| anyhow!("kubo request queue timed out for {op}"))?
+        .map_err(|_| anyhow!("kubo request gate closed for {op}"))
 }
 
-/// Recursively pin a CID.
-pub async fn pin_add(_kubo_url: &str, cid: &str) -> Result<()> {
-    node()?.pin(cid).await
+// ── Response types ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct DagPutCid {
+    #[serde(rename = "/")]
+    slash: String,
 }
 
-/// Move the live pin from `old_cid` to `new_cid`. The old pin is dropped and
-/// reclaimed by garbage collection.
-pub async fn pin_update(_kubo_url: &str, _old_cid: &str, new_cid: &str) -> Result<()> {
-    node()?.pin(new_cid).await
+#[derive(Deserialize)]
+struct DagPutResponse {
+    #[serde(default, rename = "Cid")]
+    cid_upper: Option<DagPutCid>,
+    #[serde(default)]
+    cid: Option<DagPutCid>,
 }
 
-/// Add raw bytes as a UnixFS file without creating a direct pin.
-pub async fn ipfs_add_bytes_unpinned(_kubo_url: &str, data: Vec<u8>) -> Result<String> {
-    node()?.add_bytes(data).await
+#[derive(Deserialize)]
+struct DagResolveResponse {
+    #[serde(rename = "Cid")]
+    cid: DagPutCid,
 }
 
-/// Fetch raw bytes from IPFS for a CID.
-pub async fn cat_bytes(_kubo_url: &str, cid: &str) -> Result<Vec<u8>> {
-    node()?.cat(&format!("/ipfs/{cid}")).await
+#[derive(Deserialize)]
+struct AddResponse {
+    #[serde(rename = "Hash")]
+    hash: String,
 }
 
-/// Fetch an IPLD node and deserialise it from `dag-cbor`.
-pub async fn dag_get<T: DeserializeOwned>(_kubo_url: &str, cid: &str) -> Result<T> {
-    node()?.get_dag_value::<T>(cid).await
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Store a serialisable value as a `dag-cbor` IPLD node via Kubo.
+///
+/// Input is serialised as `dag-json`; Kubo converts and stores it as
+/// `dag-cbor`. The node is deliberately **not** directly pinned — runtime state
+/// is kept alive by the recursive pin on the root manifest (see [`pin_add`] /
+/// [`pin_update`]). Returns the resulting CID string.
+pub async fn dag_put<T: Serialize + Sync>(kubo_url: &str, value: &T) -> Result<String> {
+    let _permit = acquire_request_permit("dag/put").await?;
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/dag/put");
+    let payload = serde_json::to_vec(value)?;
+
+    let part = multipart::Part::bytes(payload)
+        .file_name("node.json")
+        .mime_str("application/json")?;
+    let form = multipart::Form::new().part("file", part);
+
+    let body = client()
+        .post(url)
+        .query(&[
+            ("store-codec", "dag-cbor"),
+            ("input-codec", "dag-json"),
+            ("pin", "false"),
+        ])
+        .multipart(form)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    let parsed: DagPutResponse = serde_json::from_str(&body)
+        .map_err(|e| anyhow!("failed parsing dag/put response: {e} body={body}"))?;
+    parsed
+        .cid_upper
+        .or(parsed.cid)
+        .map(|c| c.slash)
+        .ok_or_else(|| anyhow!("missing CID in dag/put response: {body}"))
 }
 
-/// Resolve an IPFS/IPNS path (or bare CID) to a bare CID string.
-pub async fn dag_resolve(_kubo_url: &str, path: &str) -> Result<String> {
-    node()?.resolve(path).await
+/// Recursively pin a CID. Used for first-time bootstrap when there is no prior
+/// root to update from.
+pub async fn pin_add(kubo_url: &str, cid: &str) -> Result<()> {
+    let _permit = acquire_request_permit("pin/add").await?;
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/pin/add");
+    client()
+        .post(&url)
+        .query(&[("arg", cid), ("recursive", "true")])
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+/// Atomically move the recursive pin from `old_cid` to `new_cid` via Kubo's
+/// `pin/update` endpoint (`unpin=true`). If `old_cid` was not pinned, falls back
+/// to [`pin_add`] of `new_cid` so first-time callers work too.
+pub async fn pin_update(kubo_url: &str, old_cid: &str, new_cid: &str) -> Result<()> {
+    let permit = acquire_request_permit("pin/update").await?;
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/pin/update");
+    let resp = client()
+        .post(&url)
+        .query(&[("arg", old_cid), ("arg", new_cid), ("unpin", "true")])
+        .send()
+        .await?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+    let body = resp.text().await.unwrap_or_default();
+    // Kubo returns "not recursively pinned already" (or similar) when the old
+    // CID was never pinned. Fall back to a plain recursive pin of the new CID.
+    if body.contains("not recursively pinned") || body.contains("not pinned") {
+        drop(permit);
+        return pin_add(kubo_url, new_cid).await;
+    }
+    Err(anyhow!("pin/update {old_cid} → {new_cid} failed: {body}"))
+}
+
+async fn ipfs_add_bytes_with_pin(kubo_url: &str, data: Vec<u8>, pin: bool) -> Result<String> {
+    let _permit = acquire_request_permit("add").await?;
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/add");
+
+    let part = multipart::Part::bytes(data).file_name("data");
+    let form = multipart::Form::new().part("file", part);
+
+    let body = client()
+        .post(url)
+        .query(&[("pin", if pin { "true" } else { "false" })])
+        .multipart(form)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    let parsed: AddResponse = serde_json::from_str(&body)
+        .map_err(|e| anyhow!("failed parsing add response: {e} body={body}"))?;
+    Ok(parsed.hash)
+}
+
+/// Add raw bytes to IPFS via Kubo without creating a direct local pin.
+///
+/// Use this for runtime-owned state that is linked from the root manifest and
+/// therefore kept alive by the root recursive pin lifecycle.
+pub async fn ipfs_add_bytes_unpinned(kubo_url: &str, data: Vec<u8>) -> Result<String> {
+    ipfs_add_bytes_with_pin(kubo_url, data, false).await
+}
+
+/// Fetch raw bytes from IPFS through Kubo's `/cat` endpoint.
+pub async fn cat_bytes(kubo_url: &str, cid: &str) -> Result<Vec<u8>> {
+    let _permit = acquire_request_permit("cat").await?;
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/cat");
+
+    let bytes = client()
+        .post(url)
+        .query(&[("arg", cid)])
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
+
+    Ok(bytes.to_vec())
+}
+
+/// Fetch an IPLD node from Kubo and deserialise it from `dag-json`.
+pub async fn dag_get<T: DeserializeOwned>(kubo_url: &str, cid: &str) -> Result<T> {
+    let _permit = acquire_request_permit("dag/get").await?;
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/dag/get");
+
+    let body = client()
+        .post(&url)
+        .query(&[("arg", cid), ("output-codec", "dag-json")])
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    serde_json::from_str(&body)
+        .map_err(|e| anyhow!("failed to deserialise dag/get response for {cid}: {e} body={body}"))
+}
+
+/// Resolve an IPFS/IPNS path to a bare CID string.
+///
+/// Accepts bare CIDs (`bafy…`), `/ipfs/<cid>`, and `/ipns/<key>` paths.
+/// `/ipns/` paths are resolved through Kubo's name resolution.
+pub async fn dag_resolve(kubo_url: &str, path: &str) -> Result<String> {
+    // Bare CID — nothing to resolve.
+    if !path.starts_with('/') {
+        return Ok(path.to_string());
+    }
+
+    let _permit = acquire_request_permit("dag/resolve").await?;
+
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/dag/resolve");
+
+    let body = client()
+        .post(&url)
+        .query(&[("arg", path)])
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    let parsed: DagResolveResponse = serde_json::from_str(&body)
+        .map_err(|e| anyhow!("failed parsing dag/resolve response for {path}: {e} body={body}"))?;
+    Ok(parsed.cid.slash)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::Bytes,
+        extract::{RawQuery, State},
+        routing::post,
+        Router,
+    };
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    #[derive(Clone, Default)]
+    struct AddState(Arc<Mutex<Vec<String>>>);
+
+    async fn add_handler(State(state): State<AddState>, RawQuery(q): RawQuery, _: Bytes) -> String {
+        let pin = q
+            .unwrap_or_default()
+            .split('&')
+            .find_map(|kv| kv.strip_prefix("pin="))
+            .unwrap_or("")
+            .to_string();
+        state.0.lock().await.push(pin);
+        "{\"Hash\":\"bafyreibkhaddtestcid\"}".to_string()
+    }
+
+    async fn start_add_server(state: AddState) -> String {
+        let app = Router::new()
+            .route("/api/v0/add", post(add_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn state_add_uses_unpinned_kubo_add() {
+        let state = AddState::default();
+        let url = start_add_server(state.clone()).await;
+
+        let cid = ipfs_add_bytes_unpinned(&url, b"state".to_vec())
+            .await
+            .unwrap();
+
+        assert_eq!(cid, "bafyreibkhaddtestcid");
+        assert_eq!(state.0.lock().await.as_slice(), &["false"]);
+    }
 }

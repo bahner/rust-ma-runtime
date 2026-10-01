@@ -44,6 +44,13 @@ A minimal status HTTP server runs on `127.0.0.1:5003` (configurable).
 - **No local protocol code.** All publish logic, validation, secret-bundle
   handling, config, ACL, and transport are provided by the `ma-core` crate.
   Local code is nothing but glue.
+- **Kubo RPC is the only IPFS backend.** The runtime always requires a running
+  Kubo daemon (`kubo_rpc_url`, default `http://127.0.0.1:5001`). Publishing,
+  DID/IPNS resolution and all content reads go through the Kubo RPC API. There
+  is no embedded IPFS node and no HTTP gateway in the runtime or in ma-core;
+  the runtime-local `src/kubo.rs` is thin glue over Kubo RPC for the raw DAG
+  block operations (`dag_put`, `dag_get`, pin management) that ma-core does not
+  re-export.
 - **Entry/start room naming.** The conventional entry/`start` room fragment is
   `#concourse` — `src/boot.rs` writes it as the default `start` config value
   (`{our_did}#concourse`). This is distinct from `Construct` (capital C), the
@@ -147,11 +154,11 @@ Only published crates — **never local paths**:
 
 ```toml
 anyhow = "1"
-axum = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
 ciborium = "0.2"
 clap = { version = "4", features = ["derive"] }
-directories = "5"
-ma-core = { version = "^0.14.4", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
+ma-core = { version = "^0.15", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart"] }
 serde_json = "1"
 serde_yaml = "0.9"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
@@ -159,12 +166,12 @@ tracing = "0.1"
 zeroize = "1"
 ```
 
-`ma-core 0.14.4` exposes everything this daemon uses for DID handling, so no
+`ma-core 0.15` exposes everything this daemon uses for DID handling, so no
 direct `ma-did` dependency is required.
 
 ### DID document publication
 
-- Keep `ma-core` at `^0.14.4` or newer and use the published crate, never a
+- Keep `ma-core` at `^0.15` or newer and use the published crate, never a
   committed path dependency.
 - Build runtime documents with `SecretBundle::build_document` after
   canonicalising legacy bundle `created_at` values to RFC 3339 UTC whole
@@ -218,8 +225,8 @@ reload a config file; CLI/environment slug overrides it.
 | `kubo_key_alias` | string | IPNS key alias in Kubo |
 | `log_level` | string | Log level for the log file |
 | `log_level_stdout` | string | Log level for stdout |
-| `did_resolver_positive_ttl_secs` | u64 | Cache TTL for resolved DIDs |
-| `did_resolver_negative_ttl_secs` | u64 | Cache TTL for failed DID lookups |
+| `did_resolver_positive_ttl_secs` | u64 | Legacy — no longer consulted; DID documents are cached in-process (see `did_refresh_interval_secs`) |
+| `did_resolver_negative_ttl_secs` | u64 | Legacy — no longer consulted; failed resolutions are not cached |
 | `log_file` | string or null | Path to log file |
 | `root_cid` | string | Runtime manifest head CID; read at startup and updated whenever the head changes |
 
@@ -482,7 +489,7 @@ typically from a plugin's `init()` when `lifecycle == "new"` or always on init.
 | Replay guard | `ReplayGuard::default()` + `check_and_insert(&headers)` |
 | ACL | `AclMap` (serde-deserialised from YAML) + `check_cap(acl, caller, cap)` |
 | Outbox (pong) | `endpoint.outbox(&resolver, &sender_did, INBOX_PROTOCOL_ID).await` → `outbox.send(&msg)` |
-| Resolver | `IpfsGatewayResolver::new(kubo_rpc_url)` |
+| Resolver | `KuboDidResolver::new(kubo_rpc_url)` |
 
 ## Security notes
 

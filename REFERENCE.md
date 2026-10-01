@@ -796,9 +796,9 @@ in memory and are saved to `config.yaml`:
 | `log_level` | string | Log level for the log file |
 | `log_level_stdout` | string | Log level for stdout |
 | `log_file` | string or null | Path to log file |
-| `did_resolver_positive_ttl_secs` | u64 | Cache TTL for resolved DIDs |
-| `did_resolver_negative_ttl_secs` | u64 | Cache TTL for failed DID lookups |
-| `did_refresh_interval_secs` | non-negative integer | Interval for checking runtime-cached DID documents against IPFS (default `86400`). A nonzero value runs an immediate sweep at startup; `0` disables background refresh. Runtime changes reschedule immediately, and re-enabling runs an immediate sweep. Gateway results replace cached documents only when `updatedAt` is newer. |
+| `did_resolver_positive_ttl_secs` | u64 | Legacy — no longer consulted; DID documents are cached in-process (see `did_refresh_interval_secs`) |
+| `did_resolver_negative_ttl_secs` | u64 | Legacy — no longer consulted; failed resolutions are not cached |
+| `did_refresh_interval_secs` | non-negative integer | Interval for checking runtime-cached DID documents against IPFS (default `86400`). A nonzero value runs an immediate sweep at startup; `0` disables background refresh. Runtime changes reschedule immediately, and re-enabling runs an immediate sweep. Resolver results replace cached documents only when `updatedAt` is newer. |
 | `outbox_backoff_attempts` | positive integer | Maximum Fibonacci backoff steps for an unreachable `(DID, protocol)` outbox (default `30`). Delays are Fibonacci seconds (`1, 1, 2, 3, ...`) and remain at the final step until the peer contacts this runtime or an outbox connection succeeds. |
 | `wasm_reload_shutdown_timeout_ms` | u64 | Short per-actor budget for reload-time `:shutdown` state flush before the replacement proceeds (default `250`) |
 

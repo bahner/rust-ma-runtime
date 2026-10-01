@@ -18,7 +18,7 @@ use tokio::sync::Mutex;
 
 pub async fn test_endpoint(secret: [u8; 32]) -> Box<dyn ma_core::MaEndpoint> {
     let bundle = ma_core::SecretBundle::generate();
-    let resolver = Arc::new(ma_core::IpfsGatewayResolver::new("http://127.0.0.1:9"));
+    let resolver = Arc::new(ma_core::KuboDidResolver::new("http://127.0.0.1:9"));
     ma_core::new_ma_endpoint(
         secret,
         bundle.encryption_key().expect("test encryption key"),

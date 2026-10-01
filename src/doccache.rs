@@ -68,7 +68,7 @@ impl RuntimeDidResolver {
 
     /// Any document the runtime has already received and validated locally is
     /// authoritative, even if it has not yet reached the public IPFS/IPNS layer
-    /// or a gateway refresh is temporarily unavailable.
+    /// or a resolver refresh is temporarily unavailable.
     pub async fn insert_known(&self, did: &str, document: Document) -> ma_core::Result<()> {
         self.cache.insert_published(did, document).await
     }

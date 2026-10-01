@@ -393,10 +393,6 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use axum::extract::State;
-    use axum::http::header;
-    use axum::routing::get;
-    use axum::Router;
     use ciborium::Value as CborValue;
     use tokio::sync::RwLock;
 
@@ -468,27 +464,6 @@ mod tests {
             config_path: None,
             extra: serde_yaml::Mapping::new(),
         }
-    }
-
-    async fn spawn_did_gateway(doc_bytes: Vec<u8>) -> String {
-        async fn serve_doc(
-            State(doc_bytes): State<Arc<Vec<u8>>>,
-        ) -> ([(header::HeaderName, &'static str); 1], Vec<u8>) {
-            (
-                [(header::CONTENT_TYPE, "application/vnd.ipld.dag-cbor")],
-                (*doc_bytes).clone(),
-            )
-        }
-
-        let app = Router::new()
-            .route("/ipns/{id}", get(serve_doc))
-            .with_state(Arc::new(doc_bytes));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        format!("http://{addr}")
     }
 
     async fn wait_for_entity_acl(
@@ -623,22 +598,6 @@ mod tests {
         envelope_tx
     }
 
-    /// Publishes a signed DID document for `sender_did` and serves it from a
-    /// throwaway HTTP gateway, returning the gateway's base URL.
-    async fn spawn_sender_gateway(
-        endpoint: &dyn ma_core::MaEndpoint,
-        sender_did: &ma_core::Did,
-        sender_signing: &ma_core::SigningKey,
-    ) -> String {
-        let mut sender_doc = ma_core::Document::new(sender_did, sender_did);
-        let assertion_vm = ma_core::VerificationMethod::try_from(sender_signing).unwrap();
-        sender_doc.verification_method.push(assertion_vm.clone());
-        sender_doc.assertion_method.push(assertion_vm.id.clone());
-        sender_doc.set_ma_extension(endpoint.ma_extension());
-        sender_doc.sign(sender_signing, &assertion_vm).unwrap();
-        spawn_did_gateway(sender_doc.encode().unwrap()).await
-    }
-
     impl AclReloadFixture {
         async fn build(extra_acls: &[&str]) -> Self {
             let kubo = MockKubo::start().await;
@@ -664,16 +623,17 @@ mod tests {
 
             let mut endpoint = crate::testkubo::test_endpoint([3u8; 32]).await;
             let _crud_inbox = endpoint.service(ma_core::CRUD_PROTOCOL_ID);
-            let gateway_url =
-                spawn_sender_gateway(&*endpoint, &ids.sender_did, &ids.sender_signing).await;
 
+            // The sender is not resolvable: the CRUD reply cannot be delivered in
+            // this test, which is fine — `send_crud_reply_raw` treats that as
+            // non-fatal, and these tests only assert ACL reload and manifest update.
             let ctx = super::CrudHandlerCtx {
                 our_did: Arc::from(ids.runtime_did.base_id()),
                 signing_key: Arc::new(ids.runtime_signing),
                 endpoint: Arc::from(endpoint),
                 kubo_rpc_url: Arc::from(kubo.url().to_string()),
                 resolver: Arc::new(crate::doccache::RuntimeDidResolver::from_resolver(
-                    Arc::new(ma_core::IpfsGatewayResolver::new(gateway_url)),
+                    Arc::new(ma_core::KuboDidResolver::new("http://127.0.0.1:9")),
                 )),
                 outbox_state: None,
                 did_resolve: crate::ipfs::DidResolveSettings::default(),

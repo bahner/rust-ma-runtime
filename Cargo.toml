@@ -15,15 +15,12 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 ciborium = "0.2"
 cid = "0.11"
 clap = { version = "4", features = ["derive"] }
-directories = "6"
 extism = "1"
 fluent = "0.17"
 blake3 = "1"
 libp2p-identity = "0.3"
-ma-core = { version = "^0.15", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
-futures = "0.3"
+ma-core = { version = "^0.16", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "multipart"] }
-rust-ipfs = { version = "0.16", default-features = false, features = ["tcp", "dns", "noise", "ed25519"] }
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
 serde_json = "1"

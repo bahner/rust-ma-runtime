@@ -984,15 +984,16 @@ fn execute_dispatch(
         }
     };
 
-    let create_requests = ts
-        .create_queue
-        .get()
-        .map_err(|e| anyhow!("create_queue error: {e}"))?
-        .lock()
-        .map_err(|e| anyhow!("create_queue poisoned: {e}"))?
-        .pending
-        .drain(..)
-        .collect();
+    let create_requests = {
+        let ctx = ts
+            .create_queue
+            .get()
+            .map_err(|e| anyhow!("create_queue error: {e}"))?;
+        let mut queue = ctx
+            .lock()
+            .map_err(|e| anyhow!("create_queue poisoned: {e}"))?;
+        std::mem::take(&mut queue.pending)
+    };
 
     let delete_requests = {
         let arc = ts
@@ -1002,7 +1003,7 @@ fn execute_dispatch(
         let mut dq = arc
             .lock()
             .map_err(|e| anyhow!("delete_queue poisoned: {e}"))?;
-        let mut reqs: Vec<String> = dq.pending.drain(..).collect();
+        let mut reqs: Vec<String> = std::mem::take(&mut dq.pending);
         if dq.self_terminate {
             reqs.push(dq.self_fragment.clone());
             dq.self_terminate = false;
@@ -1010,15 +1011,16 @@ fn execute_dispatch(
         reqs
     };
 
-    let behaviour_requests = ts
-        .behaviour_queue
-        .get()
-        .map_err(|e| anyhow!("behaviour_queue error: {e}"))?
-        .lock()
-        .map_err(|e| anyhow!("behaviour_queue poisoned: {e}"))?
-        .pending
-        .drain(..)
-        .collect();
+    let behaviour_requests = {
+        let ctx = ts
+            .behaviour_queue
+            .get()
+            .map_err(|e| anyhow!("behaviour_queue error: {e}"))?;
+        let mut queue = ctx
+            .lock()
+            .map_err(|e| anyhow!("behaviour_queue poisoned: {e}"))?;
+        std::mem::take(&mut queue.pending)
+    };
 
     Ok(DispatchResult {
         output,

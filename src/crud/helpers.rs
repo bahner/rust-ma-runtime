@@ -86,8 +86,8 @@ pub(super) fn decode_crud_payload(content: &[u8]) -> Result<CrudOp> {
 
 /// True if `s` is a bare base32 `CIDv1`.
 ///
-/// Structured CRUD fields store deterministic IPLD links, so IPNS and gateway
-/// path forms are intentionally rejected here.
+/// Structured CRUD fields store deterministic IPLD links, so IPNS and
+/// path/URI forms are intentionally rejected here.
 pub(super) fn is_cidv1_ref(s: &str) -> bool {
     s.starts_with('b') && Cid::try_from(s).is_ok_and(|cid| cid.version() == Version::V1)
 }

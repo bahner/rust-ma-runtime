@@ -899,7 +899,7 @@ mod tests {
             endpoint: runtime_endpoint,
             kubo_rpc_url: Arc::from(kubo.url().to_string()),
             resolver: Arc::new(crate::doccache::RuntimeDidResolver::from_resolver(
-                Arc::new(ma_core::IpfsGatewayResolver::new("http://127.0.0.1:9")),
+                Arc::new(ma_core::KuboDidResolver::new("http://127.0.0.1:9")),
             )),
             outbox_state: None,
             did_resolve: crate::ipfs::DidResolveSettings::default(),
