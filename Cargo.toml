@@ -2,7 +2,7 @@
 name = "ma-runtime"
 version = "0.7.0"
 edition = "2021"
-rust-version = "1.95"
+rust-version = "1.99"
 
 [[bin]]
 name = "ma"
@@ -35,9 +35,10 @@ tracing = "0.1"
 unic-langid = "0.9"
 # Keep in lockstep with `extism`: we pass a `wasmtime::Config` into
 # `extism::PluginBuilder::with_wasmtime_config`, so both crates must resolve
-# to the same wasmtime version. Bump `extism` and `wasmtime` together once
-# extism ships a release on wasmtime 48 (extism commit d5da297).
-wasmtime = "43"
+# to the same wasmtime version. `extism 1.41` (current latest) requires
+# wasmtime ^49, so this direct dependency matches it — do not move to 50
+# until extism ships a 50-based release.
+wasmtime = "49"
 zeroize = "1"
 
 [dev-dependencies]
