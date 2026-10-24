@@ -135,6 +135,10 @@ const PROTECTED_CONFIG_KEYS: &[&str] = &[
     "secret_bundle",
     "secret_bundle_passphrase",
     "config_path",
+    // Daemon-local break-glass key. It is read from `config.yaml` (`extra`)
+    // and injected straight into the guest config map; CRUD must never expose
+    // or overwrite it.
+    "global_key",
 ];
 
 pub fn is_protected_config_key_pub(key: &str) -> bool {
@@ -249,6 +253,16 @@ pub fn public_plugin_config(
             {
                 out.insert(key.to_string(), value);
             }
+        }
+    }
+    // Daemon-local break-glass key. It deliberately does not belong to
+    // `DAEMON_CONFIG_KEYS`: those are readable and writable over CRUD. This
+    // one is set only in `config.yaml` (`extra`), is protected from CRUD, and
+    // is injected straight into the guest config map that
+    // `(ma-get-config-key "global_key")` reads. Absent or empty disables it.
+    if let Some(value) = cfg.extra.get("global_key") {
+        if let Some(value) = yaml_config_value_to_string(value) {
+            out.insert("global_key".to_string(), value);
         }
     }
     out
@@ -684,6 +698,7 @@ mod tests {
         assert!(is_protected_config_key_pub("secret_bundle_passphrase"));
         assert!(is_protected_config_key_pub("config_path"));
         assert!(is_protected_config_key_pub("secret_future_field"));
+        assert!(is_protected_config_key_pub("global_key"));
     }
 
     #[test]
@@ -817,6 +832,27 @@ mod tests {
         assert!(!view.contains_key("absent"));
         assert!(!view.contains_key("secret_bundle_passphrase"));
         assert!(!view.contains_key("config_path"));
+        assert!(!view.contains_key("global_key"));
+    }
+
+    #[test]
+    fn public_plugin_config_injects_daemon_local_global_key() {
+        let manifest = crate::entity::RuntimeManifest::default();
+        let mut cfg = test_config();
+
+        assert!(!public_plugin_config(&manifest, &cfg).contains_key("global_key"));
+
+        cfg.extra.insert(
+            serde_yaml::Value::String("global_key".to_string()),
+            serde_yaml::Value::String("break-glass".to_string()),
+        );
+
+        assert_eq!(
+            public_plugin_config(&manifest, &cfg)
+                .get("global_key")
+                .map(String::as_str),
+            Some("break-glass")
+        );
     }
 
     #[test]

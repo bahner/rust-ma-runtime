@@ -213,7 +213,16 @@ reload a config file; CLI/environment slug overrides it.
 | `secret_bundle` | Key material path — must not leak |
 | `secret_bundle_passphrase` | Secret — must never be exposed |
 | `config_path` | Internal path — not user-settable via CRUD |
+| `global_key` | Daemon-local break-glass key — set only in `config.yaml`, injected into actor config, never readable or writable via CRUD |
 | any key starting with `secret` | Blanket guard for future secret fields |
+
+`global_key` is the world-profile break-glass key described by the lambda-ma
+profile: a private room admits it, and a locked exit opens with it. It lives in
+`config.extra` (so `save()` preserves it), but unlike the `DAEMON_CONFIG_KEYS`
+it is not part of the CRUD surface. `public_plugin_config` injects it into the
+guest config map under `global_key`, which `(ma-get-config-key "global_key")`
+reads. It is a recovery gate for the administrator, not a cryptographic
+boundary: any installed kind can read its own config map.
 
 **Daemon config keys** — readable and writable via the CRUD config path
 (`/config/<key>`); changes take effect immediately in memory and are saved to
