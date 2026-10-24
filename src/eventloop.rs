@@ -911,10 +911,11 @@ impl EventLoopState {
         });
     }
 
-    /// Handle a Ctrl-C signal: persist entity state and publish the final
-    /// root CID. Returns `true` if the event loop should now break out of
-    /// its `select!` loop, or `false` if shutdown was aborted (e.g. entity
-    /// state failed to save) and the loop should keep running.
+    /// Handle a termination signal (Ctrl-C/SIGINT or SIGTERM): persist entity
+    /// state and publish the final root CID. Returns `true` if the event loop
+    /// should now break out of its `select!` loop, or `false` if shutdown was
+    /// aborted (e.g. entity state failed to save) and the loop should keep
+    /// running.
     async fn handle_shutdown(&self, signal: std::io::Result<()>) -> bool {
         if let Err(err) = signal {
             error!(error = %err, "{}", i18n::t("ctrlc-handler-failed"));
@@ -1009,12 +1010,39 @@ impl EventLoopState {
     }
 }
 
+/// Register the SIGTERM listener. Kept separate from the wait future so a
+/// regression test can establish the handler before signalling itself.
+#[cfg(unix)]
+fn sigterm_stream() -> std::io::Result<tokio::signal::unix::Signal> {
+    use tokio::signal::unix::{signal, SignalKind};
+    signal(SignalKind::terminate())
+}
+
+/// Resolve when the process receives SIGTERM — systemd's default stop signal.
+/// Without this listener, a service restart would kill the process before
+/// `handle_shutdown` could persist entity state and the final root CID.
+///
+/// On platforms without SIGTERM this future never resolves. A registration
+/// error is surfaced through the same `io::Result` path as Ctrl-C so the
+/// caller can log it and still shut down cleanly.
+#[cfg(unix)]
+async fn wait_for_sigterm() -> std::io::Result<()> {
+    sigterm_stream()?.recv().await;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn wait_for_sigterm() -> std::io::Result<()> {
+    std::future::pending().await
+}
+
 /// The daemon's main event loop and graceful shutdown.
 pub async fn run(args: RunArgs) -> Result<()> {
     let poll_ms = args.poll_ms;
     let mut state = EventLoopState::new(args);
     let mut ticker = tokio::time::interval(Duration::from_millis(poll_ms));
     let mut ctrl_c = Box::pin(tokio::signal::ctrl_c());
+    let mut sigterm = Box::pin(wait_for_sigterm());
 
     loop {
         tokio::select! {
@@ -1026,6 +1054,12 @@ pub async fn run(args: RunArgs) -> Result<()> {
                     break;
                 }
                 ctrl_c = Box::pin(tokio::signal::ctrl_c());
+            }
+            signal = &mut sigterm => {
+                if state.handle_shutdown(signal).await {
+                    break;
+                }
+                sigterm = Box::pin(wait_for_sigterm());
             }
         }
     }
@@ -1092,5 +1126,24 @@ mod tests {
             local_actor_url(&format!("{our_did}#root"), "rms"),
             format!("{our_did}#rms")
         );
+    }
+
+    /// SIGTERM is systemd's stop signal, so the loop must observe it. Register
+    /// the handler synchronously before raising, otherwise the default
+    /// disposition would terminate the test harness.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sigterm_listener_observes_a_termination_signal() {
+        use std::time::Duration;
+
+        let mut stream = super::sigterm_stream().expect("register SIGTERM listener");
+        let status = std::process::Command::new("kill")
+            .args(["-TERM", &std::process::id().to_string()])
+            .status()
+            .expect("run kill");
+        assert!(status.success());
+
+        let received = tokio::time::timeout(Duration::from_secs(2), stream.recv()).await;
+        assert!(matches!(received, Ok(Some(()))));
     }
 }
