@@ -1167,7 +1167,7 @@ mod tests {
     fn parse_path_bare_namespace_has_no_segments() {
         let (ns, segs) = parse_path("/entities").unwrap();
         assert_eq!(ns, "entities");
-        assert!(segs.is_empty());
+        assert_eq!(segs, Vec::<String>::new());
     }
 
     #[test]

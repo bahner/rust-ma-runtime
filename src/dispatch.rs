@@ -204,7 +204,6 @@ pub async fn dispatch_actor_message(message: &ma_core::Message, ctx: &DispatchCt
                     if let Some(content) = reply {
                         send_reply(message, ctx, &content)?;
                     }
-                    Ok(())
                 }
                 Err(err) => {
                     // Actor crashed: log locally, send no reply (Hewitt).
@@ -214,9 +213,9 @@ pub async fn dispatch_actor_message(message: &ma_core::Message, ctx: &DispatchCt
                         error = %err,
                         "entity dispatch failed (no reply sent)"
                     );
-                    Ok(())
                 }
             }
+            Ok(())
         } else {
             debug!(did_url = %message.to, "{}", crate::i18n::t("entity-not-found"));
             return send_error_reply(

@@ -1556,7 +1556,7 @@ mod hostile {
             .expect("graceful shutdown save should continue with pending state")
             .expect("pending state should be persisted");
 
-        assert!(!cid.is_empty());
+        assert_ne!(cid, "");
         assert_eq!(
             saved_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
             vec![1, 2, 3, 4]

@@ -771,7 +771,10 @@ mod tests {
             Some(DEFAULT_OPERATOR_SOURCE)
         );
         assert!(operator_source_trust_notice(Some(DEFAULT_OPERATOR_SOURCE)).contains("trust root"));
-        assert!(operator_source_trust_notice(Some("/ipns/user-controlled")).is_empty());
+        assert_eq!(
+            operator_source_trust_notice(Some("/ipns/user-controlled")),
+            ""
+        );
     }
 
     #[test]
