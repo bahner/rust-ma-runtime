@@ -165,3 +165,8 @@ ma-create-entity-kind-missing = ma_create_entity: kind registry keessa hin jiru;
 ma-create-entity-invalid-behaviour = ma_create_entity: behaviour wabii sirri miti; irra darbeera
 crud-message-rejected = CRUD ergaan diddame
 inbox-message-rejected = Inbox ergaan diddame
+
+runtime-root-published = Hundee runtime root IPNS irratti maxxanfame
+runtime-root-publish-failed = Hundee runtime root IPNS irratti maxxansuun hin dandeenye
+runtime-root-publish-timeout = Hundee runtime root IPNS irratti maxxansuun yeroo xumure
+root-cid-persist-failed = root_cid config keessa kuusuu hin dandeenye

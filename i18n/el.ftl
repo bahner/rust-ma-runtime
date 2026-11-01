@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Αποτυχία επαναπρογραμμ�
 schedule-stale-dispatch-skipped = Προγραμματισμένη αποστολή παραλείφθηκε: ξεπερασμένο πρόγραμμα
 scheduled-dispatch-error = Σφάλμα σε προγραμματισμένη αποστολή
 scheduled-dispatch-manifest-writer-unavailable = Προγραμματισμένη αποστολή: ο εγγραφέας manifest δεν είναι έτοιμος· η κατάσταση οντότητας αναμένει
+
+runtime-root-published = Η ρίζα του runtime δημοσιεύτηκε στο IPNS
+runtime-root-publish-failed = Αποτυχία δημοσίευσης της ρίζας του runtime στο IPNS
+runtime-root-publish-timeout = Η δημοσίευση της ρίζας του runtime στο IPNS έληξε
+root-cid-persist-failed = Αποτυχία αποθήκευσης root_cid στο config

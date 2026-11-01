@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Nepodarilo sa preplánovat náhodnú úlohu
 schedule-stale-dispatch-skipped = Plánované odosielanie preskočené: zastaraný plán
 scheduled-dispatch-error = Chyba pri plánovanom odosielaní
 scheduled-dispatch-manifest-writer-unavailable = Plánované odosielanie: zapisovač manifestu nie je pripravený; stav entity čaká
+
+runtime-root-published = Koreň runtime bol publikovaný do IPNS
+runtime-root-publish-failed = Publikácia koreňa runtime do IPNS zlyhala
+runtime-root-publish-timeout = Publikácia koreňa runtime do IPNS vypršala
+root-cid-persist-failed = Nepodarilo sa perzistovať root_cid do config

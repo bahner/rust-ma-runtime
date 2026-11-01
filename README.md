@@ -230,6 +230,20 @@ renames the pin to the requested name. Cleanup does not delay publication.
 The `ma` container registers the named service with Kubo if
 it is absent. Existing services are preserved.
 
+When `MA_PIN_REMOTE_NAME` is unset, the default names are date-free so that
+`pin_overwrite` replaces earlier pins instead of stranding one per day:
+
+| Managed content | Default pin name |
+|-----------------|------------------|
+| Runtime root manifest | `ma-runtime-<slug>-root` |
+| Runtime DID document | `ma-runtime-<slug>-did` |
+| Owner DID document | `ma-agent-blake3<first-16-hex-of-owner-DID>` |
+
+The root pin follows the current runtime head, and the DID-document pin is kept
+separate so republishing it never evicts the root pin. With
+`MA_PIN_REMOTE_NAME=my-pins`, those two names become `my-pins` and
+`my-pins-did`; the owner DID-document pin keeps its digest-derived name.
+
 ### First run
 
 On the first start `ma` detects a missing secret bundle and generates a

@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = 랜덤 작업 재예약에 실패했습니�
 schedule-stale-dispatch-skipped = 예약된 디스패치를 건너뜁니다. 오래된 일정
 scheduled-dispatch-error = 예약된 디스패치 오류
 scheduled-dispatch-manifest-writer-unavailable = 예약된 디스패치: 매니페스트 쓰기 도구가 준비되지 않았습니다. 엔티티 상태가 보류 중입니다
+
+runtime-root-published = 런타임 루트를 IPNS에 게시했습니다
+runtime-root-publish-failed = 런타임 루트를 IPNS에 게시하지 못했습니다
+runtime-root-publish-timeout = 런타임 루트 IPNS 게시가 시간 초과되었습니다
+root-cid-persist-failed = root_cid를 config에 지속하지 못했습니다

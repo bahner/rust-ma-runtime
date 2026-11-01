@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Juhusliku ülesande ümberajastamine ebaõnn
 schedule-stale-dispatch-skipped = Ajastatud saatmine jäeti vahele: aegunud ajakava
 scheduled-dispatch-error = Viga ajastatud saatmisel
 scheduled-dispatch-manifest-writer-unavailable = Ajastatud saatmine: manifesti kirjutaja ei ole valmis; olemi olek ootab
+
+runtime-root-published = runtime-juur avaldati IPNS-is
+runtime-root-publish-failed = runtime-juure avaldamine IPNS-is ebaõnnestus
+runtime-root-publish-timeout = runtime-juure avaldamine IPNS-is aegus
+root-cid-persist-failed = root_cid salvestamine config-i ebaõnnestus

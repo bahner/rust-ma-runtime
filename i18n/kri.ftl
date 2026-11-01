@@ -165,3 +165,8 @@ ma-create-entity-kind-missing = ma_create_entity: kind no de insay registry; ski
 ma-create-entity-invalid-behaviour = ma_create_entity: behaviour reference no valid; skip
 crud-message-rejected = CRUD message don reject
 inbox-message-rejected = Inbox message don reject
+
+runtime-root-published = Runtime root publish to IPNS
+runtime-root-publish-failed = Runtime root publish fail to IPNS
+runtime-root-publish-timeout = Runtime root IPNS publish don timeout
+root-cid-persist-failed = I no ebul persist root_cid na config

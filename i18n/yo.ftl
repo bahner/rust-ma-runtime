@@ -164,3 +164,8 @@ ma-create-entity-invalid-behaviour = ma_create_entity: itọkasi behaviour ko wu
 crud-message-rejected = Ifiranṣẹ CRUD ti kọ
 inbox-message-rejected = Ifiranṣẹ inbox ti kọ
 genesis-kind-owner-only = Oniwun runtime nikan le ṣẹda entity ti genesis kind
+
+runtime-root-published = Gbingbong runtime ti wà jáde sí IPNS
+runtime-root-publish-failed = Kuna lati tẹjade gbingbong runtime sí IPNS
+runtime-root-publish-timeout = Titẹjade gbingbong runtime sí IPNS ti pari akoko
+root-cid-persist-failed = Ko le fipamọ root_cid sínú config

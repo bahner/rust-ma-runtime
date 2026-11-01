@@ -165,3 +165,8 @@ ma-create-entity-kind-missing = ma_create_entity: i-kind ayikho kwi-registry; si
 ma-create-entity-invalid-behaviour = ma_create_entity: isalathiso se-behaviour asifaneleki; siyanyulelwa
 crud-message-rejected = Umyalezo we-CRUD wenqatshiwe
 inbox-message-rejected = Umyalezo we-inbox wenqatshiwe
+
+runtime-root-published = Ingcambu ye-runtime ipapashwe kwi-IPNS
+runtime-root-publish-failed = Ukupapasha ingcambu ye-runtime kwi-IPNS kuhlulekile
+runtime-root-publish-timeout = Ukupapasha ingcambu ye-runtime kwi-IPNS kuphelile ixesha
+root-cid-persist-failed = Ayikwazanga ukugcina i-root_cid kwi-config

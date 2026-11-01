@@ -166,3 +166,8 @@ schedule-random-reschedule-failed = Pa kapab replanifye travay aza
 schedule-stale-dispatch-skipped = Distribisyon pwograme pase: pwogram date
 scheduled-dispatch-error = Erè distribisyon pwograme
 scheduled-dispatch-manifest-writer-unavailable = Distribisyon pwograme: ekrivèn manifest pa prè; eta entity rete an atant
+
+runtime-root-published = Rasin runtime pibliye nan IPNS
+runtime-root-publish-failed = Piblikasyon rasin runtime nan IPNS echwe
+runtime-root-publish-timeout = Piblikasyon rasin runtime nan IPNS ekspire
+root-cid-persist-failed = Pa kapab konsève root_cid nan config

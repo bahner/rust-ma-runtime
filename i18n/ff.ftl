@@ -166,3 +166,8 @@ schedule-random-reschedule-failed = Tinnuɗo heɓaani haalande laabi taaɓol jad
 schedule-stale-dispatch-skipped = Laɓɓol haalanaado faawtaa: haalanaado mawɓe
 scheduled-dispatch-error = Juumre laɓɓol haalanaado
 scheduled-dispatch-manifest-writer-unavailable = Laɓɓol haalanaado: winndoowo manifest maa woodi; dariibe entity jeyaa kadi gila
+
+runtime-root-published = Winndineede runtime root e IPNS
+runtime-root-publish-failed = Winndineede runtime root e IPNS tinnii
+runtime-root-publish-timeout = Winndineede runtime root e IPNS taaɓii waqtiiji
+root-cid-persist-failed = Tinnuɗo heɓaani mooɓtude root_cid e config

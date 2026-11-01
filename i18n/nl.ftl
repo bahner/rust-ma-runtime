@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Kan willekeurige taak niet opnieuw plannen
 schedule-stale-dispatch-skipped = Geplande dispatch overgeslagen: verouderde planning
 scheduled-dispatch-error = Fout bij geplande dispatch
 scheduled-dispatch-manifest-writer-unavailable = Geplande dispatch: manifestschrijver is niet gereed; entiteitstoestand in behandeling
+
+runtime-root-published = runtime-root gepubliceerd naar IPNS
+runtime-root-publish-failed = runtime-root-publicatie naar IPNS mislukt
+runtime-root-publish-timeout = runtime-root-publicatie naar IPNS verlopen
+root-cid-persist-failed = Kan root_cid niet opslaan in config

@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Преплануването на случа
 schedule-stale-dispatch-skipped = Планираното изпращане е пропуснато: остарял план
 scheduled-dispatch-error = Грешка при планираното изпращане
 scheduled-dispatch-manifest-writer-unavailable = Планирано изпращане: писателят на манифест не е готов; състоянието на обекта чака
+
+runtime-root-published = Коренът на средата е публикуван в IPNS
+runtime-root-publish-failed = Публикуването на корена на средата в IPNS не бе успешно
+runtime-root-publish-timeout = Публикуването на корена на средата в IPNS изтече
+root-cid-persist-failed = Запазването на root_cid в config не бе успешно

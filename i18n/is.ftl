@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Mistókst að enduráætla handahófskennt v
 schedule-stale-dispatch-skipped = Áætluð sending sleppt: úrelt áætlun
 scheduled-dispatch-error = Villa við áætlaða sendingu
 scheduled-dispatch-manifest-writer-unavailable = Áætluð sending: manifest-ritari er ekki tilbúinn; staða einingar bíður
+
+runtime-root-published = Runtime-rót birt í IPNS
+runtime-root-publish-failed = Mistókst að birta runtime-rót í IPNS
+runtime-root-publish-timeout = Birting runtime-rótar í IPNS rann út
+root-cid-persist-failed = Mistókst að geyma root_cid í config

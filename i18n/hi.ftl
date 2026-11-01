@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = यादृच्छिक कार्य 
 schedule-stale-dispatch-skipped = निर्धारित डिस्पैच छोड़ा गया: पुराना शेड्यूल
 scheduled-dispatch-error = निर्धारित डिस्पैच में त्रुटि
 scheduled-dispatch-manifest-writer-unavailable = निर्धारित डिस्पैच: मैनिफेस्ट राइटर तैयार नहीं; एंटिटी अवस्था प्रतीक्षारत है
+
+runtime-root-published = रनटाइम रूट IPNS पर प्रकाशित हुआ
+runtime-root-publish-failed = रनटाइम रूट को IPNS पर प्रकाशित करना विफल रहा
+runtime-root-publish-timeout = रनटाइम रूट का IPNS प्रकाशन समय समाप्त हुआ
+root-cid-persist-failed = config में root_cid सहेजना विफल रहा

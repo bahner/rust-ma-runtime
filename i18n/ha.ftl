@@ -166,3 +166,8 @@ schedule-random-reschedule-failed = An kasa sake jadawali aikin bazuwar
 schedule-stale-dispatch-skipped = An tsallake isar da jadawali: jadawali tsoho
 scheduled-dispatch-error = Kuskuren isar da jadawali
 scheduled-dispatch-manifest-writer-unavailable = Isar da jadawali: marubucin manifest ba ya shirye; jihar entity tana jiran
+
+runtime-root-published = An buga tushen runtime zuwa IPNS
+runtime-root-publish-failed = Buga tushen runtime zuwa IPNS ya gaza
+runtime-root-publish-timeout = Buga tushen runtime zuwa IPNS ya ƙare
+root-cid-persist-failed = An kasa adana root_cid cikin config

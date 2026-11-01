@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Échec de la replanification du job aléatoi
 schedule-stale-dispatch-skipped = Dispatch planifié ignoré : planification périmée
 scheduled-dispatch-error = Erreur lors du dispatch planifié
 scheduled-dispatch-manifest-writer-unavailable = Dispatch planifié : le rédacteur de manifeste n'est pas prêt ; état de l'entité en attente
+
+runtime-root-published = Racine runtime publiée sur IPNS
+runtime-root-publish-failed = Échec de la publication de la racine runtime sur IPNS
+runtime-root-publish-timeout = Publication de la racine runtime sur IPNS expirée
+root-cid-persist-failed = Échec de la persistance de root_cid dans la config

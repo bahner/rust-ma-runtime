@@ -166,3 +166,8 @@ schedule-random-reschedule-failed = Enweghị ike itinye ọrụ azọ n'ndọr�
 schedule-stale-dispatch-skipped = Agbagharịrị nnyefe ndọrọ ndọrọ ọchịchị: ndọrọ ndọrọ ọchịchị ochie
 scheduled-dispatch-error = Njehie nnyefe ndọrọ ndọrọ ọchịchị
 scheduled-dispatch-manifest-writer-unavailable = Nnyefe ndọrọ ndọrọ ọchịchị: onye na-ede manifest anaghị atọ; ọnọdụ entity ka nọ n'oge nche
+
+runtime-root-published = Ebipụtara root runtime na IPNS
+runtime-root-publish-failed = Ibipụta root runtime na IPNS dara ada
+runtime-root-publish-timeout = Ibipụta root runtime na IPNS gachara
+root-cid-persist-failed = Enweghị ike ichekwa root_cid na config

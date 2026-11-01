@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Véletlen feladat átütemezése sikertelen
 schedule-stale-dispatch-skipped = Ütemezett küldés kihagyva: elavult ütemezés
 scheduled-dispatch-error = Hiba az ütemezett küldésnél
 scheduled-dispatch-manifest-writer-unavailable = Ütemezett küldés: manifest-író nem kész; entitásállapot vár
+
+runtime-root-published = A runtime gyökere közzétéve az IPNS-en
+runtime-root-publish-failed = A runtime gyökerének közzététele az IPNS-en sikertelen
+runtime-root-publish-timeout = A runtime gyökere IPNS-közzétételének ideje lejárt
+root-cid-persist-failed = A root_cid mentése a configba sikertelen

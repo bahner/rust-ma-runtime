@@ -165,3 +165,8 @@ ma-create-entity-kind-missing = ma_create_entity: kind i no stap long registry; 
 ma-create-entity-invalid-behaviour = ma_create_entity: referens bilong behaviour i no stret; i skipim
 crud-message-rejected = CRUD mesej i bin rijijektim pinis
 inbox-message-rejected = Mesej bilong inbox i bin rijijektim pinis
+
+runtime-root-published = Pabalasim runtime root long IPNS i pinis
+runtime-root-publish-failed = Pabalasim runtime root long IPNS i pailing
+runtime-root-publish-timeout = Pabalasim runtime root long IPNS i pinis taim
+root-cid-persist-failed = I no inap haptaim root_cid long config

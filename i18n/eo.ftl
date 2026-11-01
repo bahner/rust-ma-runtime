@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Malsukcesis replaniti hazardan taskon
 schedule-stale-dispatch-skipped = Planita sendado preterpasita: malfreŝa plano
 scheduled-dispatch-error = Eraro dum planita sendado
 scheduled-dispatch-manifest-writer-unavailable = Planita sendado: manifesto-skribanto ne preta; stato de entitaĵo atendas
+
+runtime-root-published = Runtime-radiko eldonita al IPNS
+runtime-root-publish-failed = Malsukcesis eldoni la runtime-radikon al IPNS
+runtime-root-publish-timeout = Eldono de la runtime-radiko al IPNS eksvalidiĝis
+root-cid-persist-failed = Malsukcesis konservi root_cid en config

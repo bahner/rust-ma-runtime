@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Не удалось перепланиров
 schedule-stale-dispatch-skipped = Запланированная диспетчеризация пропущена: устаревшее расписание
 scheduled-dispatch-error = Ошибка запланированной диспетчеризации
 scheduled-dispatch-manifest-writer-unavailable = Запланированная диспетчеризация: записывающий манифест не готов; состояние сущности ожидает
+
+runtime-root-published = Корень среды выполнения опубликован в IPNS
+runtime-root-publish-failed = Не удалось опубликовать корень среды выполнения в IPNS
+runtime-root-publish-timeout = Публикация корня среды выполнения в IPNS истекла
+root-cid-persist-failed = Не удалось сохранить root_cid в config

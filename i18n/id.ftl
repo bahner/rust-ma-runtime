@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Gagal menjadwalkan ulang tugas acak
 schedule-stale-dispatch-skipped = Dispatch terjadwal dilewati: jadwal usang
 scheduled-dispatch-error = Kesalahan dalam dispatch terjadwal
 scheduled-dispatch-manifest-writer-unavailable = Dispatch terjadwal: penulis manifest tidak tersedia; status entitas menunggu
+
+runtime-root-published = Root runtime dipublikasikan ke IPNS
+runtime-root-publish-failed = Gagal mempublikasikan root runtime ke IPNS
+runtime-root-publish-timeout = Publikasi root runtime ke IPNS habis waktu
+root-cid-persist-failed = Gagal menyimpan root_cid ke config

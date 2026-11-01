@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = యాదృచ్ఛిక టాస్క�
 schedule-stale-dispatch-skipped = షెడ్యూల్ చేయబడిన డిస్పాచ్ దాటివేయబడింది: పాత షెడ్యూల్
 scheduled-dispatch-error = షెడ్యూల్ చేయబడిన డిస్పాచ్‌లో లోపం
 scheduled-dispatch-manifest-writer-unavailable = షెడ్యూల్ చేయబడిన డిస్పాచ్: మ్యానిఫెస్ట్ రైటర్ సిద్ధంగా లేదు; ఎంటిటీ స్థితి వేచి ఉంది
+
+runtime-root-published = రన్‌టైమ్ రూట్ IPNSకి ప్రచురించబడింది
+runtime-root-publish-failed = రన్‌టైమ్ రూట్‌ను IPNSకి ప్రచురించడంలో వైఫల్యం
+runtime-root-publish-timeout = రన్‌టైమ్ రూట్ IPNS ప్రచురణ టైమ్‌అవుట్ అయింది
+root-cid-persist-failed = configలో root_cid సేవ్ చేయడంలో వైఫల్యం

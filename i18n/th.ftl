@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = ไม่สามารถ reschedule ง�
 schedule-stale-dispatch-skipped = ข้าม scheduled dispatch: schedule ล้าสมัย
 scheduled-dispatch-error = เกิดข้อผิดพลาดใน scheduled dispatch
 scheduled-dispatch-manifest-writer-unavailable = scheduled dispatch: manifest writer ไม่พร้อม; สถานะ entity รอการประมวลผล
+
+runtime-root-published = เผยแพร่รากของรันไทม์ไปยัง IPNS แล้ว
+runtime-root-publish-failed = ไม่สามารถเผยแพร่รากของรันไทม์ไปยัง IPNS ได้
+runtime-root-publish-timeout = การเผยแพร่รากของรันไทม์ไปยัง IPNS หมดเวลา
+root-cid-persist-failed = ไม่สามารถบันทึก root_cid ลงใน config ได้

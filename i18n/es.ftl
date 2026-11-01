@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Error al reprogramar el trabajo aleatorio
 schedule-stale-dispatch-skipped = Despacho programado omitido: programación obsoleta
 scheduled-dispatch-error = Error en despacho programado
 scheduled-dispatch-manifest-writer-unavailable = Despacho programado: el escritor de manifiesto no está listo; estado de entidad pendiente
+
+runtime-root-published = Raíz de runtime publicada en IPNS
+runtime-root-publish-failed = Publicación de la raíz de runtime en IPNS fallida
+runtime-root-publish-timeout = Publicación de la raíz de runtime en IPNS expirada
+root-cid-persist-failed = Error al persistir root_cid en config

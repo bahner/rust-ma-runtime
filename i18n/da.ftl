@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Kunne ikke omplanlægge tilfældig job
 schedule-stale-dispatch-skipped = Planlagt dispatch sprunget over: forældet tidsplan
 scheduled-dispatch-error = Fejl ved planlagt dispatch
 scheduled-dispatch-manifest-writer-unavailable = Planlagt dispatch: manifest-skribent er ikke klar; enhedstilstand afventer
+
+runtime-root-published = runtime-roden er publiceret til IPNS
+runtime-root-publish-failed = publicering af runtime-roden til IPNS mislykkedes
+runtime-root-publish-timeout = publicering af runtime-roden til IPNS udløb
+root-cid-persist-failed = kunne ikke gemme root_cid i config

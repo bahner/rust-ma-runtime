@@ -167,3 +167,8 @@ plugin-envelope-local-dispatch-failed = Plugin-konvolutt: lokal utsending misluk
 plugin-envelope-local-dispatch-finish = Plugin-konvolutt: lokal utsending fullført
 plugin-envelope-local-dispatch-start = Plugin-konvolutt: lokal utsending starta
 plugin-envelope-local-recipient-unknown = Plugin-konvolutt: ukjend lokal mottakar; hoppa over
+
+runtime-root-published = runtime-rota publisert til IPNS
+runtime-root-publish-failed = publisering av runtime-rota til IPNS feila
+runtime-root-publish-timeout = tidsavbrot ved publisering av runtime-rota til IPNS
+root-cid-persist-failed = klarte ikkje å lagre root_cid i config

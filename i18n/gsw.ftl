@@ -149,3 +149,8 @@ ipv6-enabled = IPv6 aktiviert — bindet sowohl IPv4 als au IPv6
 ipv6-disabled = IPv6 deaktiviert — bindet nur IPv4 (Neustart erforderlich zum Reaktiviere)
 ipv6-enable-restart-required = Gspeichert. Neustart erforderlich, damit d'Änderig wirksam wird.
 ipv6-enable-unchanged = ipv6_enable isch scho uf dene Wert gsetzt — kei Änderig.
+
+runtime-root-published = Runtime-Wurzle in IPNS veröffentlicht
+runtime-root-publish-failed = Veröffentlichig vo dr Runtime-Wurzle in IPNS fehlgschlage
+runtime-root-publish-timeout = Veröffentlichig vo dr Runtime-Wurzle in IPNS abgloffe
+root-cid-persist-failed = root_cid het nit i d config chönne gspeicheret wärde

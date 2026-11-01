@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Satunnaisen tehtävän uudelleenajoitus epä
 schedule-stale-dispatch-skipped = Ajoitettu lähetys ohitettu: vanhentunut aikataulu
 scheduled-dispatch-error = Virhe ajoitetussa lähetyksessä
 scheduled-dispatch-manifest-writer-unavailable = Ajoitettu lähetys: manifesti-kirjoittaja ei ole valmis; entiteettitila odottaa
+
+runtime-root-published = runtime-juuri julkaistiin IPNS:ään
+runtime-root-publish-failed = runtime-juuren julkaisu IPNS:ään epäonnistui
+runtime-root-publish-timeout = runtime-juuren julkaisu IPNS:ään aikakatkaistiin
+root-cid-persist-failed = root_cid:n tallentaminen configiin epäonnistui

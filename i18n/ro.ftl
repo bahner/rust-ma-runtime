@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Reprogramarea sarcinii aleatorii a eșuat
 schedule-stale-dispatch-skipped = Expediere programată omisă: program depășit
 scheduled-dispatch-error = Eroare la expedierea programată
 scheduled-dispatch-manifest-writer-unavailable = Expediere programată: scriitorul manifestului nu este pregătit; starea entității în așteptare
+
+runtime-root-published = Rădăcina runtime publicată în IPNS
+runtime-root-publish-failed = Publicarea rădăcinii runtime în IPNS a eșuat
+runtime-root-publish-timeout = Publicarea rădăcinii runtime în IPNS a expirat
+root-cid-persist-failed = Persistarea root_cid în config a eșuat

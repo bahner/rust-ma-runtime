@@ -167,3 +167,8 @@ ma-create-entity-kind-missing = ma_create_entity: kind no kowl registry; au-skip
 ma-create-entity-invalid-behaviour = ma_create_entity: behaviour reference no valid; au-skip
 crud-message-rejected = CRUD message au-chanya reject
 inbox-message-rejected = Inbox message au-chanya reject
+
+runtime-root-published = Runtime root au-chanya publish to IPNS
+runtime-root-publish-failed = Fail au-chanya publish runtime root to IPNS
+runtime-root-publish-timeout = Runtime root IPNS publish au-timeout
+root-cid-persist-failed = Fail persist root_cid to config

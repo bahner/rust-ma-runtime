@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Nejaušā uzdevuma pārplānošana neizdevā
 schedule-stale-dispatch-skipped = Plānotā nosūtīšana izlaista: novecojis grafiks
 scheduled-dispatch-error = Kļūda plānotās nosūtīšanas laikā
 scheduled-dispatch-manifest-writer-unavailable = Plānotā nosūtīšana: manifesta rakstītājs nav gatavs; entitātes stāvoklis gaida
+
+runtime-root-published = runtime sakne publicēta IPNS
+runtime-root-publish-failed = runtime saknes publicēšana IPNS neizdevās
+runtime-root-publish-timeout = runtime saknes publicēšana IPNS iestājās
+root-cid-persist-failed = root_cid saglabāšana config neizdevās

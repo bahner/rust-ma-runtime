@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Rastgele görev yeniden zamanlanamadı
 schedule-stale-dispatch-skipped = Zamanlı gönderim atlandı: eski zamanlama
 scheduled-dispatch-error = Zamanlı gönderimde hata
 scheduled-dispatch-manifest-writer-unavailable = Zamanlı gönderim: manifest yazıcısı hazır değil; varlık durumu bekliyor
+
+runtime-root-published = Runtime kökü IPNS'e yayınlandı
+runtime-root-publish-failed = Runtime kökü IPNS'e yayınlanamadı
+runtime-root-publish-timeout = Runtime kökü IPNS yayınlama zaman aşımına uğradı
+root-cid-persist-failed = root_cid config'e kaydedilemedi

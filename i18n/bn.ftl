@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = যাদৃচ্ছিক কাজ পু
 schedule-stale-dispatch-skipped = নির্ধারিত ডিসপ্যাচ বাদ দেওয়া হয়েছে: পুরনো সময়সূচি
 scheduled-dispatch-error = নির্ধারিত ডিসপ্যাচে ত্রুটি
 scheduled-dispatch-manifest-writer-unavailable = নির্ধারিত ডিসপ্যাচ: ম্যানিফেস্ট রাইটার প্রস্তুত নয়; এনটিটি অবস্থা অপেক্ষায়
+
+runtime-root-published = রানটাইম রুট IPNS-এ প্রকাশিত হয়েছে
+runtime-root-publish-failed = রানটাইম রুট IPNS-এ প্রকাশ করতে ব্যর্থ হয়েছে
+runtime-root-publish-timeout = রানটাইম রুট IPNS প্রকাশের সময় শেষ হয়েছে
+root-cid-persist-failed = config-এ root_cid সংরক্ষণ করতে ব্যর্থ হয়েছে

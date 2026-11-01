@@ -98,6 +98,7 @@ bootstrap-minimal-manifest-failed = Failed to bootstrap minimal manifest
 bootstrap-entity-state-save-failed = Failed to save entity states
 bootstrap-entity-state-shutdown-aborted = shutdown aborted; runtime remains active so state can be saved on a later shutdown attempt
 bootstrap-root-cid-shutdown-persist-failed = failed to persist root_cid during shutdown
+root-cid-persist-failed = failed to persist root_cid to config
 bootstrap-root-cid-shutdown-publish-succeeded = shutdown runtime_ipns publish succeeded
 bootstrap-root-cid-shutdown-publish-failed = shutdown runtime_ipns publish failed
 bootstrap-root-cid-shutdown-publish-timeout = shutdown runtime_ipns publish timed out
@@ -144,6 +145,9 @@ entity-states-saved = Entity states saved
 
 # Ownership / claim
 runtime-claimed = Runtime claimed.
+runtime-root-published = Published runtime root to IPNS
+runtime-root-publish-failed = Failed to publish runtime root to IPNS
+runtime-root-publish-timeout = Runtime root IPNS publish timed out
 
 # Protected root elements
 refuse-delete-root = Steadfastly refuse to delete required root element

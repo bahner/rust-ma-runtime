@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = 重新计划随机任务失败
 schedule-stale-dispatch-skipped = 跳过计划分发：过期的计划
 scheduled-dispatch-error = 计划分发错误
 scheduled-dispatch-manifest-writer-unavailable = 计划分发：清单写入器未就绪；实体状态待处理
+
+runtime-root-published = 已向 IPNS 发布运行时根
+runtime-root-publish-failed = 向 IPNS 发布运行时根失败
+runtime-root-publish-timeout = 向 IPNS 发布运行时根超时
+root-cid-persist-failed = 未能将 root_cid 持久化到 config

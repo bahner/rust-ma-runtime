@@ -165,3 +165,8 @@ ma-create-entity-kind-missing = ma_create_entity: kind kuma jiro registry; waa l
 ma-create-entity-invalid-behaviour = ma_create_entity: tixraaca behaviour ma sax; waa la gudbay
 crud-message-rejected = Fariinta CRUD waa la diiday
 inbox-message-rejected = Fariinta inbox waa la diiday
+
+runtime-root-published = Xididka runtime waxaa lagu daabacay IPNS
+runtime-root-publish-failed = Daabacaadda xididka runtime ee IPNS way ku guul-darraysatay
+runtime-root-publish-timeout = Daabacaadda xididka runtime ee IPNS waxay dhammaysay waqtiga
+root-cid-persist-failed = Kaydinta root_cid ee config way ku guulaysan weyday

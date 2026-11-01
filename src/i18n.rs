@@ -203,9 +203,13 @@ const MESSAGE_IDS: &[&str] = &[
     "refuse-delete-root",
     "reply-sent",
     "reserved-entity-name",
+    "root-cid-persist-failed",
     "root-list-entities",
     "runtime-claim-persisted",
     "runtime-claimed",
+    "runtime-root-publish-failed",
+    "runtime-root-publish-timeout",
+    "runtime-root-published",
     "schedule-dispatch-firing",
     "schedule-entity-not-found",
     "schedule-random-chain-stopped",
@@ -390,6 +394,25 @@ fn entity_reload_log_keys_are_in_english_catalogue() {
     ] {
         let value = en_messages.get(key).expect("missing english FTL key");
         assert_ne!(value.as_str(), key, "missing english FTL entry for {key}");
+    }
+}
+
+#[test]
+fn runtime_root_log_keys_are_present_in_every_locale() {
+    let all_messages = bundled_messages();
+
+    for (code, messages) in &all_messages {
+        for key in [
+            "runtime-root-published",
+            "runtime-root-publish-failed",
+            "runtime-root-publish-timeout",
+            "root-cid-persist-failed",
+        ] {
+            let value = messages
+                .get(key)
+                .unwrap_or_else(|| panic!("missing {key} in {code}"));
+            assert_ne!(value.as_str(), key, "missing {key} entry in {code}");
+        }
     }
 }
 

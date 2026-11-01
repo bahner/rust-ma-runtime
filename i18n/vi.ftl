@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Không thể đặt lại lịch tác vụ n
 schedule-stale-dispatch-skipped = Bỏ qua scheduled dispatch: schedule đã cũ
 scheduled-dispatch-error = Lỗi trong scheduled dispatch
 scheduled-dispatch-manifest-writer-unavailable = Scheduled dispatch: manifest writer chưa sẵn sàng; trạng thái entity đang chờ
+
+runtime-root-published = Đã xuất bản gốc runtime lên IPNS
+runtime-root-publish-failed = Không thể xuất bản gốc runtime lên IPNS
+runtime-root-publish-timeout = Xuất bản gốc runtime lên IPNS hết thời gian
+root-cid-persist-failed = Không thể lưu root_cid vào config

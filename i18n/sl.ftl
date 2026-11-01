@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Prerazporeditev naključne naloge ni uspela
 schedule-stale-dispatch-skipped = Načrtovano pošiljanje preskočeno: zastarel razpored
 scheduled-dispatch-error = Napaka pri načrtovanem pošiljanju
 scheduled-dispatch-manifest-writer-unavailable = Načrtovano pošiljanje: pisec manifesta ni pripravljen; stanje entitete čaka
+
+runtime-root-published = Koren runtimea objavljen v IPNS
+runtime-root-publish-failed = Objava korena runtimea v IPNS ni uspela
+runtime-root-publish-timeout = Objava korena runtimea v IPNS je potekla
+root-cid-persist-failed = Shranjevanje root_cid v config ni uspelo

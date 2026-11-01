@@ -166,3 +166,8 @@ schedule-random-reschedule-failed = Kyaan reschedule di random job
 schedule-stale-dispatch-skipped = Schedule dispatch skip: schedule old
 scheduled-dispatch-error = Schedule dispatch error
 scheduled-dispatch-manifest-writer-unavailable = Schedule dispatch: manifest writer not ready; entity state still waiting
+
+runtime-root-published = Runtime root publish to IPNS
+runtime-root-publish-failed = Runtime root publish fail to IPNS
+runtime-root-publish-timeout = Runtime root IPNS publish run out a time
+root-cid-persist-failed = Kyaan save root_cid inna config

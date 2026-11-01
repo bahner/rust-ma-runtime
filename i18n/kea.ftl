@@ -166,3 +166,8 @@ schedule-random-reschedule-failed = Ka konsiguidu reagendá trabalhu aletóriu
 schedule-stale-dispatch-skipped = Despachamentu agendadu saltadu: agendamentu obsoletu
 scheduled-dispatch-error = Eru di despachamentu agendadu
 scheduled-dispatch-manifest-writer-unavailable = Despachamentu agendadu: scritor di manifest ka prontu; estado di entity fica na spera
+
+runtime-root-published = Raís di runtime publikadu na IPNS
+runtime-root-publish-failed = Pubikason di raís di runtime na IPNS falhou
+runtime-root-publish-timeout = Pubikason di raís di runtime na IPNS esgotadu
+root-cid-persist-failed = Ka konsiguidu gurdá root_cid na config

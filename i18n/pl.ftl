@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Nie udało się przeplanować losowego zadan
 schedule-stale-dispatch-skipped = Zaplanowana wysyłka pominięta: przestarzały harmonogram
 scheduled-dispatch-error = Błąd zaplanowanej wysyłki
 scheduled-dispatch-manifest-writer-unavailable = Zaplanowana wysyłka: moduł zapisu manifestu nie jest gotowy; stan encji oczekuje
+
+runtime-root-published = Korzeń środowiska uruchomieniowego opublikowano w IPNS
+runtime-root-publish-failed = Publikacja korzenia środowiska uruchomieniowego w IPNS nie powiodła się
+runtime-root-publish-timeout = Publikacja korzenia środowiska uruchomieniowego w IPNS przekroczyła limit czasu
+root-cid-persist-failed = Nie udało się utrwalić root_cid w config

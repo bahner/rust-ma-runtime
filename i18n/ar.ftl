@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = فشل إعادة جدولة المهمة ا
 schedule-stale-dispatch-skipped = تم تخطي الإرسال المجدول: جدول قديم
 scheduled-dispatch-error = خطأ في الإرسال المجدول
 scheduled-dispatch-manifest-writer-unavailable = الإرسال المجدول: كاتب الملف التعريفي غير جاهز؛ حالة الكيان في الانتظار
+
+runtime-root-published = تم نشر جذر بيئة التشغيل إلى IPNS
+runtime-root-publish-failed = فشل نشر جذر بيئة التشغيل إلى IPNS
+runtime-root-publish-timeout = انتهت مهلة نشر جذر بيئة التشغيل إلى IPNS
+root-cid-persist-failed = فشل حفظ root_cid في config

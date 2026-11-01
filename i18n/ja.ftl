@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = ランダムジョブの再スケジュー�
 schedule-stale-dispatch-skipped = スケジュールされたディスパッチをスキップしました: 古いスケジュール
 scheduled-dispatch-error = スケジュールされたディスパッチでエラーが発生しました
 scheduled-dispatch-manifest-writer-unavailable = スケジュールされたディスパッチ: マニフェストライターの準備ができていません。エンティティの状態は保留中です
+
+runtime-root-published = ランタイムルートをIPNSに公開しました
+runtime-root-publish-failed = ランタイムルートのIPNS公開に失敗しました
+runtime-root-publish-timeout = ランタイムルートのIPNS公開がタイムアウトしました
+root-cid-persist-failed = root_cidをconfigに永続化できませんでした

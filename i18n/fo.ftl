@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Endurætlan av tilvildarligum verkefni misey
 schedule-stale-dispatch-skipped = Ætlað sending slept yvir: gámaður ætlan
 scheduled-dispatch-error = Villa við ætlaðari sendingu
 scheduled-dispatch-manifest-writer-unavailable = Ætlað sending: manifest-skrivar er ikki klárt; støðan hjá einingu bíðar
+
+runtime-root-published = runtime-rótin er birt í IPNS
+runtime-root-publish-failed = Birting av runtime-rótini í IPNS miseydnaðist
+runtime-root-publish-timeout = Birting av runtime-rótini í IPNS tók ov langan tíð
+root-cid-persist-failed = Goymur av root_cid í config miseydnaðist

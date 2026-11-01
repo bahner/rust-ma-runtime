@@ -168,3 +168,8 @@ schedule-random-reschedule-failed = Faild fi reschedule random job
 schedule-stale-dispatch-skipped = Scheduled dispatch pass over: stale schedule
 scheduled-dispatch-error = Error pon di scheduled dispatch
 scheduled-dispatch-manifest-writer-unavailable = Scheduled dispatch: manifest writer nuh ready; entity state still a wait
+
+runtime-root-published = Runtime root publish forward to IPNS
+runtime-root-publish-failed = Faild fi publish runtime root to IPNS
+runtime-root-publish-timeout = Runtime root IPNS publish time out
+root-cid-persist-failed = Faild fi persist root_cid to config

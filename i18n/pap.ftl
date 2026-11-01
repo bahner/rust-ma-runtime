@@ -165,3 +165,8 @@ ma-create-entity-kind-missing = ma_create_entity: kind no ta den registry; a ked
 ma-create-entity-invalid-behaviour = ma_create_entity: referensia di behaviour no ta válido; a keda saltá
 crud-message-rejected = Mensahe CRUD a keda rechazá
 inbox-message-rejected = Mensahe di inbox a keda rechazá
+
+runtime-root-published = Rais di runtime publiká na IPNS
+runtime-root-publish-failed = Publikashon di rais di runtime na IPNS no a logra
+runtime-root-publish-timeout = Publikashon di rais di runtime na IPNS a keda agotá
+root-cid-persist-failed = No a logra kibra root_cid den config

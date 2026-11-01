@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = 重新計劃隨機任務失敗
 schedule-stale-dispatch-skipped = 跳過計劃分發：過期的計劃
 scheduled-dispatch-error = 計劃分發錯誤
 scheduled-dispatch-manifest-writer-unavailable = 計劃分發：清單寫入器未就緒；實體狀態待處理
+
+runtime-root-published = 已向 IPNS 發布執行階段根
+runtime-root-publish-failed = 向 IPNS 發布執行階段根失敗
+runtime-root-publish-timeout = 向 IPNS 發布執行階段根逾時
+root-cid-persist-failed = 未能將 root_cid 持久化到 config

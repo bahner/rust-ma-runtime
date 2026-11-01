@@ -24,32 +24,39 @@ use crate::entity::{
 use crate::kubo;
 use crate::plugin;
 
+/// Default remote pin name for the runtime root manifest.
+///
+/// Intentionally free of a date suffix: `pin_overwrite` replaces stale pins by
+/// their exact managed name, so a date-bearing name would strand one pin per
+/// day instead of keeping a single current root.
 pub fn default_remote_root_pin_name(slug: &str) -> String {
-    let now = time::OffsetDateTime::now_utc();
-    format!(
-        "ma-runtime-{slug}-root-{:04}-{:02}-{:02}",
-        now.year(),
-        u8::from(now.month()),
-        now.day()
-    )
+    format!("ma-runtime-{slug}-root")
 }
 
+/// Default remote pin name for the runtime's own DID document.
+///
+/// Distinct from [`default_remote_root_pin_name`] so that republishing the DID
+/// document cannot evict the root manifest pin (both would otherwise clean each
+/// other up under one managed name).
+pub fn runtime_did_remote_pin_name(slug: &str) -> String {
+    format!("ma-runtime-{slug}-did")
+}
+
+/// Stable remote pin name for an owner DID document published through this
+/// runtime. The digest identifies the owner; the date-free name lets
+/// `pin_overwrite` keep only the current document.
 pub fn owner_did_remote_pin_name(did: &str) -> String {
-    let now = time::OffsetDateTime::now_utc();
     let digest = blake3::hash(did.as_bytes()).to_hex();
-    format!(
-        "ma-agent-blake3{}-{:04}-{:02}-{:02}",
-        &digest[..16],
-        now.year(),
-        u8::from(now.month()),
-        now.day()
-    )
+    format!("ma-agent-blake3{}", &digest[..16])
 }
 
-pub fn runtime_remote_pin_config(config: &ma_core::Config) -> Option<RemotePinConfig> {
-    let default_name = default_remote_root_pin_name(&config.slug);
-    match config.remote_pin_config_with_default_name(default_name) {
-        Ok(remote) => remote,
+fn remote_pin_config_with_name(config: &ma_core::Config, name: String) -> Option<RemotePinConfig> {
+    match config.remote_pin_config_with_default_name(name.clone()) {
+        Ok(Some(mut remote)) => {
+            remote.name = name;
+            Some(remote)
+        }
+        Ok(None) => None,
         Err(err) => {
             tracing::warn!(error = %err, "{}", crate::i18n::t("bootstrap-remote-root-pin-misconfigured"));
             None
@@ -57,7 +64,30 @@ pub fn runtime_remote_pin_config(config: &ma_core::Config) -> Option<RemotePinCo
     }
 }
 
-async fn replace_remote_root_pin(
+fn configured_pin_name(config: &ma_core::Config) -> Option<String> {
+    config
+        .pin_remote_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToString::to_string)
+}
+
+pub fn runtime_remote_pin_config(config: &ma_core::Config) -> Option<RemotePinConfig> {
+    let name =
+        configured_pin_name(config).unwrap_or_else(|| default_remote_root_pin_name(&config.slug));
+    remote_pin_config_with_name(config, name)
+}
+
+pub fn runtime_did_remote_pin_config(config: &ma_core::Config) -> Option<RemotePinConfig> {
+    let name = configured_pin_name(config).map_or_else(
+        || runtime_did_remote_pin_name(&config.slug),
+        |base| format!("{base}-did"),
+    );
+    remote_pin_config_with_name(config, name)
+}
+
+pub async fn replace_remote_root_pin(
     kubo_url: &str,
     remote_pin: Option<&RemotePinConfig>,
     new_cid: &str,
@@ -1052,30 +1082,45 @@ pub async fn save_all_entity_states(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_kinds_overlay, apply_kinds_tree_overlay, owner_did_remote_pin_name, BootstrapYaml,
+        apply_kinds_overlay, apply_kinds_tree_overlay, default_remote_root_pin_name,
+        owner_did_remote_pin_name, runtime_did_remote_pin_config, runtime_did_remote_pin_name,
+        runtime_remote_pin_config, BootstrapYaml,
     };
     use crate::entity::{EntityNode, Evaluator, IpldLink, KindNode, KindTree, RuntimeManifest};
     use ma_core::{check_cap, CAP_IDENTITY_PUBLISH, CAP_IPFS};
     use std::collections::{BTreeMap, HashMap};
 
     #[test]
-    fn owner_did_remote_pin_name_uses_short_blake3_digest_and_utc_date() {
+    fn owner_did_remote_pin_name_uses_short_blake3_digest_and_no_date() {
         let did = "did:ma:owner";
         let digest = blake3::hash(did.as_bytes()).to_hex();
         let name = owner_did_remote_pin_name(did);
 
-        let date = name
-            .strip_prefix(&format!("ma-agent-blake3{}", &digest[..16]))
-            .and_then(|rest| rest.strip_prefix('-'))
-            .expect("pin name is prefix + date");
-        let mut parts = date.split('-');
-        let year = parts.next().expect("pin name year");
-        let month = parts.next().expect("pin name month");
-        let day = parts.next().expect("pin name day");
-        assert!(parts.next().is_none(), "pin name has one ISO date");
-        assert!(year.len() == 4 && year.chars().all(|c| c.is_ascii_digit()));
-        assert!(month.len() == 2 && month.chars().all(|c| c.is_ascii_digit()));
-        assert!(day.len() == 2 && day.chars().all(|c| c.is_ascii_digit()));
+        assert_eq!(name, format!("ma-agent-blake3{}", &digest[..16]));
+    }
+
+    #[test]
+    fn remote_pin_names_are_stable_and_distinct() {
+        let root = default_remote_root_pin_name("sky");
+        let did = runtime_did_remote_pin_name("sky");
+
+        assert_eq!(root, "ma-runtime-sky-root");
+        assert_eq!(did, "ma-runtime-sky-did");
+        assert_ne!(root, did, "root and DID pins must not share a managed name");
+    }
+
+    #[test]
+    fn configured_pin_name_applies_to_root_and_derives_the_did_name() {
+        let config = ma_core::Config::from_yaml_str(
+            "slug: sky\npin_remote: true\npin_remote_service: pinata\npin_remote_name: my-pins\npin_overwrite: true\n",
+        )
+        .expect("config");
+
+        let root = runtime_remote_pin_config(&config).expect("root pin config");
+        let did = runtime_did_remote_pin_config(&config).expect("DID pin config");
+
+        assert_eq!(root.name, "my-pins");
+        assert_eq!(did.name, "my-pins-did");
     }
 
     #[test]

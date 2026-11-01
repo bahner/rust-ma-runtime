@@ -165,3 +165,8 @@ ma-create-entity-kind-missing = ma_create_entity: kind tsy ao amin ny registry; 
 ma-create-entity-invalid-behaviour = ma_create_entity: tsy manan-danja ny reference behaviour; afoin
 crud-message-rejected = Hafatra CRUD nolavina
 inbox-message-rejected = Hafatra inbox nolavina
+
+runtime-root-published = Navoaka tao amin'ny IPNS ny fototry ny runtime
+runtime-root-publish-failed = Tsy nahomby ny famoahana ny fototry ny runtime tao amin'ny IPNS
+runtime-root-publish-timeout = Nifarana ny fotoana famoahana ny fototry ny runtime tao amin'ny IPNS
+root-cid-persist-failed = Tsy afaka nitahiry root_cid tao amin'ny config

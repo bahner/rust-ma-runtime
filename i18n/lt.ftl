@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Atsitiktinės užduoties persplanavimas nepa
 schedule-stale-dispatch-skipped = Suplanuotas siuntimas praleistas: pasenęs grafikas
 scheduled-dispatch-error = Klaida suplanuoto siuntimo metu
 scheduled-dispatch-manifest-writer-unavailable = Suplanuotas siuntimas: manifesto rašytojas neparengtas; objekto būsena laukia
+
+runtime-root-published = runtime šaknis paskelbta IPNS
+runtime-root-publish-failed = runtime šaknies paskelbimas IPNS nepavyko
+runtime-root-publish-timeout = runtime šaknies paskelbimo IPNS laikas baigėsi
+root-cid-persist-failed = root_cid išsaugojimas config nepavyko

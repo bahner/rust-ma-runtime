@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Imeshindwa kupanga upya kazi ya nasibu
 schedule-stale-dispatch-skipped = Utumaji uliohifadhiwa umerukwa: ratiba iliyopitwa
 scheduled-dispatch-error = Hitilafu katika utumaji uliohifadhiwa
 scheduled-dispatch-manifest-writer-unavailable = Utumaji uliohifadhiwa: mwandishi wa muhtasari hayupo; hali ya huluki inasubiri
+
+runtime-root-published = Mzizi wa runtime umechapishwa kwenye IPNS
+runtime-root-publish-failed = Imeshindwa kuchapisha mzizi wa runtime kwenye IPNS
+runtime-root-publish-timeout = Uchapishaji wa mzizi wa runtime kwenye IPNS umekwisha muda
+root-cid-persist-failed = Imeshindwa kuhifadhi root_cid kwenye config

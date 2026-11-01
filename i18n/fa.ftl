@@ -164,3 +164,8 @@ schedule-random-reschedule-failed = زمان‌بندی مجدد وظیفه تص
 schedule-stale-dispatch-skipped = ارسال زمان‌بندی‌شده نادیده گرفته شد: برنامه قدیمی
 scheduled-dispatch-error = خطا در ارسال زمان‌بندی‌شده
 scheduled-dispatch-manifest-writer-unavailable = ارسال زمان‌بندی‌شده: نویسنده مانیفست آماده نیست؛ وضعیت موجودیت در انتظار
+
+runtime-root-published = ریشه runtime در IPNS منتشر شد
+runtime-root-publish-failed = انتشار ریشه runtime در IPNS ناموفق بود
+runtime-root-publish-timeout = انتشار ریشه runtime در IPNS به پایان رسید
+root-cid-persist-failed = ذخیره root_cid در config ناموفق بود

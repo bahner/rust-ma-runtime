@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Kunde inte omplanera slumpmässigt jobb
 schedule-stale-dispatch-skipped = Schemalagd dispatch hoppad över: inaktuellt schema
 scheduled-dispatch-error = Fel vid schemalagd dispatch
 scheduled-dispatch-manifest-writer-unavailable = Schemalagd dispatch: manifestskrivare är inte redo; entitetstillstånd väntar
+
+runtime-root-published = runtime-roten publicerades till IPNS
+runtime-root-publish-failed = publicering av runtime-roten till IPNS misslyckades
+runtime-root-publish-timeout = publicering av runtime-roten till IPNS tog för lång tid
+root-cid-persist-failed = kunde inte spara root_cid i config

@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = Zufälligen Job konnte nicht neu geplant wer
 schedule-stale-dispatch-skipped = Geplanter Dispatch übersprungen: veralteter Zeitplan
 scheduled-dispatch-error = Fehler beim geplanten Dispatch
 scheduled-dispatch-manifest-writer-unavailable = Geplanter Dispatch: Manifest-Writer ist nicht bereit; Entity-Zustand bleibt ausstehend
+
+runtime-root-published = Runtime-Wurzel in IPNS veröffentlicht
+runtime-root-publish-failed = Veröffentlichung der Runtime-Wurzel in IPNS fehlgeschlagen
+runtime-root-publish-timeout = Veröffentlichung der Runtime-Wurzel in IPNS abgelaufen
+root-cid-persist-failed = root_cid konnte nicht in der config gespeichert werden

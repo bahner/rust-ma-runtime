@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = ዘፈቀደ ሥራ እንደገና ሊታ�
 schedule-stale-dispatch-skipped = የታቀደ ርክክብ ዘሏል፡ ያረጀ ዕቅድ
 scheduled-dispatch-error = የታቀደ ርክክብ ስህተት
 scheduled-dispatch-manifest-writer-unavailable = የታቀደ ርክክብ፡ manifest writer ዝግጁ አይደለም፤ entity ሁኔት ባልተፈታ ሁኔቱ ይቆያል
+
+runtime-root-published = የማስኬጃ ጊዜ ሥር ወደ IPNS ታትሟል
+runtime-root-publish-failed = የማስኬጃ ጊዜ ሥር ወደ IPNS ህትመት አልተሳካም
+runtime-root-publish-timeout = የማስኬጃ ጊዜ ሥር ወደ IPNS ህትመት ጊዜው አልፏል
+root-cid-persist-failed = root_cid ወደ config ማስቀመጥ አልተሳካም

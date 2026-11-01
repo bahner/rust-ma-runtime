@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = சீரற்ற பணியை மறு
 schedule-stale-dispatch-skipped = திட்டமிட்ட அனுப்புதல் தவிர்க்கப்பட்டது: பழைய அட்டவணை
 scheduled-dispatch-error = திட்டமிட்ட அனுப்புதலில் பிழை
 scheduled-dispatch-manifest-writer-unavailable = திட்டமிட்ட அனுப்புதல்: மேனிஃபெஸ்ட் எழுத்தர் தயாரில்லை; நிறுவன நிலை காத்திருக்கிறது
+
+runtime-root-published = ரன்டைம் ரூட் IPNS-இல் வெளியிடப்பட்டது
+runtime-root-publish-failed = ரன்டைம் ரூட்டை IPNS-இல் வெளியிடுவதில் தோல்வி
+runtime-root-publish-timeout = ரன்டைம் ரூட் IPNS வெளியீடு நேர முடிவடைந்தது
+root-cid-persist-failed = config-இல் root_cid சேமிப்பதில் தோல்வி

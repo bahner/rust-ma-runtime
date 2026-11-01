@@ -165,3 +165,8 @@ schedule-random-reschedule-failed = بے ترتیب کام دوبارہ مقرر
 schedule-stale-dispatch-skipped = مقررہ ڈسپیچ چھوڑ دیا گیا: پرانا شیڈول
 scheduled-dispatch-error = مقررہ ڈسپیچ میں خرابی
 scheduled-dispatch-manifest-writer-unavailable = مقررہ ڈسپیچ: مینیفیسٹ رائٹر تیار نہیں؛ انٹیٹی حالت انتظار میں ہے
+
+runtime-root-published = رن ٹائم روٹ IPNS پر شائع ہو گیا
+runtime-root-publish-failed = رن ٹائم روٹ کو IPNS پر شائع کرنا ناکام رہا
+runtime-root-publish-timeout = رن ٹائم روٹ کی IPNS اشاعت کا وقت ختم ہو گیا
+root-cid-persist-failed = config میں root_cid محفوظ کرنا ناکام رہا
