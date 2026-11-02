@@ -224,25 +224,28 @@ docker compose up
 the Kubo service name, `MA_PIN_REMOTE_NAME` is the optional label on the remote
 pin, `MA_PIN_REMOTE_API_URL` is the service API endpoint, and
 `MA_PIN_REMOTE_API_SECRET` is its API key. `MA_PIN_OVERWRITE` defaults to
-`true`: the fresh pin is protected under a temporary in-flight name while a
-detached best-effort job removes all old pins with the same exact name, then
-renames the pin to the requested name. Cleanup does not delay publication.
-The `ma` container registers the named service with Kubo if
+`true`: publication adds the fresh pin under the managed name and then awaits
+removal of every other pin using that name (including the legacy `<name>~new`
+form) before it returns. Because the replacement is inline rather than a
+detached best-effort job, a runtime restart cannot strand one extra pin per
+start. The `ma` container registers the named service with Kubo if
 it is absent. Existing services are preserved.
 
-When `MA_PIN_REMOTE_NAME` is unset, the default names are date-free so that
-`pin_overwrite` replaces earlier pins instead of stranding one per day:
+Every managed pin name ends with the UTC date, so each day keeps one backup and
+`pin_overwrite` replaces only same-day pins (restarting the runtime never
+strands an extra pin):
 
 | Managed content | Default pin name |
 |-----------------|------------------|
-| Runtime root manifest | `ma-runtime-<slug>-root` |
-| Runtime DID document | `ma-runtime-<slug>-did` |
-| Owner DID document | `ma-agent-blake3<first-16-hex-of-owner-DID>` |
+| Runtime root manifest | `ma-runtime-<slug>-root-YYYY-MM-DD` |
+| Runtime DID document | `ma-runtime-<slug>-did-YYYY-MM-DD` |
+| Owner DID document | `ma-agent-blake3<first-16-hex-of-owner-DID>-YYYY-MM-DD` |
 
 The root pin follows the current runtime head, and the DID-document pin is kept
 separate so republishing it never evicts the root pin. With
-`MA_PIN_REMOTE_NAME=my-pins`, those two names become `my-pins` and
-`my-pins-did`; the owner DID-document pin keeps its digest-derived name.
+`MA_PIN_REMOTE_NAME=my-pins`, those two names become `my-pins-YYYY-MM-DD` and
+`my-pins-did-YYYY-MM-DD`; the owner DID-document pin keeps its digest-derived
+name plus the date.
 
 ### First run
 

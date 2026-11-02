@@ -24,13 +24,30 @@ use crate::entity::{
 use crate::kubo;
 use crate::plugin;
 
+/// UTC date suffix that gives every managed pin one daily snapshot.
+fn utc_date_suffix() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "-{:04}-{:02}-{:02}",
+        now.year(),
+        u8::from(now.month()),
+        now.day()
+    )
+}
+
+/// Append today's UTC date, so a publication replaces only same-day pins and
+/// leaves one snapshot per day.
+fn daily_pin_name(base: impl Into<String>) -> String {
+    format!("{}{}", base.into(), utc_date_suffix())
+}
+
 /// Default remote pin name for the runtime root manifest.
 ///
-/// Intentionally free of a date suffix: `pin_overwrite` replaces stale pins by
-/// their exact managed name, so a date-bearing name would strand one pin per
-/// day instead of keeping a single current root.
+/// Date-stamped so each day keeps one backup. Within a day `pin_overwrite`
+/// replaces the earlier pin, so restarting the runtime never strands a pin per
+/// start.
 pub fn default_remote_root_pin_name(slug: &str) -> String {
-    format!("ma-runtime-{slug}-root")
+    daily_pin_name(format!("ma-runtime-{slug}-root"))
 }
 
 /// Default remote pin name for the runtime's own DID document.
@@ -39,15 +56,15 @@ pub fn default_remote_root_pin_name(slug: &str) -> String {
 /// document cannot evict the root manifest pin (both would otherwise clean each
 /// other up under one managed name).
 pub fn runtime_did_remote_pin_name(slug: &str) -> String {
-    format!("ma-runtime-{slug}-did")
+    daily_pin_name(format!("ma-runtime-{slug}-did"))
 }
 
 /// Stable remote pin name for an owner DID document published through this
-/// runtime. The digest identifies the owner; the date-free name lets
-/// `pin_overwrite` keep only the current document.
+/// runtime. The digest identifies the owner; the daily suffix gives one backup
+/// per day and lets `pin_overwrite` replace same-day duplicates.
 pub fn owner_did_remote_pin_name(did: &str) -> String {
     let digest = blake3::hash(did.as_bytes()).to_hex();
-    format!("ma-agent-blake3{}", &digest[..16])
+    daily_pin_name(format!("ma-agent-blake3{}", &digest[..16]))
 }
 
 fn remote_pin_config_with_name(config: &ma_core::Config, name: String) -> Option<RemotePinConfig> {
@@ -74,15 +91,17 @@ fn configured_pin_name(config: &ma_core::Config) -> Option<String> {
 }
 
 pub fn runtime_remote_pin_config(config: &ma_core::Config) -> Option<RemotePinConfig> {
-    let name =
-        configured_pin_name(config).unwrap_or_else(|| default_remote_root_pin_name(&config.slug));
+    let name = configured_pin_name(config).map_or_else(
+        || default_remote_root_pin_name(&config.slug),
+        daily_pin_name,
+    );
     remote_pin_config_with_name(config, name)
 }
 
 pub fn runtime_did_remote_pin_config(config: &ma_core::Config) -> Option<RemotePinConfig> {
     let name = configured_pin_name(config).map_or_else(
         || runtime_did_remote_pin_name(&config.slug),
-        |base| format!("{base}-did"),
+        |base| daily_pin_name(format!("{base}-did")),
     );
     remote_pin_config_with_name(config, name)
 }
@@ -95,7 +114,7 @@ pub async fn replace_remote_root_pin(
     let Some(remote) = remote_pin else {
         return Ok(());
     };
-    let cleanup_scheduled = ma_core::remote_pin_replace_named(
+    let removed = crate::kubo::replace_named_remote_pin(
         kubo_url,
         &remote.service,
         &remote.name,
@@ -108,7 +127,7 @@ pub async fn replace_remote_root_pin(
         new = %new_cid,
         service = %remote.service,
         name = %remote.name,
-        cleanup_scheduled,
+        removed,
         "{}",
         crate::i18n::t("bootstrap-remote-root-pin-confirmed")
     );
@@ -1090,22 +1109,41 @@ mod tests {
     use ma_core::{check_cap, CAP_IDENTITY_PUBLISH, CAP_IPFS};
     use std::collections::{BTreeMap, HashMap};
 
-    #[test]
-    fn owner_did_remote_pin_name_uses_short_blake3_digest_and_no_date() {
-        let did = "did:ma:owner";
-        let digest = blake3::hash(did.as_bytes()).to_hex();
-        let name = owner_did_remote_pin_name(did);
-
-        assert_eq!(name, format!("ma-agent-blake3{}", &digest[..16]));
+    fn assert_daily_name(name: &str, base: &str) {
+        let date = name
+            .strip_prefix(base)
+            .and_then(|rest| rest.strip_prefix('-'))
+            .expect("pin name is base + date");
+        let mut parts = date.split('-');
+        let year = parts.next().expect("pin name year");
+        let month = parts.next().expect("pin name month");
+        let day = parts.next().expect("pin name day");
+        assert!(parts.next().is_none(), "pin name has one ISO date");
+        assert_eq!(year.len(), 4);
+        assert!(year.chars().all(|c| c.is_ascii_digit()));
+        assert_eq!(month.len(), 2);
+        assert!(month.chars().all(|c| c.is_ascii_digit()));
+        assert_eq!(day.len(), 2);
+        assert!(day.chars().all(|c| c.is_ascii_digit()));
     }
 
     #[test]
-    fn remote_pin_names_are_stable_and_distinct() {
+    fn owner_did_remote_pin_name_uses_short_blake3_digest_and_utc_date() {
+        let did = "did:ma:owner";
+        let digest = blake3::hash(did.as_bytes()).to_hex();
+        assert_daily_name(
+            &owner_did_remote_pin_name(did),
+            &format!("ma-agent-blake3{}", &digest[..16]),
+        );
+    }
+
+    #[test]
+    fn remote_pin_names_are_daily_and_distinct() {
         let root = default_remote_root_pin_name("sky");
         let did = runtime_did_remote_pin_name("sky");
 
-        assert_eq!(root, "ma-runtime-sky-root");
-        assert_eq!(did, "ma-runtime-sky-did");
+        assert_daily_name(&root, "ma-runtime-sky-root");
+        assert_daily_name(&did, "ma-runtime-sky-did");
         assert_ne!(root, did, "root and DID pins must not share a managed name");
     }
 
@@ -1119,8 +1157,8 @@ mod tests {
         let root = runtime_remote_pin_config(&config).expect("root pin config");
         let did = runtime_did_remote_pin_config(&config).expect("DID pin config");
 
-        assert_eq!(root.name, "my-pins");
-        assert_eq!(did.name, "my-pins-did");
+        assert_daily_name(&root.name, "my-pins");
+        assert_daily_name(&did.name, "my-pins-did");
     }
 
     #[test]

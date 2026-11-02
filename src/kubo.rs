@@ -135,6 +135,143 @@ pub async fn pin_add(kubo_url: &str, cid: &str) -> Result<()> {
     Ok(())
 }
 
+/// Kubo defaults remote-pin listing and removal to `status=pinned`. Include the
+/// transient states so queued and failed requests are visible and removable.
+const REMOTE_PIN_STATUSES: [(&str, &str); 4] = [
+    ("status", "queued"),
+    ("status", "pinning"),
+    ("status", "pinned"),
+    ("status", "failed"),
+];
+
+#[derive(Deserialize)]
+struct RemotePinListEntry {
+    #[serde(default, rename = "Cid")]
+    cid_upper: String,
+    #[serde(default, rename = "cid")]
+    cid_lower: String,
+}
+
+/// List the CIDs pinned on `service` under exactly `name`.
+async fn list_remote_pins_named(kubo_url: &str, service: &str, name: &str) -> Result<Vec<String>> {
+    let _permit = acquire_request_permit("pin/remote/ls").await?;
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/pin/remote/ls");
+    let mut query: Vec<(&str, &str)> = vec![("service", service), ("name", name)];
+    query.extend_from_slice(&REMOTE_PIN_STATUSES);
+    let body = client()
+        .post(url)
+        .query(&query)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    // pin/remote/ls streams NDJSON: one JSON record per pin, per line.
+    let mut cids = Vec::new();
+    for line in body.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let entry: RemotePinListEntry = serde_json::from_str(line).map_err(|error| {
+            anyhow!("failed parsing pin/remote/ls response: {error} line={line}")
+        })?;
+        let cid = if entry.cid_upper.is_empty() {
+            entry.cid_lower
+        } else {
+            entry.cid_upper
+        };
+        if !cid.is_empty() {
+            cids.push(cid);
+        }
+    }
+    Ok(cids)
+}
+
+/// Remove every remote pin for `cid` on `service`.
+async fn remove_remote_pin(kubo_url: &str, service: &str, cid: &str) -> Result<()> {
+    let _permit = acquire_request_permit("pin/remote/rm").await?;
+    let base = kubo_url.trim_end_matches('/');
+    let url = format!("{base}/api/v0/pin/remote/rm");
+    let mut query: Vec<(&str, &str)> = vec![("service", service), ("cid", cid)];
+    query.extend_from_slice(&REMOTE_PIN_STATUSES);
+    query.push(("force", "true"));
+    let resp = client().post(url).query(&query).send().await?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if status.as_u16() == 404 || body.contains("not found") || body.contains("not pinned") {
+        return Ok(());
+    }
+    Err(anyhow!("pin/remote/rm {cid} from {service} failed: {body}"))
+}
+
+/// Remove every remote pin still using the managed `name` (including the
+/// legacy in-flight `<name>~new` form) except `keep_cid`.
+///
+/// Kubo's remote-pin lookup is an exact-name match, so both names are queried
+/// explicitly. Up to three passes are made so a pin added by a concurrent
+/// publication is still swept. Returns how many stale pins were removed.
+pub async fn sweep_named_remote_pin(
+    kubo_url: &str,
+    service: &str,
+    name: &str,
+    keep_cid: &str,
+) -> Result<usize> {
+    let in_flight = ma_core::in_flight_pin_name(name);
+    let mut removed = 0;
+    for _ in 0..3 {
+        let mut stale: Vec<String> = Vec::new();
+        for candidate in [name, in_flight.as_str()] {
+            for cid in list_remote_pins_named(kubo_url, service, candidate).await? {
+                if cid != keep_cid && !stale.contains(&cid) {
+                    stale.push(cid);
+                }
+            }
+        }
+        if stale.is_empty() {
+            break;
+        }
+        let mut progress = false;
+        for cid in stale {
+            match remove_remote_pin(kubo_url, service, &cid).await {
+                Ok(()) => {
+                    removed += 1;
+                    progress = true;
+                }
+                Err(error) => {
+                    tracing::warn!(name = %name, service, cid = %cid, error = %error, "remote pin cleanup failed");
+                }
+            }
+        }
+        if !progress {
+            break;
+        }
+    }
+    Ok(removed)
+}
+
+/// Pin `cid` under the managed `name` on the remote service and, when
+/// `overwrite` is set, remove every other pin still using that name before
+/// returning.
+///
+/// The sweep runs inline rather than as a detached ma-core job: a runtime that
+/// restarts before the background task finishes would otherwise add one pin per
+/// start and never remove the previous one.
+pub async fn replace_named_remote_pin(
+    kubo_url: &str,
+    service: &str,
+    name: &str,
+    cid: &str,
+    overwrite: bool,
+) -> Result<usize> {
+    ma_core::remote_pin_add_named(kubo_url, service, cid, name).await?;
+    if !overwrite {
+        return Ok(0);
+    }
+    sweep_named_remote_pin(kubo_url, service, name, cid).await
+}
+
 /// Atomically move the recursive pin from `old_cid` to `new_cid` via Kubo's
 /// `pin/update` endpoint (`unpin=true`). If `old_cid` was not pinned, falls back
 /// to [`pin_add`] of `new_cid` so first-time callers work too.
@@ -306,5 +443,41 @@ mod tests {
 
         assert_eq!(cid, "bafyreibkhaddtestcid");
         assert_eq!(state.0.lock().await.as_slice(), &["false"]);
+    }
+
+    #[tokio::test]
+    async fn replace_named_remote_pin_removes_stale_and_legacy_pins() {
+        let kubo = crate::testkubo::MockKubo::start().await;
+        let name = "ma-runtime-sky-root";
+        let legacy = ma_core::in_flight_pin_name(name);
+        kubo.add_remote_pin("pinata", name, "bafyold").await;
+        kubo.add_remote_pin("pinata", &legacy, "bafylegacy").await;
+
+        let removed = replace_named_remote_pin(kubo.url(), "pinata", name, "bafynew", true)
+            .await
+            .unwrap();
+
+        assert_eq!(removed, 2);
+        assert_eq!(kubo.remote_pins_named("pinata", name).await, ["bafynew"]);
+        assert_eq!(
+            kubo.remote_pins_named("pinata", &legacy).await,
+            Vec::<String>::new()
+        );
+    }
+
+    #[tokio::test]
+    async fn replace_named_remote_pin_without_overwrite_keeps_stale_pins() {
+        let kubo = crate::testkubo::MockKubo::start().await;
+        let name = "ma-runtime-sky-root";
+        kubo.add_remote_pin("pinata", name, "bafyold").await;
+
+        let removed = replace_named_remote_pin(kubo.url(), "pinata", name, "bafynew", false)
+            .await
+            .unwrap();
+
+        assert_eq!(removed, 0);
+        let mut pins = kubo.remote_pins_named("pinata", name).await;
+        pins.sort();
+        assert_eq!(pins, ["bafynew", "bafyold"]);
     }
 }

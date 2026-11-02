@@ -198,6 +198,12 @@ pub async fn do_publish_own_document(
     let publisher = IpfsDidPublisher::new(&kubo_url)?;
     publisher.wait_until_ready(10).await?;
 
+    // Keep the managed name so the stale-pin sweep below does not depend on
+    // ma-core's detached background clean-up completing before the next start.
+    let remote_pin_target = remote_pin
+        .as_ref()
+        .map(|remote| (remote.service.clone(), remote.name.clone()));
+
     let options = DidDocumentPublishOptions {
         key_parts: vec!["runtime".to_string(), runtime_slug],
         ipns: IpnsPublishOptions {
@@ -215,9 +221,37 @@ pub async fn do_publish_own_document(
         overwrite: pin_overwrite,
         ..DidDocumentPublishOptions::default()
     };
-    publisher
+    let outcome = publisher
         .publish_document(doc_cbor, ipns_secret_key, options)
         .await?;
+
+    if pin_overwrite {
+        if let Some((service, name)) = remote_pin_target {
+            match crate::kubo::sweep_named_remote_pin(&kubo_url, &service, &name, &outcome.cid)
+                .await
+            {
+                Ok(removed) if removed > 0 => {
+                    tracing::info!(
+                        service = %service,
+                        name = %name,
+                        cid = %outcome.cid,
+                        removed,
+                        "own DID remote pins replaced"
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        service = %service,
+                        name = %name,
+                        cid = %outcome.cid,
+                        error = %error,
+                        "own DID remote pin cleanup failed"
+                    );
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -970,7 +1004,7 @@ async fn replace_owner_remote_pin(
     cid: &str,
 ) {
     let name = crate::bootstrap::owner_did_remote_pin_name(from);
-    match ma_core::remote_pin_replace_named(
+    match crate::kubo::replace_named_remote_pin(
         ctx.kubo_rpc_url,
         &configured_remote.service,
         &name,
@@ -979,13 +1013,13 @@ async fn replace_owner_remote_pin(
     )
     .await
     {
-        Ok(cleanup_scheduled) => {
+        Ok(removed) => {
             info!(
                 did = %document_did.id(),
                 cid = %cid,
                 service = %configured_remote.service,
                 name = %name,
-                cleanup_scheduled,
+                removed,
                 "DID remote pin confirmed"
             );
         }

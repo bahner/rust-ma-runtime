@@ -32,18 +32,25 @@ pub async fn test_endpoint(secret: [u8; 32]) -> Box<dyn ma_core::MaEndpoint> {
 #[derive(Clone, Default)]
 struct Store(Arc<Mutex<HashMap<String, Vec<u8>>>>);
 
+/// Remote-pin records keyed by `(service, name, cid)`; enough for the runtime's
+/// named-pin replacement logic.
+#[derive(Clone, Default)]
+struct RemoteStore(Arc<Mutex<std::collections::BTreeSet<(String, String, String)>>>);
+
 /// A running in-process mock Kubo.  Pass [`MockKubo::url`] wherever a
 /// `kubo_rpc_url` is expected.
 pub struct MockKubo {
     url: String,
     store: Store,
+    remote: RemoteStore,
 }
 
 impl MockKubo {
     /// Bind an ephemeral port and start serving the mock DAG API.
     pub async fn start() -> Self {
         let store = Store::default();
-        let app = Router::new()
+        let remote = RemoteStore::default();
+        let dag_app = Router::new()
             .route("/api/v0/dag/put", post(dag_put))
             .route("/api/v0/dag/get", post(dag_get))
             .route("/api/v0/dag/resolve", post(dag_resolve))
@@ -54,6 +61,12 @@ impl MockKubo {
             .route("/api/v0/pin/update", post(pin_ok))
             .route("/api/v0/pin/add", post(pin_ok))
             .with_state(store.clone());
+        let remote_app = Router::new()
+            .route("/api/v0/pin/remote/add", post(remote_pin_add))
+            .route("/api/v0/pin/remote/ls", post(remote_pin_ls))
+            .route("/api/v0/pin/remote/rm", post(remote_pin_rm))
+            .with_state(remote.clone());
+        let app = dag_app.merge(remote_app);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -62,6 +75,7 @@ impl MockKubo {
         Self {
             url: format!("http://{addr}"),
             store,
+            remote,
         }
     }
 
@@ -75,6 +89,27 @@ impl MockKubo {
         let cid = fake_cid(&bytes);
         self.store.0.lock().await.insert(cid.clone(), bytes);
         cid
+    }
+
+    /// Seed a remote pin record as a pinning service would report it.
+    pub async fn add_remote_pin(&self, service: &str, name: &str, cid: &str) {
+        self.remote
+            .0
+            .lock()
+            .await
+            .insert((service.to_string(), name.to_string(), cid.to_string()));
+    }
+
+    /// CIDs currently recorded under `service` and the exact `name`.
+    pub async fn remote_pins_named(&self, service: &str, name: &str) -> Vec<String> {
+        self.remote
+            .0
+            .lock()
+            .await
+            .iter()
+            .filter(|(s, n, _)| s == service && n == name)
+            .map(|(_, _, cid)| cid.clone())
+            .collect()
     }
 }
 
@@ -110,7 +145,7 @@ fn extract_multipart_file(body: &[u8]) -> Vec<u8> {
     content[..end].to_vec()
 }
 
-fn query_arg(raw: Option<String>, key: &str) -> Option<String> {
+fn query_arg(raw: Option<&str>, key: &str) -> Option<String> {
     raw?.split('&').find_map(|kv| {
         let (k, v) = kv.split_once('=')?;
         (k == key).then(|| percent_decode(v))
@@ -149,12 +184,12 @@ async fn dag_put(State(store): State<Store>, body: Bytes) -> String {
 }
 
 async fn dag_get(State(store): State<Store>, RawQuery(q): RawQuery) -> Vec<u8> {
-    let cid = query_arg(q, "arg").unwrap_or_default();
+    let cid = query_arg(q.as_deref(), "arg").unwrap_or_default();
     store.0.lock().await.get(&cid).cloned().unwrap_or_default()
 }
 
 async fn cat(State(store): State<Store>, RawQuery(q): RawQuery) -> Vec<u8> {
-    let arg = query_arg(q, "arg").unwrap_or_default();
+    let arg = query_arg(q.as_deref(), "arg").unwrap_or_default();
     let cid = arg.strip_prefix("/ipfs/").unwrap_or(&arg);
     store.0.lock().await.get(cid).cloned().unwrap_or_default()
 }
@@ -167,13 +202,13 @@ async fn add(State(store): State<Store>, body: Bytes) -> String {
 }
 
 async fn block_get(State(store): State<Store>, RawQuery(q): RawQuery) -> Vec<u8> {
-    let arg = query_arg(q, "arg").unwrap_or_default();
+    let arg = query_arg(q.as_deref(), "arg").unwrap_or_default();
     let cid = arg.strip_prefix("/ipfs/").unwrap_or(&arg);
     store.0.lock().await.get(cid).cloned().unwrap_or_default()
 }
 
 async fn dag_resolve(RawQuery(q): RawQuery) -> String {
-    let arg = query_arg(q, "arg").unwrap_or_default();
+    let arg = query_arg(q.as_deref(), "arg").unwrap_or_default();
     // Real Kubo resolves `/ipfs/<cid>[/sub/path]` down to the bare CID, and
     // `/ipns/<key>` similarly after name resolution. The mock has no real
     // IPNS name resolution to perform, so it treats an `/ipns/<key>` path
@@ -189,11 +224,48 @@ async fn dag_resolve(RawQuery(q): RawQuery) -> String {
 }
 
 async fn name_resolve(RawQuery(q): RawQuery) -> String {
-    let arg = query_arg(q, "arg").unwrap_or_default();
+    let arg = query_arg(q.as_deref(), "arg").unwrap_or_default();
     let cid = arg.strip_prefix("/ipns/").unwrap_or(&arg);
     format!("{{\"Path\":\"/ipfs/{cid}\"}}")
 }
 
 async fn pin_ok() -> &'static str {
+    ""
+}
+
+async fn remote_pin_add(State(remote): State<RemoteStore>, RawQuery(q): RawQuery) -> &'static str {
+    let service = query_arg(q.as_deref(), "service").unwrap_or_default();
+    let name = query_arg(q.as_deref(), "name").unwrap_or_default();
+    let arg = query_arg(q.as_deref(), "arg").unwrap_or_default();
+    let cid = arg.strip_prefix("/ipfs/").unwrap_or(&arg).to_string();
+    remote.0.lock().await.insert((service, name, cid));
+    ""
+}
+
+async fn remote_pin_ls(State(remote): State<RemoteStore>, RawQuery(q): RawQuery) -> String {
+    let service = query_arg(q.as_deref(), "service").unwrap_or_default();
+    let name = query_arg(q.as_deref(), "name").unwrap_or_default();
+    let pins = remote.0.lock().await;
+    pins.iter()
+        .filter(|(s, n, _)| s == &service && n == &name)
+        .fold(String::new(), |mut out, (_, n, cid)| {
+            use std::fmt::Write as _;
+            let _ = writeln!(
+                out,
+                "{{\"Status\":\"queued\",\"Cid\":\"{cid}\",\"Name\":\"{n}\"}}"
+            );
+            out
+        })
+}
+
+async fn remote_pin_rm(State(remote): State<RemoteStore>, RawQuery(q): RawQuery) -> &'static str {
+    let service = query_arg(q.as_deref(), "service").unwrap_or_default();
+    let arg = query_arg(q.as_deref(), "cid").unwrap_or_default();
+    let cid = arg.strip_prefix("/ipfs/").unwrap_or(&arg).to_string();
+    remote
+        .0
+        .lock()
+        .await
+        .retain(|(s, _, c)| !(s == &service && c == &cid));
     ""
 }
