@@ -521,8 +521,9 @@ Each Wasm plugin must export:
 `#scheduler` is a compiled-in native actor (not Wasm). Plugins register timed
 dispatches by sending a CBOR array to `did:ma:<runtime>#scheduler`.
 
-The scheduler also accepts `:help` and returns a short text summary of the
-supported schedule types and wire format.
+The scheduler also accepts two introspection verbs: `:help`, a short text
+summary of the supported schedule types and wire format, and `:list`, which
+returns registered schedules as structured data.
 
 Schedules are **not persisted** — they must be re-registered on each startup,
 typically from a plugin's `:start` handler.
@@ -562,6 +563,23 @@ dispatch and MUST NOT self-reschedule.
 | `:at` | Unix timestamp in milliseconds (integer) | Fires once after the computed delay |
 | `:random` | Max seconds (integer) | Fires after 1–N random seconds, then self-reschedules |
 
+### Introspection verbs
+
+| Verb | Reply |
+|------|-------|
+| `:help` | Text summary of the wire format, types, and ownership rules |
+| `:list` | `[":ok", [<schedule-map>, …]]` |
+
+`:list` accepts the bare atom `:list` or the singleton array `[:list]`. Each
+map has the text keys `name`, `owner`, `type`, `spec`, and `call` (a verb atom,
+or `[verb, args…]` when extra args were supplied). Results are sorted by
+`owner`, then `name`; an empty registry replies `[":ok", []]`. Only live
+in-memory jobs appear — a registration still in flight is not listed.
+
+`:list` is restricted to runtime owners by the scheduler ACL: grant it only
+to the `+owners` group, which resolves against `/grp/owners`. A caller outside
+that group is denied like any other ACL miss.
+
 ### Examples
 
 ```cbor
@@ -587,17 +605,20 @@ dispatch and MUST NOT self-reschedule.
 ### ACL
 
 Scheduled dispatch **bypasses all ACL checks**. The runtime is the trusted
-caller. A typical scheduler ACL exposes `:help` publicly while keeping
-schedule registration local-only:
+caller. A typical scheduler ACL exposes `:help` publicly, keeps schedule
+registration local-only, and restricts listing to owners:
 
 ```yaml
 scheduler:
   "*": [":help"]
   "#": [":cron", ":interval", ":at", ":random"]
+  "+owners": [":list"]
 ```
 
 This allows foreign DIDs to ask `#scheduler:help` directly without letting
-them register schedules on that runtime.
+them register schedules, or list them, on that runtime. `:list` is granted
+only to the owner group, so the restriction tracks `/grp/owners` without a
+hardcoded check.
 
 ---
 

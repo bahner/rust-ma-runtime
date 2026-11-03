@@ -17,6 +17,11 @@
 //! [name, ":random",   max_secs_int, verb_or_array, extra_args…]
 //! ```
 //!
+//! `:help` replies with a text summary; `:list` replies with the live
+//! schedules as `[":ok", [{name, owner, type, spec, call}, …]]`. Restrict
+//! `:list` to runtime owners through the ACL, for example
+//! `"+owners": [":list"]`.
+//!
 //! Schedules are caller-owned. The dispatch target is always `msg.from`
 //! (the registering entity). The scheduler keys jobs by
 //! `<msg.from>-<name>`, so re-registering the same `name` from the same sender
@@ -25,9 +30,10 @@
 //! ## ACL
 //!
 //! `#scheduler` uses the `"scheduler"` ACL entry from the root manifest.
-//! A typical ACL grants `:help` to everyone while keeping registration verbs
-//! local-only, for example `"*": [":help"]` together with
-//! `"#": [":cron", ":interval", ":at", ":in", ":random"]`.
+//! A typical ACL grants `:help` to everyone, keeps registration local, and
+//! restricts `:list` to owners: `"*": [":help"]`,
+//! `"#": [":cron", ":interval", ":at", ":in", ":random"]`, and
+//! `"+owners": [":list"]`.
 //!
 //! ## Kind
 //!
@@ -70,8 +76,11 @@ pub fn native_actor(
         let term: CborValue = ciborium::de::from_reader(input.msg.content.as_slice())
             .map_err(|e| anyhow!("scheduler: invalid CBOR in message: {e}"))?;
 
-        if is_help_request(&term) {
+        if is_verb_request(&term, ":help") {
             return help_dispatch_result();
+        }
+        if is_verb_request(&term, ":list") {
+            return list_dispatch_result(&schedule_registry);
         }
 
         let req = parse_schedule_request(term, &input.msg.from)?;
@@ -122,13 +131,25 @@ pub fn native_factory(
 struct ParsedRequest {
     schedule_key: String,
     fragment: String,
+    record: ScheduleRecord,
     request: ScheduleRequest,
 }
 
-#[derive(Clone, Copy)]
+/// Definition retained so `:list` can report live schedules.
+#[derive(Clone, Debug)]
+struct ScheduleRecord {
+    name: String,
+    owner: String,
+    kind: &'static str,
+    spec: CborValue,
+    call: CborValue,
+}
+
+#[derive(Clone)]
 struct TrackedJob {
     version: u64,
     job_id: Option<uuid::Uuid>,
+    record: ScheduleRecord,
 }
 
 type ScheduleJobs = Arc<Mutex<HashMap<String, TrackedJob>>>;
@@ -155,15 +176,22 @@ impl ScheduleRegistry {
         }
     }
 
-    fn begin_registration(&self, schedule_key: &str) -> RegistrationAttempt {
+    fn begin_registration(
+        &self,
+        schedule_key: &str,
+        record: ScheduleRecord,
+    ) -> RegistrationAttempt {
         let mut map = self.jobs.lock().unwrap_or_else(PoisonError::into_inner);
-        let previous = map.get(schedule_key).copied();
-        let version = previous.map_or(1, |entry| entry.version.saturating_add(1));
+        let previous = map.get(schedule_key).cloned();
+        let version = previous
+            .as_ref()
+            .map_or(1, |entry| entry.version.saturating_add(1));
         map.insert(
             schedule_key.to_string(),
             TrackedJob {
                 version,
                 job_id: None,
+                record,
             },
         );
         drop(map);
@@ -189,21 +217,36 @@ impl ScheduleRegistry {
         job_id: uuid::Uuid,
     ) -> RegistrationCommit {
         let mut map = self.jobs.lock().unwrap_or_else(PoisonError::into_inner);
-        if map
+        let record = map
             .get(schedule_key)
-            .is_some_and(|entry| entry.version == version)
-        {
+            .filter(|entry| entry.version == version)
+            .map(|entry| entry.record.clone());
+        let commit = record.map_or(RegistrationCommit::Superseded, |record| {
             map.insert(
                 schedule_key.to_string(),
                 TrackedJob {
                     version,
                     job_id: Some(job_id),
+                    record,
                 },
             );
             RegistrationCommit::Active
-        } else {
-            RegistrationCommit::Superseded
-        }
+        });
+        drop(map);
+        commit
+    }
+
+    /// Committed schedules, sorted by owner then name.
+    fn snapshot(&self) -> Vec<ScheduleRecord> {
+        let map = self.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut records: Vec<ScheduleRecord> = map
+            .values()
+            .filter(|entry| entry.job_id.is_some())
+            .map(|entry| entry.record.clone())
+            .collect();
+        drop(map);
+        records.sort_by(|a, b| a.owner.cmp(&b.owner).then_with(|| a.name.cmp(&b.name)));
+        records
     }
 
     fn rollback_registration(&self, schedule_key: &str, version: u64) {
@@ -224,13 +267,10 @@ impl ScheduleRegistry {
     }
 }
 
-fn help_dispatch_result() -> Result<DispatchResult> {
+fn dispatch_result(value: &CborValue, what: &str) -> Result<DispatchResult> {
     let mut out = Vec::new();
-    ciborium::ser::into_writer(
-        &CborValue::Text(scheduler_help_text().to_string()),
-        &mut out,
-    )
-    .map_err(|e| anyhow!("scheduler: CBOR encode help: {e}"))?;
+    ciborium::ser::into_writer(value, &mut out)
+        .map_err(|e| anyhow!("scheduler: CBOR encode {what}: {e}"))?;
     Ok(DispatchResult {
         output: out,
         pending_state: None,
@@ -240,6 +280,42 @@ fn help_dispatch_result() -> Result<DispatchResult> {
     })
 }
 
+fn help_dispatch_result() -> Result<DispatchResult> {
+    dispatch_result(&CborValue::Text(scheduler_help_text().to_string()), "help")
+}
+
+fn list_dispatch_result(registry: &ScheduleRegistry) -> Result<DispatchResult> {
+    let entries: Vec<CborValue> = registry
+        .snapshot()
+        .into_iter()
+        .map(|record| {
+            CborValue::Map(vec![
+                (
+                    CborValue::Text("name".to_string()),
+                    CborValue::Text(record.name),
+                ),
+                (
+                    CborValue::Text("owner".to_string()),
+                    CborValue::Text(record.owner),
+                ),
+                (
+                    CborValue::Text("type".to_string()),
+                    CborValue::Text(record.kind.to_string()),
+                ),
+                (CborValue::Text("spec".to_string()), record.spec),
+                (CborValue::Text("call".to_string()), record.call),
+            ])
+        })
+        .collect();
+    dispatch_result(
+        &CborValue::Array(vec![
+            CborValue::Text(":ok".to_string()),
+            CborValue::Array(entries),
+        ]),
+        "list",
+    )
+}
+
 async fn process_schedule_registration(
     sched: Arc<tokio_cron_scheduler::JobScheduler>,
     ctx: SchedulerCtx,
@@ -247,7 +323,7 @@ async fn process_schedule_registration(
     from: String,
     req: ParsedRequest,
 ) {
-    let attempt = schedule_registry.begin_registration(&req.schedule_key);
+    let attempt = schedule_registry.begin_registration(&req.schedule_key, req.record);
 
     trace!(
         from = %from,
@@ -355,11 +431,11 @@ async fn handle_registered_schedule_job(
     }
 }
 
-fn is_help_request(term: &CborValue) -> bool {
+fn is_verb_request(term: &CborValue, verb: &str) -> bool {
     match term {
-        CborValue::Text(s) => s == ":help",
+        CborValue::Text(s) => s == verb,
         CborValue::Array(items) if items.len() == 1 => {
-            matches!(items.first(), Some(CborValue::Text(s)) if s == ":help")
+            matches!(items.first(), Some(CborValue::Text(s)) if s == verb)
         }
         _ => false,
     }
@@ -370,7 +446,8 @@ const fn scheduler_help_text() -> &'static str {
 format: [name, :type, spec, verb_or_array, extra_args...]\n\
 types: :cron, :interval, :at, :in, :random\n\
 specs: :cron=\"sec min hour day month weekday\", :interval=\"30m\", :at=<unix_ms>, :in=\"10s\", :random=<max_secs>\n\
-ownership: target is always msg.from; same [msg.from + name] overwrites previous schedule"
+ownership: target is always msg.from; same [msg.from + name] overwrites previous schedule\n\
+verbs: :help (this text), :list (registered schedules as structured data)"
 }
 
 // ── CBOR schedule-request parser ─────────────────────────────────────────────
@@ -417,16 +494,19 @@ fn parse_schedule_request(term: CborValue, from: &str) -> Result<ParsedRequest> 
         .ok_or_else(|| anyhow!("scheduler: sender must be DID-URL with fragment"))?;
     let schedule_key = format!("{from}-{schedule_name}");
 
-    // Encode verb (4th element) + optional inline args (5th+) as CBOR content bytes.
-    let content = encode_verb_content(&items)?;
+    // Build the dispatched call once, so the stored record and the encoded
+    // payload can never diverge.
+    let call = schedule_call_value(&items)?;
+    let content = encode_call(&call)?;
+    let spec_value = items[2].clone();
 
-    let request = match type_verb.as_str() {
+    let (kind, request) = match type_verb.as_str() {
         ":cron" => {
             let spec = match &items[2] {
                 CborValue::Text(s) => s.clone(),
                 _ => return Err(anyhow!("scheduler :cron: spec must be text")),
             };
-            ScheduleRequest::Cron { spec, content }
+            (":cron", ScheduleRequest::Cron { spec, content })
         }
         ":interval" => {
             let dur_str = match &items[2] {
@@ -436,7 +516,7 @@ fn parse_schedule_request(term: CborValue, from: &str) -> Result<ParsedRequest> 
             let secs = parse_duration(&dur_str)
                 .map_err(|e| anyhow!("scheduler :interval: {e}"))?
                 .as_secs();
-            ScheduleRequest::Interval { secs, content }
+            (":interval", ScheduleRequest::Interval { secs, content })
         }
         ":at" => {
             let ts = match &items[2] {
@@ -444,10 +524,13 @@ fn parse_schedule_request(term: CborValue, from: &str) -> Result<ParsedRequest> 
                     .map_err(|_| anyhow!("scheduler :at: timestamp out of i64 range"))?,
                 _ => return Err(anyhow!("scheduler :at: timestamp must be integer")),
             };
-            ScheduleRequest::At {
-                timestamp_ms: ts,
-                content,
-            }
+            (
+                ":at",
+                ScheduleRequest::At {
+                    timestamp_ms: ts,
+                    content,
+                },
+            )
         }
         ":in" => {
             let dur_str = match &items[2] {
@@ -457,14 +540,14 @@ fn parse_schedule_request(term: CborValue, from: &str) -> Result<ParsedRequest> 
             let secs = parse_duration(&dur_str)
                 .map_err(|e| anyhow!("scheduler :in: {e}"))?
                 .as_secs();
-            ScheduleRequest::In { secs, content }
+            (":in", ScheduleRequest::In { secs, content })
         }
         ":random" => {
             let max_secs = match &items[2] {
                 CborValue::Integer(n) => u64::try_from(i128::from(*n)).unwrap_or(60),
                 _ => return Err(anyhow!("scheduler :random: max_secs must be integer")),
             };
-            ScheduleRequest::Random { max_secs, content }
+            (":random", ScheduleRequest::Random { max_secs, content })
         }
         other => return Err(anyhow!("scheduler: unknown schedule type '{other}'")),
     };
@@ -472,29 +555,41 @@ fn parse_schedule_request(term: CborValue, from: &str) -> Result<ParsedRequest> 
     Ok(ParsedRequest {
         schedule_key,
         fragment,
+        record: ScheduleRecord {
+            name: schedule_name,
+            owner: from.to_string(),
+            kind,
+            spec: spec_value,
+            call,
+        },
         request,
     })
 }
 
-/// Encode the verb (4th element) and any extra args (5th+) as pre-encoded CBOR bytes.
-fn encode_verb_content(items: &[CborValue]) -> Result<Vec<u8>> {
+/// Build the term dispatched when the schedule fires.
+///
+/// A bare verb with no extra args stays a text atom; with extra args it
+/// becomes `[verb, args…]`; an array verb is used verbatim.
+fn schedule_call_value(items: &[CborValue]) -> Result<CborValue> {
     let args = items.get(4..).unwrap_or(&[]);
-    let value = match &items[3] {
-        CborValue::Text(v) if args.is_empty() => CborValue::Text(v.clone()),
+    match &items[3] {
+        CborValue::Text(v) if args.is_empty() => Ok(CborValue::Text(v.clone())),
         CborValue::Text(v) => {
             let mut arr = vec![CborValue::Text(v.clone())];
             arr.extend_from_slice(args);
-            CborValue::Array(arr)
+            Ok(CborValue::Array(arr))
         }
-        arr @ CborValue::Array(_) => arr.clone(),
-        _ => {
-            return Err(anyhow!(
-                "scheduler: verb (4th element) must be text atom or array"
-            ))
-        }
-    };
+        arr @ CborValue::Array(_) => Ok(arr.clone()),
+        _ => Err(anyhow!(
+            "scheduler: verb (4th element) must be text atom or array"
+        )),
+    }
+}
+
+/// CBOR-encode a previously built call term.
+fn encode_call(call: &CborValue) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    ciborium::ser::into_writer(&value, &mut out)
+    ciborium::ser::into_writer(call, &mut out)
         .map_err(|e| anyhow!("scheduler: CBOR encode verb: {e}"))?;
     Ok(out)
 }
@@ -502,8 +597,9 @@ fn encode_verb_content(items: &[CborValue]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        encode_verb_content, is_help_request, parse_schedule_request, scheduler_help_text,
-        RegistrationCommit, ScheduleRegistry,
+        encode_call, is_verb_request, list_dispatch_result, parse_schedule_request,
+        schedule_call_value, scheduler_help_text, RegistrationCommit, ScheduleRecord,
+        ScheduleRegistry,
     };
     use crate::schedule::ScheduleRequest;
     use ciborium::Value as CborValue;
@@ -599,15 +695,17 @@ mod tests {
     }
 
     #[test]
-    fn encode_verb_content_bare_verb_stays_atom() {
+    fn schedule_call_value_bare_verb_stays_atom() {
         let items = vec![text("n"), text(":x"), text("y"), text(":grow")];
-        let content = encode_verb_content(&items).unwrap();
+        let call = schedule_call_value(&items).unwrap();
+        assert_eq!(call, text(":grow"));
+        let content = encode_call(&call).unwrap();
         let decoded: CborValue = ciborium::de::from_reader(content.as_slice()).unwrap();
-        assert!(matches!(decoded, CborValue::Text(s) if s == ":grow"));
+        assert_eq!(decoded, text(":grow"));
     }
 
     #[test]
-    fn encode_verb_content_wraps_extra_args_in_array() {
+    fn schedule_call_value_wraps_extra_args_in_array() {
         let items = vec![
             text("n"),
             text(":x"),
@@ -616,20 +714,25 @@ mod tests {
             text("a"),
             text("b"),
         ];
-        let content = encode_verb_content(&items).unwrap();
+        let call = schedule_call_value(&items).unwrap();
+        assert_eq!(
+            call,
+            CborValue::Array(vec![text(":grow"), text("a"), text("b")])
+        );
+        let content = encode_call(&call).unwrap();
         let decoded: CborValue = ciborium::de::from_reader(content.as_slice()).unwrap();
-        assert!(matches!(decoded, CborValue::Array(a) if a.len() == 3));
+        assert_eq!(decoded, call);
     }
 
     #[test]
     fn random_overwrite_race_disables_stale_generation() {
         let key = "did:ma:abc#duck-quack".to_string();
         let registry = ScheduleRegistry::new();
-        let first = registry.begin_registration(&key);
+        let first = registry.begin_registration(&key, record("quack", "did:ma:abc#duck"));
         let stale_guard = registry.active_guard(key.clone(), first.version);
 
         // Simulate overwrite race: before stale callback executes, version 2 wins.
-        let second = registry.begin_registration(&key);
+        let second = registry.begin_registration(&key, record("quack", "did:ma:abc#duck"));
         assert_eq!(second.version, first.version + 1);
 
         // Stale generation must be blocked both at dispatch and at re-schedule check.
@@ -644,7 +747,7 @@ mod tests {
     fn deactivate_all_disables_registered_generations() {
         let key = "did:ma:abc#duck-quack".to_string();
         let registry = ScheduleRegistry::new();
-        let registration = registry.begin_registration(&key);
+        let registration = registry.begin_registration(&key, record("quack", "did:ma:abc#duck"));
         let guard = registry.active_guard(key, registration.version);
 
         assert!(guard());
@@ -656,8 +759,8 @@ mod tests {
     fn commit_registration_rejects_stale_version() {
         let key = "did:ma:abc#duck-quack";
         let registry = ScheduleRegistry::new();
-        let first = registry.begin_registration(key);
-        let second = registry.begin_registration(key);
+        let first = registry.begin_registration(key, record("quack", "did:ma:abc#duck"));
+        let second = registry.begin_registration(key, record("quack", "did:ma:abc#duck"));
 
         let first_commit = registry.commit_registration(key, first.version, uuid::Uuid::nil());
         let second_commit = registry.commit_registration(key, second.version, uuid::Uuid::nil());
@@ -667,10 +770,22 @@ mod tests {
     }
 
     #[test]
-    fn help_request_detection_supports_atom_and_singleton_array() {
-        assert!(is_help_request(&text(":help")));
-        assert!(is_help_request(&CborValue::Array(vec![text(":help")])));
-        assert!(!is_help_request(&text(":cron")));
+    fn verb_request_detection_supports_atom_and_singleton_array() {
+        assert!(is_verb_request(&text(":help"), ":help"));
+        assert!(is_verb_request(
+            &CborValue::Array(vec![text(":help")]),
+            ":help"
+        ));
+        assert!(is_verb_request(&text(":list"), ":list"));
+        assert!(is_verb_request(
+            &CborValue::Array(vec![text(":list")]),
+            ":list"
+        ));
+        assert!(!is_verb_request(&text(":cron"), ":help"));
+        assert!(!is_verb_request(
+            &CborValue::Array(vec![text(":help"), text(":list")]),
+            ":help"
+        ));
     }
 
     #[test]
@@ -681,5 +796,130 @@ mod tests {
         assert!(help.contains(":interval"));
         assert!(help.contains(":at"));
         assert!(help.contains(":random"));
+        assert!(help.contains(":list"));
+    }
+
+    fn record(name: &str, owner: &str) -> ScheduleRecord {
+        ScheduleRecord {
+            name: name.to_string(),
+            owner: owner.to_string(),
+            kind: ":interval",
+            spec: text("30m"),
+            call: text(":tick"),
+        }
+    }
+
+    fn map_value<'a>(map: &'a [(CborValue, CborValue)], key: &str) -> &'a CborValue {
+        map.iter()
+            .find(|(k, _)| matches!(k, CborValue::Text(s) if s == key))
+            .map_or_else(|| panic!("missing map key {key}"), |(_, v)| v)
+    }
+
+    #[test]
+    fn parse_schedule_request_populates_record() {
+        let term = CborValue::Array(vec![
+            text("grow"),
+            text(":interval"),
+            text("30m"),
+            text(":grow"),
+            text("plants+=1"),
+        ]);
+        let p = parse_schedule_request(term, "did:ma:abc#garden").unwrap();
+        assert_eq!(p.record.name, "grow");
+        assert_eq!(p.record.owner, "did:ma:abc#garden");
+        assert_eq!(p.record.kind, ":interval");
+        assert_eq!(p.record.spec, text("30m"));
+        assert_eq!(
+            p.record.call,
+            CborValue::Array(vec![text(":grow"), text("plants+=1")])
+        );
+    }
+
+    #[test]
+    fn snapshot_returns_only_committed_schedules_sorted() {
+        let registry = ScheduleRegistry::new();
+
+        let zulu = registry.begin_registration("k1", record("zulu", "did:ma:b#e"));
+        registry.commit_registration("k1", zulu.version, uuid::Uuid::nil());
+
+        let alpha = registry.begin_registration("k2", record("alpha", "did:ma:a#e"));
+        registry.commit_registration("k2", alpha.version, uuid::Uuid::nil());
+
+        let beta = registry.begin_registration("k3", record("beta", "did:ma:a#e"));
+        registry.commit_registration("k3", beta.version, uuid::Uuid::nil());
+
+        // Registration still in flight: must not appear.
+        let _pending = registry.begin_registration("k4", record("pending", "did:ma:a#e"));
+
+        let listed: Vec<(String, String)> = registry
+            .snapshot()
+            .into_iter()
+            .map(|r| (r.owner, r.name))
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                ("did:ma:a#e".to_string(), "alpha".to_string()),
+                ("did:ma:a#e".to_string(), "beta".to_string()),
+                ("did:ma:b#e".to_string(), "zulu".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn list_dispatch_result_encodes_committed_schedules() {
+        let registry = ScheduleRegistry::new();
+        let key = "did:ma:abc#garden-grow";
+        let attempt = registry.begin_registration(
+            key,
+            ScheduleRecord {
+                name: "grow".to_string(),
+                owner: "did:ma:abc#garden".to_string(),
+                kind: ":interval",
+                spec: text("30m"),
+                call: CborValue::Array(vec![text(":grow"), text("plants+=1")]),
+            },
+        );
+        registry.commit_registration(key, attempt.version, uuid::Uuid::nil());
+
+        let result = list_dispatch_result(&registry).unwrap();
+        let decoded: CborValue = ciborium::de::from_reader(result.output.as_slice()).unwrap();
+        let CborValue::Array(reply) = decoded else {
+            panic!("expected array reply");
+        };
+        assert_eq!(reply[0], text(":ok"));
+        let CborValue::Array(entries) = &reply[1] else {
+            panic!("expected entries array");
+        };
+        assert_eq!(entries.len(), 1);
+        let CborValue::Map(map) = &entries[0] else {
+            panic!("expected schedule map");
+        };
+        let keys: Vec<&str> = map
+            .iter()
+            .map(|(k, _)| match k {
+                CborValue::Text(s) => s.as_str(),
+                _ => panic!("non-text map key"),
+            })
+            .collect();
+        assert_eq!(keys, vec!["name", "owner", "type", "spec", "call"]);
+        assert_eq!(map_value(map, "name"), &text("grow"));
+        assert_eq!(map_value(map, "owner"), &text("did:ma:abc#garden"));
+        assert_eq!(map_value(map, "type"), &text(":interval"));
+        assert_eq!(map_value(map, "spec"), &text("30m"));
+        assert_eq!(
+            map_value(map, "call"),
+            &CborValue::Array(vec![text(":grow"), text("plants+=1")])
+        );
+    }
+
+    #[test]
+    fn list_dispatch_result_encodes_empty_registry() {
+        let result = list_dispatch_result(&ScheduleRegistry::new()).unwrap();
+        let decoded: CborValue = ciborium::de::from_reader(result.output.as_slice()).unwrap();
+        assert_eq!(
+            decoded,
+            CborValue::Array(vec![text(":ok"), CborValue::Array(vec![])])
+        );
     }
 }
