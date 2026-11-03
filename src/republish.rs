@@ -77,17 +77,19 @@ async fn publish_current_root(
     let did_ok =
         publish_did_document(context, latest_root_cid, cid_changed, doc_cbor, ipns_key).await;
     let ipns_ok = publish_runtime_ipns(context, latest_root_cid, cid_changed).await;
-    if cid_changed {
-        pin_runtime_root(context, latest_root_cid).await;
-    }
+    // Reconcile on every publication tick, not only when the head moved: this
+    // keeps the managed pin present and lets a failed legacy-name sweep retry.
+    pin_runtime_root(context, latest_root_cid).await;
 
     did_ok && ipns_ok
 }
 
 /// Mirror the current runtime head to the configured remote pinning service.
 ///
-/// Runs only when the head changed, so a steady runtime does not churn remote
-/// pins. Failures are logged and never fail the publication.
+/// Runs on every periodic publication tick. The managed name already holding
+/// the current CID is a cheap listing, so a steady runtime does not churn
+/// remote pins, while a missed or failed sweep is retried on the next tick.
+/// Failures are logged and never fail the publication.
 async fn pin_runtime_root(context: &PeriodicDidPublishContext, latest_root_cid: &str) {
     let config = context.shared_config.read().await;
     let remote_pin = crate::bootstrap::runtime_remote_pin_config(&config);
@@ -163,7 +165,6 @@ async fn publish_did_document(
 ) -> bool {
     let config = context.shared_config.read().await;
     let remote_pin = crate::bootstrap::runtime_did_remote_pin_config(&config);
-    let pin_overwrite = config.pin_overwrite;
     drop(config);
     let publish = tokio::time::timeout(
         context.timeout,
@@ -174,7 +175,6 @@ async fn publish_did_document(
             ipns_key,
             context.ipns_publish,
             remote_pin,
-            pin_overwrite,
         ),
     )
     .await;

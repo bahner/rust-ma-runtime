@@ -265,7 +265,6 @@ fn build_and_publish_own_identity(
     let kubo_url_clone = config.kubo_rpc_url.clone();
     let runtime_slug = config.slug.clone();
     let did_remote_pin = bootstrap::runtime_did_remote_pin_config(config);
-    let did_pin_overwrite = config.pin_overwrite;
     let did_for_log = our_did.clone();
     tokio::spawn(async move {
         let result = tokio::time::timeout(
@@ -277,7 +276,6 @@ fn build_and_publish_own_identity(
                 ipns_key,
                 ipns_publish,
                 did_remote_pin,
-                did_pin_overwrite,
             ),
         )
         .await;

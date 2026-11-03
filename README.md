@@ -224,16 +224,23 @@ docker compose up
 the Kubo service name, `MA_PIN_REMOTE_NAME` is the optional label on the remote
 pin, `MA_PIN_REMOTE_API_URL` is the service API endpoint, and
 `MA_PIN_REMOTE_API_SECRET` is its API key. `MA_PIN_OVERWRITE` defaults to
-`true`: publication adds the fresh pin under the managed name and then awaits
-removal of every other pin using that name (including the legacy `<name>~new`
-form) before it returns. Because the replacement is inline rather than a
-detached best-effort job, a runtime restart cannot strand one extra pin per
-start. The `ma` container registers the named service with Kubo if
-it is absent. Existing services are preserved.
+`true`: publication reconciles the managed pin by listing the service once,
+adding the fresh pin only when the managed name does not already hold that CID,
+and then removing every other record that belongs to the same managed name
+(the old CID under the managed name and ma-core's `<name>~new` form). Nothing is
+removed until the fresh pin is confirmed on the service; if the service accepts
+the add but has not listed it yet, the existing pin is kept and cleanup is
+retried on the next publication. Removal is always scoped to the record's own
+name, so a sibling pin that happens to hold the same CID is never deleted.
+Because the reconcile is inline rather than a detached best-effort job, a
+runtime restart cannot strand one extra pin per start. The `ma` container
+registers the named service with Kubo if it is absent. Existing services are
+preserved.
 
-Every managed pin name ends with the UTC date, so each day keeps one backup and
-`pin_overwrite` replaces only same-day pins (restarting the runtime never
-strands an extra pin):
+Every managed pin name carries today's UTC date, giving one backup per day.
+Within a day, republication overwrites that same name, so there is exactly one
+pin per managed name pointing at the newest CID. Previous days' names are left
+alone as backups:
 
 | Managed content | Default pin name |
 |-----------------|------------------|
@@ -245,7 +252,8 @@ The root pin follows the current runtime head, and the DID-document pin is kept
 separate so republishing it never evicts the root pin. With
 `MA_PIN_REMOTE_NAME=my-pins`, those two names become `my-pins-YYYY-MM-DD` and
 `my-pins-did-YYYY-MM-DD`; the owner DID-document pin keeps its digest-derived
-name plus the date.
+name plus the date. Undated names written by earlier builds are removed by the
+first reconcile of the corresponding dated name.
 
 ### First run
 

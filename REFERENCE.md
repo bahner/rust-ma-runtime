@@ -900,14 +900,18 @@ the filename stem and the entry in `BUNDLED_LANGS`.
   publish. When remote pinning is configured, documents published by a current
   `/grp/owners` member are also mirrored through Kubo's configured remote
   pinning service. Their pin name is
-  `ma-agent-blake3<first-16-hex-of-owner-DID>-YYYY-MM-DD`. The UTC date keeps
-  one backup per day, while same-day republishes replace the earlier pin
-  instead of accumulating duplicates. Replacement is awaited: after adding the
-  fresh pin the runtime lists the managed name (and the legacy `<name>~new`
-  form) and removes every other CID before returning, so a restart cannot leave
-  an extra pin behind. Remote pin failures and old-pin cleanup failures do not
-  fail the publish. Non-owner DID documents and generic IPFS store requests are
-  not directly remote-pinned.
+  `ma-agent-blake3<first-16-hex-of-owner-DID>-YYYY-MM-DD`. Managed names carry
+  the UTC date, giving one backup per day; within a day each republish replaces
+  the earlier pin under that same name instead of accumulating duplicates.
+  Previous days' names are left alone as backups. Replacement is awaited: after
+  confirming the fresh pin is visible the runtime removes every other record
+  belonging to that managed name (the old CID and the `<name>~new` form).
+  Nothing is removed until the fresh pin is listed; an add that has not surfaced
+  yet leaves the previous pin in place and cleanup retries on the next
+  publication. Removal is name-scoped, so a sibling managed pin (root, DID,
+  owner document) that happens to hold the same CID is preserved. Remote pin
+  failures and old-pin cleanup failures do not fail the publish. Non-owner DID
+  documents and generic IPFS store requests are not directly remote-pinned.
 - **Replay protection** via a 120-second sliding window on `/ma/ipfs/0.0.1`.
 - **Input validation** via `validate_ipfs_publish_request` (ma-core): checks
   content-type, DID document proof, sender identity match.

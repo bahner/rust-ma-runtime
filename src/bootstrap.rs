@@ -24,7 +24,7 @@ use crate::entity::{
 use crate::kubo;
 use crate::plugin;
 
-/// UTC date suffix that gives every managed pin one daily snapshot.
+/// Today's UTC date suffix, giving each managed pin one daily backup.
 fn utc_date_suffix() -> String {
     let now = time::OffsetDateTime::now_utc();
     format!(
@@ -35,8 +35,7 @@ fn utc_date_suffix() -> String {
     )
 }
 
-/// Append today's UTC date, so a publication replaces only same-day pins and
-/// leaves one snapshot per day.
+/// Append today's UTC date to a managed pin name.
 fn daily_pin_name(base: impl Into<String>) -> String {
     format!("{}{}", base.into(), utc_date_suffix())
 }
@@ -44,8 +43,7 @@ fn daily_pin_name(base: impl Into<String>) -> String {
 /// Default remote pin name for the runtime root manifest.
 ///
 /// Date-stamped so each day keeps one backup. Within a day `pin_overwrite`
-/// replaces the earlier pin, so restarting the runtime never strands a pin per
-/// start.
+/// replaces the earlier pin under the same name.
 pub fn default_remote_root_pin_name(slug: &str) -> String {
     daily_pin_name(format!("ma-runtime-{slug}-root"))
 }
@@ -53,15 +51,14 @@ pub fn default_remote_root_pin_name(slug: &str) -> String {
 /// Default remote pin name for the runtime's own DID document.
 ///
 /// Distinct from [`default_remote_root_pin_name`] so that republishing the DID
-/// document cannot evict the root manifest pin (both would otherwise clean each
-/// other up under one managed name).
+/// document cannot evict the root manifest pin.
 pub fn runtime_did_remote_pin_name(slug: &str) -> String {
     daily_pin_name(format!("ma-runtime-{slug}-did"))
 }
 
-/// Stable remote pin name for an owner DID document published through this
-/// runtime. The digest identifies the owner; the daily suffix gives one backup
-/// per day and lets `pin_overwrite` replace same-day duplicates.
+/// Remote pin name for an owner DID document published through this runtime.
+/// The digest identifies the owner; the date gives one backup per day, and
+/// same-day republications replace the earlier pin.
 pub fn owner_did_remote_pin_name(did: &str) -> String {
     let digest = blake3::hash(did.as_bytes()).to_hex();
     daily_pin_name(format!("ma-agent-blake3{}", &digest[..16]))

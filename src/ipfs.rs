@@ -1,9 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use ma_core::config::RemotePinConfig;
 use ma_core::ipfs::ipns_key_name_for_parts;
-use ma_core::ipfs::{
-    DidDocumentPublishOptions, IpfsDidPublisher, IpnsPublishOptions, RemotePinOptions,
-};
+use ma_core::ipfs::{DidDocumentPublishOptions, IpfsDidPublisher, IpnsPublishOptions};
 use ma_core::{
     ipns_from_secret, resolve_endpoint_for_protocol, validate_identity_publish_message,
     validate_ipfs_request, Did, DidDocumentResolver, Document, Inbox, ReplayGuard, SigningKey,
@@ -189,7 +187,6 @@ pub async fn do_publish_own_document(
     ipns_secret_key: Vec<u8>,
     ipns_publish: IpnsPublishSettings,
     remote_pin: Option<RemotePinConfig>,
-    pin_overwrite: bool,
 ) -> Result<()> {
     let ipns_secret_key = Zeroizing::new(ipns_secret_key);
     let document = Document::decode(&doc_cbor).context("decode own DID document")?;
@@ -197,12 +194,6 @@ pub async fn do_publish_own_document(
     document.verify().context("verify own DID document proof")?;
     let publisher = IpfsDidPublisher::new(&kubo_url)?;
     publisher.wait_until_ready(10).await?;
-
-    // Keep the managed name so the stale-pin sweep below does not depend on
-    // ma-core's detached background clean-up completing before the next start.
-    let remote_pin_target = remote_pin
-        .as_ref()
-        .map(|remote| (remote.service.clone(), remote.name.clone()));
 
     let options = DidDocumentPublishOptions {
         key_parts: vec!["runtime".to_string(), runtime_slug],
@@ -214,42 +205,33 @@ pub async fn do_publish_own_document(
             resolve: ipns_publish.resolve,
             quieter: true,
         },
-        remote_pin: remote_pin.map(|remote| RemotePinOptions {
-            service: remote.service,
-            name: remote.name,
-        }),
-        overwrite: pin_overwrite,
+        // ma-core's remote-pin path adds under an in-flight name and cleans up
+        // in a detached job that a restart can outrun. The runtime replaces
+        // the stable managed pin inline below instead.
+        remote_pin: None,
         ..DidDocumentPublishOptions::default()
     };
     let outcome = publisher
         .publish_document(doc_cbor, ipns_secret_key, options)
         .await?;
 
-    if pin_overwrite {
-        if let Some((service, name)) = remote_pin_target {
-            match crate::kubo::sweep_named_remote_pin(&kubo_url, &service, &name, &outcome.cid)
-                .await
-            {
-                Ok(removed) if removed > 0 => {
-                    tracing::info!(
-                        service = %service,
-                        name = %name,
-                        cid = %outcome.cid,
-                        removed,
-                        "own DID remote pins replaced"
-                    );
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    tracing::warn!(
-                        service = %service,
-                        name = %name,
-                        cid = %outcome.cid,
-                        error = %error,
-                        "own DID remote pin cleanup failed"
-                    );
-                }
-            }
+    if let Some(remote) = remote_pin {
+        if let Err(error) = crate::kubo::replace_named_remote_pin(
+            &kubo_url,
+            &remote.service,
+            &remote.name,
+            &outcome.cid,
+            remote.overwrite,
+        )
+        .await
+        {
+            tracing::warn!(
+                service = %remote.service,
+                name = %remote.name,
+                cid = %outcome.cid,
+                error = %error,
+                "own DID remote pin replacement failed"
+            );
         }
     }
     Ok(())
@@ -1122,7 +1104,6 @@ mod tests {
             vec![1; 32],
             IpnsPublishSettings::default(),
             None,
-            false,
         )
         .await
         .expect_err("invalid DID document must be rejected");

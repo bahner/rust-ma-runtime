@@ -6,6 +6,7 @@
 //! and other IPFS-backed flows without a real Kubo daemon.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use axum::{
@@ -33,9 +34,14 @@ pub async fn test_endpoint(secret: [u8; 32]) -> Box<dyn ma_core::MaEndpoint> {
 struct Store(Arc<Mutex<HashMap<String, Vec<u8>>>>);
 
 /// Remote-pin records keyed by `(service, name, cid)`; enough for the runtime's
-/// named-pin replacement logic.
+/// named-pin reconciliation. Also tracks how many add requests arrived and can
+/// simulate a service that accepts a request before listing it.
 #[derive(Clone, Default)]
-struct RemoteStore(Arc<Mutex<std::collections::BTreeSet<(String, String, String)>>>);
+struct RemoteStore {
+    pins: Arc<Mutex<std::collections::BTreeSet<(String, String, String)>>>,
+    adds: Arc<AtomicUsize>,
+    lag_adds: Arc<AtomicBool>,
+}
 
 /// A running in-process mock Kubo.  Pass [`MockKubo::url`] wherever a
 /// `kubo_rpc_url` is expected.
@@ -93,23 +99,34 @@ impl MockKubo {
 
     /// Seed a remote pin record as a pinning service would report it.
     pub async fn add_remote_pin(&self, service: &str, name: &str, cid: &str) {
-        self.remote
-            .0
-            .lock()
-            .await
-            .insert((service.to_string(), name.to_string(), cid.to_string()));
+        self.remote.pins.lock().await.insert((
+            service.to_string(),
+            name.to_string(),
+            cid.to_string(),
+        ));
     }
 
     /// CIDs currently recorded under `service` and the exact `name`.
     pub async fn remote_pins_named(&self, service: &str, name: &str) -> Vec<String> {
         self.remote
-            .0
+            .pins
             .lock()
             .await
             .iter()
             .filter(|(s, n, _)| s == service && n == name)
             .map(|(_, _, cid)| cid.clone())
             .collect()
+    }
+
+    /// Number of `pin/remote/add` requests served so far.
+    pub fn remote_add_count(&self) -> usize {
+        self.remote.adds.load(Ordering::SeqCst)
+    }
+
+    /// Accept `pin/remote/add` requests without listing them, like a service
+    /// that has not processed the background request yet.
+    pub fn lag_remote_adds(&self) {
+        self.remote.lag_adds.store(true, Ordering::SeqCst);
     }
 }
 
@@ -238,34 +255,38 @@ async fn remote_pin_add(State(remote): State<RemoteStore>, RawQuery(q): RawQuery
     let name = query_arg(q.as_deref(), "name").unwrap_or_default();
     let arg = query_arg(q.as_deref(), "arg").unwrap_or_default();
     let cid = arg.strip_prefix("/ipfs/").unwrap_or(&arg).to_string();
-    remote.0.lock().await.insert((service, name, cid));
+    remote.adds.fetch_add(1, Ordering::SeqCst);
+    if !remote.lag_adds.load(Ordering::SeqCst) {
+        remote.pins.lock().await.insert((service, name, cid));
+    }
     ""
 }
 
 async fn remote_pin_ls(State(remote): State<RemoteStore>, RawQuery(q): RawQuery) -> String {
     let service = query_arg(q.as_deref(), "service").unwrap_or_default();
-    let name = query_arg(q.as_deref(), "name").unwrap_or_default();
-    let pins = remote.0.lock().await;
-    pins.iter()
-        .filter(|(s, n, _)| s == &service && n == &name)
-        .fold(String::new(), |mut out, (_, n, cid)| {
+    let pins = remote.pins.lock().await;
+    let body = pins.iter().filter(|(s, _, _)| s == &service).fold(
+        String::new(),
+        |mut out, (_, n, cid)| {
             use std::fmt::Write as _;
             let _ = writeln!(
                 out,
                 "{{\"Status\":\"queued\",\"Cid\":\"{cid}\",\"Name\":\"{n}\"}}"
             );
             out
-        })
+        },
+    );
+    drop(pins);
+    body
 }
 
 async fn remote_pin_rm(State(remote): State<RemoteStore>, RawQuery(q): RawQuery) -> &'static str {
     let service = query_arg(q.as_deref(), "service").unwrap_or_default();
+    let name = query_arg(q.as_deref(), "name");
     let arg = query_arg(q.as_deref(), "cid").unwrap_or_default();
     let cid = arg.strip_prefix("/ipfs/").unwrap_or(&arg).to_string();
-    remote
-        .0
-        .lock()
-        .await
-        .retain(|(s, _, c)| !(s == &service && c == &cid));
+    remote.pins.lock().await.retain(|(s, n, c)| {
+        !(s == &service && c == &cid && name.as_ref().is_none_or(|wanted| wanted == n))
+    });
     ""
 }
