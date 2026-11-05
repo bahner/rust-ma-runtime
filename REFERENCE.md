@@ -620,6 +620,14 @@ them register schedules, or list them, on that runtime. `:list` is granted
 only to the owner group, so the restriction tracks `/grp/owners` without a
 hardcoded check.
 
+Capability strings are verb atoms and keep their leading colon: write
+`":list"`, never `"list"`, or the ACL entry matches no verb and the caller
+is denied. From Operator, `@<runtime>/acls/scheduler` returns the ACL's CID
+and `@<runtime>/acls/scheduler: <cidv1>` replaces it; the `:` setter marker
+must be the final character of the path, so
+`@runtime/acls/scheduler:list` is a GET for an ACL literally named
+`scheduler:list`.
+
 ---
 
 ## ACL

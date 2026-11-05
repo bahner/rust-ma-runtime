@@ -1,8 +1,10 @@
-ma-runtime (0.6.1-1) UNRELEASED; urgency=medium
+ma-runtime (0.7.3-1) unstable; urgency=medium
 
   * Update ma-core 
+  * Fix scheduler
+  * Fix some pinning errors
 
- -- Lars Bahner <bahner@debian.org>  Sun, 06 Sep 2026 18:21:34 +0200
+ -- Lars Bahner <bahner@debian.org>  Thu, 05 Nov 2026 20:29:24 +0100
 
 ma-runtime (0.6.0-1) unstable; urgency=medium
 
