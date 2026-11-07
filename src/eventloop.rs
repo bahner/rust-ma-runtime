@@ -35,7 +35,10 @@ use crate::{bootstrap, crud, dispatch, i18n, ipfs, status};
 
 const PLUGIN_OUTBOX_DRAIN_BUDGET: usize = 64;
 const LOCAL_PLUGIN_DISPATCH_LIMIT: usize = 16;
-const REMOTE_PLUGIN_DELIVERY_LIMIT: usize = 16;
+// Per-runtime, not per actor or peer. Each permit may cover a slow outbox open
+// (5 s cached connect, 10 s fresh connect); a generous ceiling keeps a handful
+// of unreachable peers from starving unrelated deliveries.
+const REMOTE_PLUGIN_DELIVERY_LIMIT: usize = 1024;
 
 /// Wall-clock budget for one CRUD request. CRUD is administrative and may have
 /// to pull foreign DAG blocks over the network (a fresh kinds tree, for
@@ -900,7 +903,9 @@ impl EventLoopState {
         let base = recipient.base_id();
         let did_resolve = self.did_resolve;
         let Ok(permit) = self.remote_plugin_delivery_gate.clone().try_acquire_owned() else {
-            debug!(fragment = %fragment, to = %env.to, limit = REMOTE_PLUGIN_DELIVERY_LIMIT, "{}", i18n::t("plugin-envelope-remote-limit"));
+            // This is a dropped envelope, not just backpressure: correlated
+            // replies such as :move and [:ok, child] can be lost here.
+            warn!(fragment = %fragment, to = %env.to, limit = REMOTE_PLUGIN_DELIVERY_LIMIT, "{}", i18n::t("plugin-envelope-remote-limit"));
             return;
         };
         tokio::spawn(async move {
