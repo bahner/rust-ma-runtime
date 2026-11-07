@@ -1,5 +1,5 @@
 //! Behaviour content fetching (ma-runtime-v1.md §14.2.2), and the
-//! `#!/ipfs/<cid>`/`#!/ipns/<key>` reference resolver backing the
+//! `#/ipfs/<cid>`/`#/ipns/<key>` reference resolver backing the
 //! `ma_ipfs_include` host function (ma-scheme-v1.md §11.1).
 //!
 //! **The runtime performs no recursive expansion of any kind here.** An
@@ -32,7 +32,7 @@ pub async fn fetch_behaviour(kubo_url: &str, cid: &str) -> Result<Vec<u8>> {
 }
 
 /// Resolve a single `ma-include-ipfs` reference (ma-scheme-v1.md §11.1) —
-/// a literal token of the form `#!/ipfs/<cid>` or `#!/ipns/<key>` — to its
+/// a literal token of the form `#/ipfs/<cid>` or `#/ipns/<key>` — to its
 /// raw content bytes. Backs the `ma_ipfs_include` host function.
 ///
 /// A single fetch: `/ipfs/<cid>` resolves trivially (content-addressed,
@@ -43,12 +43,10 @@ pub async fn fetch_behaviour(kubo_url: &str, cid: &str) -> Result<Vec<u8>> {
 /// depth/cycle guard.
 pub async fn resolve_ipfs_include(kubo_url: &str, reference: &str) -> Result<Vec<u8>> {
     let path = reference
-        .strip_prefix("#!")
+        .strip_prefix('#')
         .filter(|r| r.starts_with("/ipfs/") || r.starts_with("/ipns/"))
         .ok_or_else(|| {
-            anyhow!(
-                "ma_ipfs_include: reference {reference:?} must be #!/ipfs/<cid> or #!/ipns/<key>"
-            )
+            anyhow!("ma_ipfs_include: reference {reference:?} must be #/ipfs/<cid> or #/ipns/<key>")
         })?;
     let cid = dag_resolve(kubo_url, path)
         .await
@@ -77,7 +75,7 @@ mod tests {
     async fn resolve_ipfs_include_fetches_ipfs_reference() {
         let kubo = MockKubo::start().await;
         let cid = kubo.add_bytes(b"(define (helper) 1)\n".to_vec()).await;
-        let reference = format!("#!/ipfs/{cid}");
+        let reference = format!("#/ipfs/{cid}");
         let out = resolve_ipfs_include(kubo.url(), &reference).await.unwrap();
         assert_eq!(out, b"(define (helper) 1)\n");
     }
@@ -90,13 +88,13 @@ mod tests {
         // name resolution.
         let kubo = MockKubo::start().await;
         let cid = kubo.add_bytes(b"(define x 42)\n".to_vec()).await;
-        let reference = format!("#!/ipns/{cid}");
+        let reference = format!("#/ipns/{cid}");
         let out = resolve_ipfs_include(kubo.url(), &reference).await.unwrap();
         assert_eq!(out, b"(define x 42)\n");
     }
 
     #[tokio::test]
-    async fn resolve_ipfs_include_rejects_missing_hash_bang_prefix() {
+    async fn resolve_ipfs_include_rejects_missing_hash_prefix() {
         let kubo = MockKubo::start().await;
         assert!(resolve_ipfs_include(kubo.url(), "/ipfs/bafybei")
             .await
@@ -106,7 +104,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_ipfs_include_rejects_unknown_reference_kind() {
         let kubo = MockKubo::start().await;
-        assert!(resolve_ipfs_include(kubo.url(), "#!/other/thing")
+        assert!(resolve_ipfs_include(kubo.url(), "#/other/thing")
             .await
             .is_err());
     }

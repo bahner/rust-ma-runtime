@@ -545,8 +545,8 @@ struct BehaviourCtx {
 }
 
 // `ma_ipfs_include` host function: resolves a single `ma-include-ipfs`
-// reference (ma-scheme-v1.md §11.1) -- a literal `#!/ipfs/<cid>` or
-// `#!/ipns/<key>` token -- to its raw content bytes. A single, flat fetch;
+// reference (ma-scheme-v1.md §11.1) -- a literal `#/ipfs/<cid>` or
+// `#/ipns/<key>` token -- to its raw content bytes. A single, flat fetch;
 // all recursion/depth/cycle tracking is the guest's own responsibility
 // (`lambda-ma/scheme-actor`), not this host function's.
 //
