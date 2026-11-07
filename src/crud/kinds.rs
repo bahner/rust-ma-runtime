@@ -6,9 +6,10 @@ use ciborium::Value as CborValue;
 use crate::entity::{IpldLink, KindNode, KindTree};
 
 use super::helpers::{
-    load_manifest, runtime_config_snapshot, send_crud_error, send_crud_i18n_error, send_crud_ok,
-    send_crud_ok_cid, send_crud_ok_yaml, send_crud_reply_cbor, spawn_kind_dependency_reloads,
-    spawn_kind_dependency_reloads_for, with_manifest_crud, with_manifest_crud_async,
+    load_manifest, prefetch_kind_tree, runtime_config_snapshot, send_crud_error,
+    send_crud_i18n_error, send_crud_ok, send_crud_ok_cid, send_crud_ok_yaml, send_crud_reply_cbor,
+    spawn_kind_dependency_reloads, spawn_kind_dependency_reloads_for, with_manifest_crud,
+    with_manifest_crud_async,
 };
 use super::CrudHandlerCtx;
 
@@ -129,24 +130,51 @@ async fn apply_kinds_tree(
     ctx: &CrudHandlerCtx,
     raw: &str,
 ) -> Result<()> {
+    // Every stage of an overlay can be slow for a different reason (network
+    // block fetch, manifest writer lock, Kubo publish, reply DID resolution),
+    // so each transition logs elapsed time: a timeout should say where it went.
+    let started = std::time::Instant::now();
     tracing::info!(from = %message.from, reference = %raw, "kinds tree overlay requested");
     let cid = crate::kubo::dag_resolve(&ctx.kubo_rpc_url, raw).await?;
-    tracing::info!(from = %message.from, cid = %cid, "kinds tree overlay resolved");
+    tracing::info!(from = %message.from, cid = %cid, elapsed_ms = started.elapsed().as_millis(), "kinds tree overlay resolved");
     let overlay: KindTree = crate::kubo::dag_get(&ctx.kubo_rpc_url, &cid)
         .await
         .with_context(|| format!("fetching kinds tree '{cid}'"))?;
-    tracing::info!(from = %message.from, cid = %cid, "kinds tree overlay loaded");
+    tracing::info!(
+        from = %message.from,
+        cid = %cid,
+        kinds = overlay.iter_protocols().count(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "kinds tree overlay loaded"
+    );
+    // Pull the referenced kind blocks into the local store before taking the
+    // manifest writer lock. This is the network-bound half of the operation;
+    // the overlay apply inside the lock then only reads local blocks.
+    prefetch_kind_tree(ctx, &overlay).await?;
+    tracing::info!(from = %message.from, cid = %cid, elapsed_ms = started.elapsed().as_millis(), "kinds tree overlay blocks available locally");
     let kubo_rpc_url = ctx.kubo_rpc_url.clone();
     tracing::info!(from = %message.from, cid = %cid, "applying kinds tree overlay to manifest");
-    let (_, changed_protocols) = with_manifest_crud_async(ctx, |manifest| {
+    let (root_cid, changed_protocols) = with_manifest_crud_async(ctx, |manifest| {
         Box::pin(async move {
             crate::bootstrap::apply_kinds_tree_overlay(manifest, &overlay, &kubo_rpc_url).await
         })
     })
     .await?;
-    tracing::info!(from = %message.from, cid = %cid, changed = changed_protocols.len(), "kinds tree overlay applied");
+    tracing::info!(
+        from = %message.from,
+        cid = %cid,
+        root_cid = %root_cid,
+        changed = changed_protocols.len(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "kinds tree overlay applied"
+    );
+    // Answer as soon as the manifest commit is durable; scheduling the
+    // dependent reloads is post-commit work.
+    send_crud_ok_cid(message, reply_type, ctx, &cid).await?;
+    tracing::info!(from = %message.from, cid = %cid, elapsed_ms = started.elapsed().as_millis(), "kinds tree overlay reply sent");
     schedule_overlay_reloads(ctx, &changed_protocols).await;
-    send_crud_ok_cid(message, reply_type, ctx, &cid).await
+    tracing::info!(from = %message.from, cid = %cid, elapsed_ms = started.elapsed().as_millis(), "kinds tree overlay reloads scheduled");
+    Ok(())
 }
 
 async fn schedule_overlay_reloads(ctx: &CrudHandlerCtx, changed_protocols: &[String]) {

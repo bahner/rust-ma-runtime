@@ -37,6 +37,12 @@ const PLUGIN_OUTBOX_DRAIN_BUDGET: usize = 64;
 const LOCAL_PLUGIN_DISPATCH_LIMIT: usize = 16;
 const REMOTE_PLUGIN_DELIVERY_LIMIT: usize = 16;
 
+/// Wall-clock budget for one CRUD request. CRUD is administrative and may have
+/// to pull foreign DAG blocks over the network (a fresh kinds tree, for
+/// example), so the budget has to exceed the individual Kubo request bound. The
+/// handler runs in its own task, so a slow request can never stall the tick.
+const CRUD_HANDLER_TIMEOUT: Duration = Duration::from_secs(120);
+
 #[derive(Clone)]
 struct LocalSideEffectCtx {
     kind_registry: KindRegistry,
@@ -469,6 +475,11 @@ struct EventLoopState {
     local_plugin_dispatch_gate: Arc<Semaphore>,
     remote_plugin_delivery_gate: Arc<Semaphore>,
     entity_creation_gate: Arc<Mutex<()>>,
+    /// Single permit held for the lifetime of one CRUD handler task, keeping
+    /// CRUD requests strictly serialised off the event-loop tick.
+    crud_gate: Arc<Semaphore>,
+    /// The in-flight CRUD handler, aborted before shutdown saves entity state.
+    crud_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl EventLoopState {
@@ -529,6 +540,8 @@ impl EventLoopState {
             local_plugin_dispatch_gate: Arc::new(Semaphore::new(LOCAL_PLUGIN_DISPATCH_LIMIT)),
             remote_plugin_delivery_gate: Arc::new(Semaphore::new(REMOTE_PLUGIN_DELIVERY_LIMIT)),
             entity_creation_gate: Arc::new(Mutex::new(())),
+            crud_gate: Arc::new(Semaphore::new(1)),
+            crud_task: None,
         }
     }
 
@@ -605,6 +618,12 @@ impl EventLoopState {
     }
 
     // Drain /ma/crud/0.0.1
+    //
+    // Each request runs in its own task so a slow handler (a kinds overlay may
+    // have to fetch blocks over the network) cannot stall inbox delivery or
+    // plugin dispatch. The single-permit gate keeps CRUD strictly ordered:
+    // while a handler runs, further messages stay queued in the inbox and are
+    // retried on the next tick.
     async fn drain_crud_messages(
         &mut self,
         now: u64,
@@ -614,7 +633,15 @@ impl EventLoopState {
         let Some(ref mut crud_inbox) = self.crud_messages else {
             return;
         };
-        while let Some(mut message) = crud_inbox.pop(now) {
+        loop {
+            // Acquire before popping so a busy handler leaves the next message
+            // queued rather than in limbo.
+            let Ok(permit) = Arc::clone(&self.crud_gate).try_acquire_owned() else {
+                break;
+            };
+            let Some(mut message) = crud_inbox.pop(now) else {
+                break;
+            };
             if let Some(outbox_state) = shared_outbox_state {
                 ipfs::record_inbound_contact(outbox_state, &message.from).await;
             }
@@ -649,17 +676,20 @@ impl EventLoopState {
                 envelope_tx: self.envelope_tx.clone(),
                 manifest_writer: self.manifest_writer.clone(),
             };
-            if let Err(err) = tokio::time::timeout(
-                Duration::from_secs(30),
-                crud::handle_crud_message(&message, &acl_snapshot, &ctx),
-            )
-            .await
-            .unwrap_or_else(|_| Err(anyhow::anyhow!("crud handler timed out")))
-            {
-                warn!(error = %err, from = %message.from, "{}", i18n::t("crud-message-rejected"));
-            }
-            message.content.zeroize();
-            message.signature.zeroize();
+            self.crud_task = Some(tokio::spawn(async move {
+                let _permit = permit;
+                if let Err(err) = tokio::time::timeout(
+                    CRUD_HANDLER_TIMEOUT,
+                    crud::handle_crud_message(&message, &acl_snapshot, &ctx),
+                )
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("crud handler timed out")))
+                {
+                    warn!(error = %err, from = %message.from, "{}", i18n::t("crud-message-rejected"));
+                }
+                message.content.zeroize();
+                message.signature.zeroize();
+            }));
         }
     }
 
@@ -916,9 +946,15 @@ impl EventLoopState {
     /// should now break out of its `select!` loop, or `false` if shutdown was
     /// aborted (e.g. entity state failed to save) and the loop should keep
     /// running.
-    async fn handle_shutdown(&self, signal: std::io::Result<()>) -> bool {
+    async fn handle_shutdown(&mut self, signal: std::io::Result<()>) -> bool {
         if let Err(err) = signal {
             error!(error = %err, "{}", i18n::t("ctrlc-handler-failed"));
+        }
+        // Abandon any in-flight CRUD request before persisting entity state: a
+        // concurrent manifest write would otherwise race the shutdown save.
+        if let Some(task) = self.crud_task.take() {
+            task.abort();
+            let _ = task.await;
         }
         eprintln!();
         eprintln!("{}", i18n::t("shutdown-requested"));

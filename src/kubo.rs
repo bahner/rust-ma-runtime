@@ -511,6 +511,15 @@ pub async fn dag_resolve(kubo_url: &str, path: &str) -> Result<String> {
         return Ok(path.to_string());
     }
 
+    // A plain `/ipfs/<cid>` path resolves to itself. Answering locally avoids a
+    // needless Kubo round-trip that, for a block the node has never seen, would
+    // make Kubo walk the network just to hand back the same CID.
+    if let Some(cid) = path.strip_prefix("/ipfs/") {
+        if !cid.is_empty() && !cid.contains('/') {
+            return Ok(cid.to_string());
+        }
+    }
+
     let _permit = acquire_request_permit("dag/resolve").await?;
 
     let base = kubo_url.trim_end_matches('/');
@@ -566,6 +575,21 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn dag_resolve_answers_bare_and_ipfs_paths_locally() {
+        // An unreachable Kubo URL proves the answer never leaves the process.
+        let unreachable = "http://127.0.0.1:1";
+        let cid = "bafyreiazobsn6czyrmgqvblmodhiesxt6th32fsddvq6y7lek3kqkcirty";
+
+        assert_eq!(dag_resolve(unreachable, cid).await.unwrap(), cid);
+        assert_eq!(
+            dag_resolve(unreachable, &format!("/ipfs/{cid}"))
+                .await
+                .unwrap(),
+            cid
+        );
     }
 
     #[tokio::test]

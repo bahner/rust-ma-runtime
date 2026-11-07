@@ -13,7 +13,7 @@ use ma_core::{
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 
-use crate::entity::{EntityNode, KindNode, RuntimeManifest};
+use crate::entity::{EntityNode, KindNode, KindTree, RuntimeManifest};
 
 use super::CrudHandlerCtx;
 
@@ -165,6 +165,44 @@ pub(super) async fn group_cache_update(ctx: &CrudHandlerCtx, name: &str, cid: &s
             warn!(name = %name, %cid, error = %e, "failed to load group into cache");
         }
     }
+}
+
+/// Fetch every kind node referenced by `tree` into the local Kubo store.
+///
+/// A freshly published kinds tree normally points at blocks this runtime has
+/// never seen, so the fetches are network-bound. Running them in bounded waves
+/// costs roughly the slowest block per wave rather than the sum of all of
+/// them, and doing it before the manifest writer lock is taken keeps unrelated
+/// mutations from queueing behind a slow block fetch. The wave size stays
+/// below the global Kubo request gate so prefetching cannot starve (and time
+/// out) the rest of the runtime's Kubo traffic.
+pub(super) async fn prefetch_kind_tree(ctx: &CrudHandlerCtx, tree: &KindTree) -> Result<()> {
+    const KINDS_PER_WAVE: usize = 8;
+    let kinds: Vec<(String, String)> = tree
+        .iter_protocols()
+        .map(|(protocol, link)| (protocol, link.cid.clone()))
+        .collect();
+
+    for wave in kinds.chunks(KINDS_PER_WAVE) {
+        let mut pending = tokio::task::JoinSet::new();
+        for (protocol, cid) in wave {
+            let kubo_rpc_url = Arc::clone(&ctx.kubo_rpc_url);
+            let (protocol, cid) = (protocol.clone(), cid.clone());
+            pending.spawn(async move {
+                crate::kubo::dag_get::<KindNode>(&kubo_rpc_url, &cid)
+                    .await
+                    .with_context(|| format!("fetching overlay kind {protocol} ({cid})"))
+                    .map(|_| ())
+            });
+        }
+        while let Some(fetched) = pending.join_next().await {
+            match fetched {
+                Ok(result) => result?,
+                Err(e) => return Err(anyhow!("overlay kind fetch task failed: {e}")),
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn load_raw_kind_nodes(
