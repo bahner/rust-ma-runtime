@@ -2,6 +2,7 @@
 ma-ipfs-publisher
 ma
 .publish.sh
+.env
 
 # Debian build artifacts
 /debian/.debhelper/
