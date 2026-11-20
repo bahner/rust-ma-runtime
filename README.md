@@ -76,7 +76,7 @@ identity. The first `did:ma` prototype was in fact written in Elixir, where
 Erlang atom IDs served directly as process addresses. The nanoid fragments in
 DID URLs (`did:ma:<ipns-key>#<nanoid>`) are the same idea with a global scope.
 
-The wire protocol carries that lineage visibly. RPC verbs are CBOR text atoms
+The wire protocol carries that lineage visibly. Actor verbs are CBOR text atoms
 that look exactly like Erlang atoms: `:ping`, `:pong`, `:ok`, `:error`. Replies
 follow the same tuple conventions Erlang programmers recognise immediately:
 `[:ok, payload]`, `[:error, reason]`. The pattern matching discipline is the
@@ -122,11 +122,11 @@ a canonical, deterministic CBOR serialisation that slots directly into the
 IPFS content-addressing stack.
 
 **iroh** provides the transport. Where IPFS gives us storage and naming,
-iroh gives us direct peer-to-peer connectivity over QUIC — fast, encrypted,
-NAT-traversing connections between endpoints identified by public keys. The
-iroh endpoint model maps cleanly onto `did:ma` services: each endpoint
-advertises protocol IDs, accepts connections, and routes them to service
-handlers.
+[iroh](https://iroh.computer/) gives us direct peer-to-peer connectivity over
+QUIC — fast, encrypted, NAT-traversing connections between endpoints identified
+by public keys. The iroh endpoint model maps cleanly onto `did:ma` services:
+each endpoint advertises protocol IDs, accepts connections, and routes them to
+service handlers.
 
 These are not dependencies bolted on after the fact. `did:ma` was designed
 around them. IPFS/IPNS is the verifiable data registry. IPLD is the wire
@@ -134,14 +134,54 @@ format. iroh is the transport. The protocol is the composition.
 
 ---
 
+## iroh as transport layer
+
+[iroh](https://iroh.computer/) is a QUIC-based peer-to-peer connectivity
+library that gives every endpoint a stable public-key identity and handles NAT
+traversal transparently. Two peers behind different NATs dial each other
+directly in most network environments; a relay is used only when a direct
+connection genuinely cannot be established.
+
+That is what lets `ma` be reachable without owning a public address. At startup
+the daemon derives its iroh endpoint ID from `iroh_secret_key` and advertises it
+in its own DID document as `/iroh/<endpoint-id>/ma/<protocol>/<version>` service
+strings. Any actor that can resolve the runtime's `did:ma:` identity — an
+operator tab, another runtime, a script — learns the endpoint ID from that
+document and dials it. There is no DNS name to configure, no port to forward,
+and no TLS certificate to manage.
+
+The runtime registers its services on that single endpoint:
+
+| Protocol ID | Purpose |
+|-------------|---------|
+| `/ma/inbox/0.0.1` | Actor messages; fragments dispatch to entities and `:ping` answers `:pong` |
+| `/ma/ipfs/0.0.1` | Signed publish requests forwarded to Kubo (optional) |
+| `/ma/crud/0.0.1` | Entities, kinds, config, ACL, and groups (optional) |
+
+The browser case is the motivating one. A browser actor has no direct route to
+the host's Kubo RPC API, but it can reach the runtime over iroh: it resolves the
+runtime's DID, connects to the endpoint ID found there, and sends a signed
+publish request. The runtime validates the request and talks to Kubo on the
+tab's behalf, so Kubo never has to listen beyond `127.0.0.1:5001`.
+
+Transport is direct service-to-service delivery. `ma` does not gossip or
+broadcast: a sender chooses one of the recipient's advertised `/ma/...`
+protocols and opens a connection to it, and replies travel back through an
+outbox with `reply_to` set to the original message ID. Everything on that
+connection is CBOR. The local status server on `http://127.0.0.1:5003` is an
+operator convenience over loopback HTTP, not a peer-facing API.
+
+---
+
 ## What it does
 
 When you run `ma`, a lean Tokio daemon comes alive. It derives its own
 `did:ma:` identity from a key bundle, publishes a signed DID document to IPFS,
-and registers three services on an iroh QUIC endpoint:
+and registers the mandatory actor inbox — plus the optional IPFS publisher and
+CRUD meta-services — on an iroh QUIC endpoint:
 
-- **`/ma/rpc/0.0.1`** — routes messages to named Wasm plugins (entities) and
-  handles liveness probes.
+- **`/ma/inbox/0.0.1`** — routes messages to named entities (Wasm plugins or
+  compiled-in native actors) and handles liveness probes.
 - **`/ma/crud/0.0.1`** — manages the live entity system: create, update,
   delete entities and kinds; read and write runtime config.
 - **`/ma/ipfs/0.0.1`** — receives signed publish requests from browser actors
@@ -149,15 +189,15 @@ and registers three services on an iroh QUIC endpoint:
   without touching the Kubo API directly.
 
 The entity system is where the interesting work happens. Each entity is a
-named Wasm plugin whose behaviour lives in an IPFS-addressed blob. State is
-persisted back to IPFS on graceful shutdown. The entire live runtime — kinds,
+named Wasm plugin or compiled-in native actor whose behaviour lives in an
+IPFS-addressed blob. State is persisted back to IPFS on graceful shutdown. The entire live runtime — kinds,
 entities, config, ACL — is a content-addressed IPLD DAG rooted at a single
 CID that is published to IPNS on each change. You can fork a runtime by
 publishing a different root. You can audit the history by traversing the DAG.
 The runtime is just a view over a graph, and the graph is permanent.
 
 ```
-your browser ──iroh QUIC──► /ma/rpc   ──► Wasm entity dispatch
+your browser ──iroh QUIC──► /ma/inbox ──► actor dispatch
              ──iroh QUIC──► /ma/crud  ──► entity + config management
              ──iroh QUIC──► /ma/ipfs  ──► Kubo → IPNS publish
 ```

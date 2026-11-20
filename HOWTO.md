@@ -187,7 +187,7 @@ root. Do not rely on the maintainer's key as your permanent software source.
 That's it.  Your DID document is published to IPFS automatically as part
 of the process — no separate publish step is needed.
 
-Until claimed, `ma` does not grant any owner access over RPC/CRUD. The local
+Until claimed, `ma` does not grant any owner access over CRUD. The local
 `/claim` endpoint exists specifically to solve first setup without opening the
 runtime to arbitrary remote callers. Once you claim the runtime, your DID is
 persisted as an owner and the live transport ACL is updated immediately.
@@ -227,7 +227,7 @@ your key. You decide which build that key points to and when it changes.
 
 ### Privacy and encryption
 
-All messages between actors — `@alice hello` to `@bob`, RPC calls,
+All messages between actors — `@alice hello` to `@bob`, entity calls,
 inbox replies — are **end-to-end encrypted** using X25519 key agreement.
 The iroh QUIC transport layer adds a further layer of encryption in
 transit.  Neither `ma` nor anyone on the network path can read message
@@ -550,7 +550,7 @@ examples for counter, fortune, register, and set — all production
 plugins used in the standard bootstrap.
 
 If you want to understand the message types being exchanged under the hood
-— content-types, wire format, inbox and RPC protocols — the
+— content-types, wire format, inbox and CRUD protocols — the
 [ma-spec](https://github.com/bahner/ma-spec) repository has the full
 specification.
 

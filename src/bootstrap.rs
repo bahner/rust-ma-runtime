@@ -144,8 +144,8 @@ pub struct BootstrapRuntime {
     #[serde(default)]
     pub kinds: BootstrapKindsDict,
     /// Root transport-gate ACL — inline `AclMap` published to IPFS at bootstrap.
-    /// Controls who may use the inbox and IPFS services.
-    /// If absent, the daemon falls back to `--acl-file` (or open access).
+    /// Controls who may use the IPFS and CRUD services.
+    /// If absent, the runtime is deny-all until an owner sets a root ACL.
     #[serde(default)]
     pub acl: Option<AclMap>,
     /// Entities: bare name → inline entity descriptor.

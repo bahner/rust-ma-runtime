@@ -634,7 +634,7 @@ async fn dispatch_entity_message(
     if let Some(state_bytes) = result.pending_state {
         let kubo_url = ctx.kubo_rpc_url.to_string();
         let writer = ctx.manifest_writer.clone();
-        entity.spawn_state_persist(kubo_url, writer, state_bytes, "rpc");
+        entity.spawn_state_persist(kubo_url, writer, state_bytes, "inbox");
     }
 
     process_entity_create_requests(result.create_requests, &entity, ctx).await?;

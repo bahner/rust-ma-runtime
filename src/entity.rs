@@ -644,8 +644,8 @@ pub fn normalize_behaviour_cid(value: &str) -> anyhow::Result<String> {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RuntimeManifest {
     /// Transport-level ACL — IPLD link to an ACL document.
-    /// Loaded once at startup. When absent, falls back to the YAML-based
-    /// ACL supplied via `--acl-file`.
+    /// Loaded at startup. When absent, access is deny-all until an owner
+    /// publishes a root ACL via `/acl: <cid>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acl: Option<IpldLink>,
     /// Root-level verb-ACL library — name → IPLD link to `AclMap`.
@@ -656,7 +656,7 @@ pub struct RuntimeManifest {
     /// Runtime protocol identifier (e.g. `"/ma/runtime/0.1.0"`).
     #[serde(default)]
     pub protocol: String,
-    /// Global kinds registry. Shared across all namespaces.
+    /// Global kinds registry, keyed by full protocol ID.
     #[serde(default)]
     pub kinds: KindTree,
     /// Global entity registry — bare name → IPLD link to [`EntityNode`].

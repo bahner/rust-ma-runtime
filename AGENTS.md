@@ -283,8 +283,6 @@ random passphrase, and writes both config and bundle to the XDG paths with mode
 
 ```sh
 ma
-# or with an explicit ACL file:
-ma --acl-file /etc/ma/acl.yaml
 # or with a custom local status bind address:
 ma --status-bind 127.0.0.1:5004
 ```
@@ -293,19 +291,22 @@ ma --status-bind 127.0.0.1:5004
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--acl-file <PATH>` | — | ACL YAML file; defaults to open (`*`) if omitted |
+| `--config <PATH>` | XDG default | Config file to load (`MA_CONFIG`) |
+| `--bootstrap <YAML>` | — | Publish a bootstrap manifest and start from its root CID |
 | `--poll-ms <MS>` | `100` | Service poll interval |
 | `--status-bind <ADDR>` | `127.0.0.1:5003` | Status web server bind address |
 | `--gen-headless-config` | — | Generate config + secret bundle and exit |
 
 ## ACL format
 
-The ACL YAML must contain an `acl:` map from principal to a YAML sequence of
-capability strings. The default when no file is supplied is open
-(`"*": [ipfs, identity-publish]`).
+The root transport-gate ACL is published to IPFS and linked from the manifest
+(`manifest.acl`, an `AclMap` CID). There is no ACL file on disk and no
+`--acl-file` flag. An absent ACL is deny-all; the runtime never substitutes an
+open ACL.
 
 ```yaml
 acl:
+  "+owners": ["*"]               # the /grp/owners list gets everything
   "*": [ipfs, identity-publish]  # everyone: IPFS store + DID publish
   "did:ma:alice": ["*"]          # alice: all capabilities
   "did:ma:bob": [ipfs]           # bob: IPFS store only, no DID publish
@@ -316,16 +317,15 @@ Built-in capability strings:
 
 | Capability | Required by |
 |------------|-------------|
+| `"crud"` | `/ma/crud/0.0.1` |
 | `"ipfs"` | `/ma/ipfs/0.0.1` (generic content storage) |
 | `"identity-publish"` | `/ma/ipfs/0.0.1` (DID-document publishing) |
 | `"read"` | (reserved — future read-only access) |
-| `"create"` | Create namespaces/entities |
-| `"update"` | Update namespaces/entities |
-| `"delete"` | Delete namespaces/entities |
+| `"create"` / `"update"` / `"delete"` | Entity/kind management verbs |
 | `"*"` | Wildcard — grants all capabilities when used in an Allow set |
 
-Arbitrary capability strings are valid — entity and namespace ACLs may use
-verb names or sub-namespace names as capabilities.
+Arbitrary capability strings are valid — entity ACLs use verb names such as
+`":help"` or `":cron"`.
 
 Rules:
 
@@ -333,7 +333,10 @@ Rules:
   `key: ~`, or `key: null` in YAML) is an explicit deny.
 - Direct principal lookup wins over the `"*"` wildcard.
 - Fragment stripped from DID-URLs before lookup.
-- ACL is checked on every incoming message on both services.
+- Owners resolved from `/grp/owners` bypass the root transport gate and the CRUD
+  gate unconditionally.
+- The actor inbox is not gated by a transport capability; per-entity verb ACLs
+  are enforced on the receiving entity.
 
 ## Status web server
 
@@ -430,20 +433,24 @@ dispatches by sending a CBOR array to `did:ma:<ipns>#scheduler` via `ma_send`.
 **Wire format** — 4 required elements, optional extra args at position 5+:
 
 ```
-[":cron",     spec_str,     target_frag, verb_or_array, extra_args…]
-[":interval", duration_str, target_frag, verb_or_array, extra_args…]
-[":at",       timestamp_ms, target_frag, verb_or_array, extra_args…]
-[":in",       duration_str, target_frag, verb_or_array, extra_args…]
-[":random",   max_secs_int, target_frag, verb_or_array, extra_args…]
+[name,       ":cron",     spec_str,     verb_or_array, extra_args…]
+[name,       ":interval", duration_str, verb_or_array, extra_args…]
+[name,       ":at",       timestamp_ms, verb_or_array, extra_args…]
+[name,       ":in",       duration_str, verb_or_array, extra_args…]
+[name,       ":random",   max_secs_int, verb_or_array, extra_args…]
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
+| name | text | caller-defined deterministic schedule name |
 | type | text atom | `:cron`, `:interval`, `:at`, `:in`, or `:random` |
 | spec | text / integer | cron string, duration string, Unix ms timestamp, or max_secs integer |
-| target_frag | text | bare fragment name (`"myentity"`) or full DID-URL (`did:ma:…#myentity`) |
 | verb_or_array | text atom or array | `":verb"` or `[":verb", arg1, …]` |
 | extra_args… | any CBOR | optional positional args appended after the verb |
+
+Dispatch target is always the sender's fragment (`msg.from`). Schedules are keyed
+by `(msg.from, name)`, so re-registering the same name from the same sender
+replaces the previous definition.
 
 **Schedule types:**
 
@@ -458,23 +465,23 @@ dispatches by sending a CBOR array to `did:ma:<ipns>#scheduler` via `ma_send`.
 **Examples:**
 
 ```cbor
-; Fire :tick on myentity every minute
-[":cron", "0 * * * * *", "myentity", ":tick"]
+; Fire :tick on the calling entity every minute
+["tick", ":cron", "0 * * * * *", ":tick"]
 
-; Fire [:grow, "small plant+=1", "bigplant+=4"] on garden every 30 minutes
-[":interval", "30m", "garden", ":grow", "small plant+=1", "bigplant+=4"]
+; Fire [:grow, "small plant+=1", "bigplant+=4"] every 30 minutes
+["grow", ":interval", "30m", ":grow", "small plant+=1", "bigplant+=4"]
 
 ; Same, using array form for verb
-[":interval", "30m", "garden", [":grow", "small plant+=1", "bigplant+=4"]]
+["grow", ":interval", "30m", [":grow", "small plant+=1", "bigplant+=4"]]
 
 ; One-shot at a specific time
-[":at", 1748700000000, "myentity", ":wake"]
+["wake-once", ":at", 1748700000000, ":wake"]
 
 ; One-shot after a relative delay
-[":in", "30s", "myentity", ":timeout"]
+["timeout", ":in", "30s", ":timeout"]
 
 ; Random re-trigger within 5 minutes
-[":random", 300, "dog", ":scratch"]
+["scratch", ":random", 300, ":scratch"]
 ```
 
 **ACL:** Scheduled dispatch bypasses all ACL checks. The runtime is the trusted

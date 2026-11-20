@@ -67,9 +67,9 @@ certified security product.
   `/grp/owners`.
 - **Never fall back to an open ACL.** An empty `AclMap` (no entries) denies
   everyone. Code must never substitute `{"*": ["*"]}` as a fallback for a
-  missing ACL. A missing ACL is a configuration error — fail loudly. The
-  `:acl:` delete verb on the root ACL is therefore a no-op; replace it with
-  a new CID via `:acl: <cid>`.
+  missing ACL. A missing ACL is a configuration error — fail loudly. Deleting
+  `/acl` is therefore refused; replace the root ACL with a new CID via
+  `/acl: <cid>`.
 - **Keys in memory only.** IPNS private key material arriving in a request
   is used once and immediately zeroized. The daemon's own keys live in an
   encrypted `SecretBundle` on disk, decrypted into memory at startup and
@@ -85,33 +85,39 @@ certified security product.
 
 ## Overview
 
-`ma` exposes three iroh QUIC services on behalf of clients that cannot reach the
-Kubo RPC API directly (e.g. the `operator` browser actor):
+`ma` exposes the obligatory actor inbox plus two optional meta-services over
+iroh QUIC on behalf of clients that cannot reach the Kubo RPC API directly
+(e.g. the `operator` browser actor):
 
 | Service | Protocol ID | Purpose |
 |---------|-------------|---------|
-| IPFS publisher | `/ma/ipfs/0.0.1` | Receives signed DID-document publish requests and forwards them to Kubo |
-| RPC | `/ma/rpc/0.0.1` | Entity/plugin dispatch, ping/pong |
-| CRUD | `/ma/crud/0.0.1` | Structured data management (entities, kinds, config, namespaces) |
+| Inbox (required) | `/ma/inbox/0.0.1` | Actor messages: fragment dispatch, `:ping` → `:pong` |
+| IPFS publisher (optional) | `/ma/ipfs/0.0.1` | Receives signed DID-document publish requests and forwards them to Kubo |
+| CRUD (optional) | `/ma/crud/0.0.1` | Structured data management (entities, kinds, config, ACL, groups) |
 
 The daemon derives its own `did:ma:` identity at startup, publishes its own DID
-document to IPFS/IPNS, and then enters the main event loop.
+document to IPFS/IPNS, and advertises its iroh endpoint ID in that document as
+`/iroh/<endpoint-id>/ma/<protocol>/<version>` service strings. Peers resolve the
+DID to find the endpoint and connect directly over iroh QUIC; the local status
+server is HTTP on loopback only and is not a peer-facing API. The daemon then
+enters the main event loop.
 
 ---
 
 ## Architecture
 
 ```
-operator (browser WASM) ──iroh QUIC──► /ma/rpc/0.0.1
+operator (browser WASM) ──iroh QUIC──► /ma/inbox/0.0.1
                                        │
-                                       ├─ (unfragmented) → ping, name, description
-                                       └─ #<name>        → Wasm plugin dispatch
+                                       ├─ (unfragmented) → :ping → :pong
+                                       └─ #<name>        → actor dispatch
                    ──iroh QUIC──► /ma/crud/0.0.1
                                        │
-                                       ├─ :entities.*    → entity management
-                                       ├─ :kinds.*       → kind registry
-                                       ├─ :config.*      → runtime config
-                                       └─ :namespaces.*  → namespace management
+                                       ├─ /entities/…    → entity management
+                                       ├─ /kinds/…       → kind registry
+                                       ├─ /config/…      → runtime config
+                                       ├─ /acl, /acls/…  → root and named ACLs
+                                       └─ /grp/…         → group registry
                    ──iroh QUIC──► /ma/ipfs/0.0.1
                                        │
                                        └─ publish DID document to Kubo/IPNS
@@ -135,10 +141,10 @@ capacity. The queue is not durable across process restarts.
 
 | Direction | Format |
 |-----------|--------|
-| RPC request (atom) | CBOR text string: `:verb` |
-| RPC request (with args) | CBOR array: `[":verb", arg1, arg2, …]` |
-| RPC reply (success) | CBOR atom `:ok`, or tuple `[":ok", payload]` |
-| RPC reply (error) | CBOR atom `:error`, or tuple `[":error", reason]` |
+| Actor request (atom) | CBOR text string: `:verb` |
+| Actor request (with args) | CBOR array: `[":verb", arg1, arg2, …]` |
+| Actor reply (success) | CBOR atom `:ok`, or tuple `[":ok", payload]` |
+| Actor reply (error) | CBOR atom `:error`, or tuple `[":error", reason]` |
 | Entity content in replies | CBOR-encoded `EntityNode` (DAG-CBOR structure, never JSON) |
 | IPFS identity-publish request | CBOR-encoded signed envelope (`application/vnd.ma.identity.publish.request`) |
 | IPFS store request | CBOR-encoded signed envelope (`application/vnd.ma.ipfs.request`) |
@@ -209,7 +215,7 @@ to Kubo and uses it as the runtime head. This manifest contains:
 
 The daemon is immediately functional for CRUD operations. To establish
 ownership, run `.my.ma:claim` from operator (or `POST /claim` with your DID).
-This updates the live transport ACL so you can issue RPC/CRUD requests.
+This updates the live transport ACL so you can issue CRUD requests.
 
 If claiming remotely is not practical, set owners directly in `config.yaml`
 or via `--owner` (repeatable) before starting the daemon:
@@ -231,7 +237,7 @@ startup, before any manifest ACL is loaded.
 To add a permanent ACL to the manifest:
 
 ```
-@ma:acl: <cid>   # set an AclMap CID as the root transport-gate ACL
+@ma/acl: <cid>   # set an AclMap CID as the root transport-gate ACL
 ```
 
 ### 3. Bootstrap a world manifest (optional)
@@ -279,50 +285,39 @@ IPNS as a fallback.
 
 ```yaml
 runtime:
-  owner: did:ma:<your-ipns>   # DID of the operator; shown by `ma --status`
+  # Named group registry: name → flat DID list, published to IPFS.
+  # Referenced from any AclMap as principal `+<name>`.
+  grp:
+    owners:
+      - did:ma:<your-ipns>
 
-  # Kinds: protocol families → implementations → metadata
+  # Kinds: flat map from full protocol ID to kind descriptor.
   kinds:
-    stateless:
-      ping:
-        protocol: /ma/stateless/ping/0.0.1
-        wasi: false             # Rust/native Extism plugin
-        api:
-          - on_message          # fn on_message() — process incoming message
-        host_functions:
-          - ma_send             # full-control outbound envelope
-      python:
-        protocol: /ma/stateless/python/0.0.1
-        wasi: true              # Python/WASI plugin
-        api:
-          - on_message
-        host_functions:
-          - ma_reply            # reply to sender
-          - ma_send
-    stateful:
-      python:
-        protocol: /ma/stateful/python/0.0.1
+    /ma/stateless/ping/0.0.1:
+      type: extism             # extism | native | bash | lua
+      cid: {"/": "bafkrei…"}   # shared Wasm binary (optional)
+      host_functions:
+        - ma_send
+      attributes:
+        wasi: false
+        stateful: false
+    /ma/stateful/python/0.0.1:
+      type: extism
+      attributes:
         wasi: true
-        api:
-          - init                # called on load with persisted state bytes
-          - handle_call
-          - save_state          # janitor snapshot trigger
-        host_functions:
-          - ma_reply
-          - ma_send
-          - ma_set_state        # persist state to IPFS via runtime
+        stateful: true
+      host_functions:
+        - ma_reply
+        - ma_send
+        - ma_set_state
 
-  # Entities: named plugin instances
+  # Entities: bare name → inline descriptor or pre-published EntityNode CID.
   entities:
     ping:
       kind: /ma/stateless/ping/0.0.1
-      behaviour_cid: bafkrei…   # CID of compiled .wasm — `ipfs add plugin.wasm`
-      acl: ""                  # "" = deny-all; use a named ACL ref for open access
-    fortune:
-      kind: /ma/stateless/python/0.0.1
-      behaviour_cid: Qm…
-      acl: ""
-      # owner: did:ma:<other>  # optional; falls back to runtime.owner
+      behaviour: {"/": "bafkrei…"}   # entity behaviour / own Wasm binary
+      acl: ""                        # "" = deny-all; name an entry from acls:
+    fortune: bafyreid…               # pre-published EntityNode CID
 ```
 
 ---
@@ -331,8 +326,8 @@ runtime:
 
 ```sh
 ma
-# or
-ma --acl-file /etc/ma/acl.yaml --status-bind 0.0.0.0:5003
+# or with a custom local status bind address
+ma --status-bind 127.0.0.1:5004
 ```
 
 ---
@@ -341,12 +336,13 @@ ma --acl-file /etc/ma/acl.yaml --status-bind 0.0.0.0:5003
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--config <PATH>` | XDG default | Config file to load. `MA_CONFIG` env is equivalent. |
 | `--gen-root-cid <YAML>` | — | Publish bootstrap manifest to IPFS, print `root_cid`, then exit |
 | `--gen-kinds-cid <YAML>` | — | Publish only `runtime.kinds` from bootstrap YAML to IPFS, print the kinds CID, then exit |
+| `--bootstrap <YAML>` | — | Publish a bootstrap manifest and start the daemon from the resulting root CID |
 | `--root-cid <CID>` | — | WARNING: resets runtime head for this process; recover prior CID from logs if mistaken |
 | `--kinds-cid <CID>` | — | Apply a kinds-tree CID over the selected runtime head without replacing entities or entity state |
 | `--owner <DID>` | — | DID(s) of the runtime owner(s); repeat for multiple; falls back to `owners:` in config |
-| `--acl-file <PATH>` | — | ACL YAML; open (`*`) if omitted |
 | `--poll-ms <MS>` | `100` | Service poll interval. Overrides `poll_ms:` in config.yaml. |
 | `--i18n <LANG>` | — | Log language (e.g. `nb`, `en`). Also `MA_I18N` env var. Falls back to `i18n:` in config or `nb`. |
 | `--status-bind <ADDR>` | `127.0.0.1:5003` | Status HTTP server bind address. Overrides `status_bind:` in config.yaml. |
@@ -364,7 +360,7 @@ ma --acl-file /etc/ma/acl.yaml --status-bind 0.0.0.0:5003
 5. If `--gen-kinds-cid <yaml>`: wait for Kubo, publish only `runtime.kinds`, print the kinds CID, exit.
 6. Load ACL (deny-all until manifest is loaded later).
 7. Load `SecretBundle`.
-8. Create iroh QUIC endpoint, register services (RPC, IPFS publisher if enabled, CRUD if enabled).
+8. Create iroh QUIC endpoint, register the inbox service (plus the IPFS publisher and CRUD if enabled).
 9. Build own DID document, spawn background publish to IPNS.
 10. Wait for Kubo readiness (10 attempts).
 11. Resolve `root_cid` from `--root-cid` CLI or runtime IPNS. If none found, publish a
@@ -380,7 +376,7 @@ ma --acl-file /etc/ma/acl.yaml --status-bind 0.0.0.0:5003
 16. Load named ACLs into cache from manifest; replace transport-gate ACL from manifest ACL.
 17. Resolve owners from CLI `--owner` and `config.extra.owners`; seed live ACL.
 18. Start status HTTP server.
-19. Main event loop: drain RPC, IPFS, and CRUD inboxes every `poll_ms`.
+19. Main event loop: drain inbox, IPFS, and CRUD queues every `poll_ms`.
 20. On `Ctrl-C`: save entity states to IPFS, update manifest CID in config, close endpoint.
 
 ---
@@ -395,83 +391,118 @@ Entity behaviour lives in Wasm blobs stored on IPFS.
 ### IPLD schema (DAG-CBOR on Kubo)
 
 ```
-RuntimeManifest { owner, kinds: {family→implementation→CID}, entities: {name→CID→EntityNode}, acl: CID?, acls: {name→CID} }
-KindNode        { protocol }
-EntityNode      { name, kind, behaviour: {"//":CID}, state: {"//":CID}?, owner, acl: {"//":CID}, wasi: bool }
+RuntimeManifest { acl: CID?, acls: {name→CID}, protocol, kinds: {protocol→CID}, entities: {name→CID}, i18n: {lang→CID}, grp: {name→CID}, config }
+KindNode        { protocol, cid?, type, behaviour?, host_functions, attributes, extends? }
+EntityNode      { kind, behaviour: {"/":CID}?, acl, state: {"/":CID}?, parent?, label?, attributes, init? }
 ```
 
-### Management CRUD — dot-path protocol
+### Management CRUD — path protocol
 
-Send CBOR to the **bare** runtime DID (`did:ma:<runtime>`, no fragment) on
-`/ma/crud/0.0.1`. Operations are encoded in the CBOR payload:
+Send a CBOR `application/vnd.ma.crud.request` message to the **bare** runtime
+DID (`did:ma:<runtime>`, no fragment) on `/ma/crud/0.0.1`. The payload is a 1-
+or 2-element CBOR array: a path and an optional value.
 
+```cbor
+GET:    ["/entities/ping"]
+SET:    ["/entities/ping", "<cid-or-value>"]
+DELETE: ["/entities/ping", ""]
 ```
-GET:    [":get",    ".ns.key"]
-SET:    [".ns.key", value]
-DELETE: [":delete", ".ns.key"]
-```
+
+Paths begin with `/`. The first segment selects the namespace:
+
+| Namespace | Purpose |
+|-----------|---------|
+| `/entities` | Entity registry and entity nodes |
+| `/kinds` | Kind (protocol) registry |
+| `/config` | Runtime manifest config and daemon config |
+| `/acl` | Root transport-gate ACL by CID |
+| `/acls` | Named ACL library by CID |
+| `/grp` | Named group registry by CID |
+
+An unknown first segment is treated as a config key path, so `/start` behaves
+like `/config/start`.
 
 #### Entities
 
 | Path | GET | SET | DELETE |
 |------|-----|-----|--------|
-| `:entities` | List all entity names | — | — |
-| `:entities.<name>` | Get EntityNode | — | — |
-| `:entities.<name>` (SET) | — | Create/update entity by CID | — |
-| `:entities.<name>` (DELETE) | — | — | Delete entity |
+| `/entities` | List all entity names | — | refused |
+| `/entities/<name>` | Get `EntityNode` | Create/update entity by CID | Delete entity |
+| `/entities/<name>/acl` | Get ACL name | Set ACL name | Clear ACL name |
+| `/entities/<name>/<field>` | Get a leaf field | — | — |
 
 #### Kinds
 
 | Path | GET | SET | DELETE |
 |------|-----|-----|--------|
-| `:kinds` | List all kinds | — | — |
-| `:kinds.<family>` | List implementations | — | — |
-| `:kinds.<family>.<impl>` | Get kind ref | Set kind ref CID | Delete kind ref |
+| `/kinds` | List protocol IDs | Apply a `KindTree` overlay CID | refused |
+| `/kinds/<protocol>` | Get `KindNode` (YAML) | Set kind by CID | Remove kind |
+
+`<protocol>` carries its slashes without the leading one, e.g.
+`/kinds/ma/avatar/0.0.1` addresses `/ma/avatar/0.0.1`.
 
 #### Config
 
 | Path | GET | SET | DELETE |
 |------|-----|-----|--------|
-| `:config` | Get entire config map | — | — |
-| `:config.<key>` | Get value | Set value | Delete key |
+| `/config` | Get merged runtime + daemon config | — | refused |
+| `/config/<key>` | Get value | Set value | Delete key |
 
-#### Root RPC metadata lookups
+Protected keys (`slug`, secret material, `config_path`, `global_key`) are
+rejected on every operation.
 
-Send a CBOR text atom to the bare runtime DID on `/ma/rpc/0.0.1`:
+#### ACLs and groups
 
-| Verb | Reply | Backing config key | Default |
-|------|-------|--------------------|---------|
-| `:ping` | `:pong` | — | — |
-| `:name` | runtime name string | `config.name` | `間trix` |
-| `:description` | runtime description string | `config.description` | `A 間 runtime with a lazy owner.` |
+| Path | GET | SET | DELETE |
+|------|-----|-----|--------|
+| `/acl` | Root ACL CID (empty when unset) | Set root ACL by CID | refused |
+| `/acls` | List named ACLs | — | — |
+| `/acls/<name>` | Get named ACL CID | Set named ACL by CID | Delete named ACL |
+| `/grp` | List group names | — | — |
+| `/grp/<name>` | Get group CID | Set group by CID | Delete group (`owners` refused) |
 
-`name` and `description` are read via root RPC for display/discovery, but are
-still changed through CRUD (`:config.name:` and `:config.description:`).
+`/acl` is the root transport-gate ACL. Deleting it is refused, and a missing
+ACL is deny-all — never an open fallback. `/grp/owners` may be set to an empty
+list, but the entry itself can never be deleted.
+
+#### Inbox liveness
+
+Send a bare CBOR text atom to the runtime DID on `/ma/inbox/0.0.1`:
+
+| Verb | Reply |
+|------|-------|
+| `:ping` | `:pong` |
+
+`:ping` is the only unfragmented verb. `:name` and `:description` are no longer
+read from the inbox; use `/config/name` and `/config/description` on the CRUD
+service instead.
 
 #### From operator terminal
 
+Operator commands use the same slash paths the runtime receives.
+
 ```
 # list entities
-@sky:entities
+@sky/entities
 
 # get entity
-@sky:entities.ping
+@sky/entities/ping
 
 # create / update entity (CID is the EntityNode dag-cbor CID)
-@sky:entities.ping: bafyreiXXXXXXXX
+@sky/entities/ping: bafyreiXXXXXXXX
 
 # delete entity
-@sky:entities.ping:
+@sky/entities/ping:
 
 # set a kind
-@sky:kinds.ma-entity.wasi: bafyreiYYYYYYYY
+@sky/kinds/ma/avatar/0.0.1: bafyreiYYYYYYYY
 
 # set a config key
-@sky:config.poll_interval_ms: 250
+@sky/config/i18n: nb
 
-# set runtime name/description (reflected by @sky:name / @sky:description)
-@sky:config.name: "間trix"
-@sky:config.description: "A 間 runtime with a lazy owner."
+# set runtime name/description
+@sky/config/name: "間trix"
+@sky/config/description: "A 間 runtime with a lazy owner."
 ```
 
 ### Plugin ABI
@@ -481,7 +512,7 @@ Each Wasm plugin must export:
 | Export | Description |
 |--------|-------------|
 | `init(state: Bytes)` | Called at load with persisted state (empty bytes on first load) |
-| `on_message(PluginInput JSON) → PluginOutput JSON` | Handle an incoming RPC message |
+| `on_message(PluginInput JSON) → PluginOutput JSON` | Handle an incoming actor message |
 | `get_state() → Bytes` | Return current state for IPFS persistence |
 
 **`PluginInput`:**
@@ -536,6 +567,7 @@ Four required elements; optional extra args at position 5+:
 [name, ":cron",     spec_str,     verb_or_array, extra_args…]
 [name, ":interval", duration_str, verb_or_array, extra_args…]
 [name, ":at",       timestamp_ms, verb_or_array, extra_args…]
+[name, ":in",       duration_str, verb_or_array, extra_args…]
 [name, ":random",   max_secs_int, verb_or_array, extra_args…]
 ```
 
@@ -560,7 +592,8 @@ dispatch and MUST NOT self-reschedule.
 |------|------|----------|
 | `:cron` | 6-field cron string `"sec min hour day month weekday"` | Fires on schedule indefinitely |
 | `:interval` | Human duration: `"1h"`, `"30m"`, `"5s"`, `"2d12h"` | Fires every N seconds indefinitely |
-| `:at` | Unix timestamp in milliseconds (integer) | Fires once after the computed delay |
+| `:at` | Unix timestamp in milliseconds (integer) | Fires once at the given time |
+| `:in` | Human duration: `"1h"`, `"30m"`, `"5s"`, `"2d12h"` | Fires once after the delay |
 | `:random` | Max seconds (integer) | Fires after 1–N random seconds, then self-reschedules |
 
 ### Introspection verbs
@@ -611,7 +644,7 @@ registration local-only, and restricts listing to owners:
 ```yaml
 scheduler:
   "*": [":help"]
-  "#": [":cron", ":interval", ":at", ":random"]
+  "#": [":cron", ":interval", ":at", ":in", ":random"]
   "+owners": [":list"]
 ```
 
@@ -632,29 +665,40 @@ must be the final character of the path, so
 
 ## ACL
 
-Capabilities are plain strings in YAML sequences. The default when no
-`--acl-file` is given allows everyone to use both services.
+Capabilities are plain strings in YAML sequences. The root transport-gate ACL
+is published to IPFS and linked from `manifest.acl`; there is no ACL file on
+disk and no `--acl-file` flag. A manifest with no ACL is deny-all — the runtime
+never substitutes an open ACL.
 
 ```yaml
 acl:
-  "*": [rpc, ipfs, identity-publish]  # everyone: RPC + IPFS store + DID publish (default)
-  "did:ma:alice": [owner]     # alice: full access
-  "did:ma:bob": [rpc]         # bob: RPC only, no IPFS store or DID publish
+  "+owners": ["*"]           # the /grp/owners list gets everything
+  "*": [ipfs, identity-publish]  # everyone: IPFS store + DID publish
+  "did:ma:alice": [crud, ipfs, identity-publish]
+  "did:ma:bob": [ipfs]        # bob: IPFS store only
   "did:ma:eve":               # null = explicit deny
 ```
+
+Owners resolved from `/grp/owners`, `--owner`, or `config.owners` bypass the
+root transport gate and the CRUD gate, so they can never lock themselves out.
 
 Built-in capabilities:
 
 | Capability | Required by |
 |------------|-------------|
-| `rpc` | `/ma/rpc/0.0.1` |
+| `crud` | `/ma/crud/0.0.1` |
 | `ipfs` | `/ma/ipfs/0.0.1` generic content storage |
 | `identity-publish` | `/ma/ipfs/0.0.1` DID-document publishing |
 | `"*"` | Wildcard — grants all capabilities when used in an Allow set |
-| `create` / `update` / `delete` | Namespace / entity management |
+| `create` / `update` / `delete` | Combined with `entities`, `kinds`, and similar names for entity/kind management |
+| arbitrary verb atoms | Per-entity ACLs: `":help"`, `":cron"`, etc. |
+
+The actor inbox (`/ma/inbox/0.0.1`) is not gated by a transport capability.
+Per-entity verb ACLs are enforced by the receiving entity instead, using the
+`EntityNode.acl` name resolved through `/acls/<name>`.
 
 Rules: deny always wins; direct match wins over wildcard; fragment stripped
-from DID-URLs before lookup.
+from DID-URLs before lookup; empty or missing ACLs are fail-closed.
 
 ### Group resolution
 
@@ -671,7 +715,7 @@ acl:
 `<name>` is looked up directly in `manifest.grp` (CRUD-addressed as
 `/grp/<name>`), an IPLD link to a plain `Vec<String>` of member DIDs.
 Resolution is a synchronous, in-memory cache lookup (`GroupCache`) — no
-actor dispatch, no async RPC round-trip. `"owners"` is one ordinary entry
+actor dispatch, no async message round-trip. `"owners"` is one ordinary entry
 in `grp`, resolved exactly like any other group; it is protected only
 against deletion (may be set to an empty list, but the entry itself can
 never be removed via CRUD), never resolved specially.
@@ -728,11 +772,21 @@ status_cors_allowed_origins:
   "uptime_secs": 42,
   "ipfs_publisher": true,
   "ipfs_requests": 0,
-  "rpc_requests": 0,
-  "pings_received": 0,
   "started_at": 1234567890,
   "entity_names": ["greeter", "counter"],
-  "runtime": {"/": "bafyreiXXXX"}
+  "runtime": {"/": "bafyreiXXXX"},
+  "operator": {"source": "/ipns/…", "path": "/operator/"},
+  "process": {
+    "pid": 1234,
+    "threads": 12,
+    "open_fds": 48,
+    "memory": {
+      "vm_peak_kib": 0,
+      "vm_size_kib": 0,
+      "vm_rss_kib": 0,
+      "vm_data_kib": 0
+    }
+  }
 }
 ```
 
@@ -800,31 +854,31 @@ never select or redirect its own config file.
 
 ### Protected keys
 
-These keys are never readable or writable via `:config.*` RPC:
+These keys are never readable or writable via `/config/<key>` CRUD:
 
 | Key | Reason |
 |-----|--------|
-| `slug` | Changes runtime identity/default paths; set in config.yaml or before startup, never through RPC |
+| `slug` | Changes runtime identity/default paths; set in config.yaml or before startup, never through CRUD |
 | `secret_bundle` | Key material path — must not leak |
-| `secret_bundle_passphrase` | Secret — must never be exposed via RPC |
-| `config_path` | Internal path — not user-settable via RPC |
+| `secret_bundle_passphrase` | Secret — must never be exposed |
+| `config_path` | Internal path — not user-settable |
+| `global_key` | Daemon-local break-glass key — set only in `config.yaml` |
 | any key starting with `secret` | Blanket guard for future secret fields |
 
 ### Daemon config keys
 
-Readable and writable via `:config.<key>` RPC. Changes take effect immediately
+Readable and writable via `/config/<key>` CRUD. Changes take effect immediately
 in memory and are saved to `config.yaml`:
 
 | Key | Type | Description |
 |-----|------|-------------|
+| `root_cid` | string | Runtime manifest head CID; read at startup and updated whenever the head changes |
 | `kubo_rpc_url` | string | Kubo RPC URL (default `http://127.0.0.1:5001`) |
-| `secret_bundle_passphrase` | string | Bundle passphrase. Also `MA_SECRET_BUNDLE_PASSPHRASE` env. Written automatically by `--gen-headless-config`. |
-| `ipfs_publisher` | bool | Enable `/ma/ipfs/0.0.1` (default `true`) |
-| `crud_service` | bool | Enable `/ma/crud/0.0.1` (default `true`) |
-| `owners` | list | Owner DIDs granted `["*"]` in the live ACL at startup |
+| `kubo_key_alias` | string | IPNS key alias in Kubo |
 | `log_level` | string | Log level for the log file |
 | `log_level_stdout` | string | Log level for stdout |
 | `log_file` | string or null | Path to log file |
+| `ipv6_enable` | bool | Enable IPv6 on the iroh endpoint |
 | `did_resolver_positive_ttl_secs` | u64 | Legacy — no longer consulted; DID documents are cached in-process (see `did_refresh_interval_secs`) |
 | `did_resolver_negative_ttl_secs` | u64 | Legacy — no longer consulted; failed resolutions are not cached |
 | `did_refresh_interval_secs` | non-negative integer | Interval for checking runtime-cached DID documents against IPFS (default `86400`). A nonzero value runs an immediate sweep at startup; `0` disables background refresh. Runtime changes reschedule immediately, and re-enabling runs an immediate sweep. Resolver results replace cached documents only when `updatedAt` is newer. |
@@ -841,6 +895,9 @@ startup rather than silently falling back to a default.
 |-----|------|---------|-------------|
 | `poll_ms` | positive integer | `100` | Event-loop poll interval in milliseconds. |
 | `status_bind` | socket address | `127.0.0.1:5003` | Status HTTP server bind address, for example `127.0.0.1:5003`. Keep the default local-only unless a controlled deployment requires otherwise. |
+| `ipfs_publisher` | bool | `true` | Register `/ma/ipfs/0.0.1`. |
+| `crud_service` | bool | `true` | Register `/ma/crud/0.0.1`. |
+| `owners` | list | — | Owner DIDs merged into `/grp/owners` at startup. |
 
 ### Manifest config keys
 
@@ -849,9 +906,12 @@ persist across restarts because they live in IPFS.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `name` | string | Runtime display name, used by root RPC `:name` (default `間trix`). |
-| `description` | string | Runtime description text, used by root RPC `:description` (default `A 間 runtime with a lazy owner.`). |
-| `i18n` | string | Active language BCP-47 tag (e.g. `nb`, `zh-Hans`). Setting via `:config.i18n: nb` reloads translations immediately. |
+| `root` | string | Default root entity DID-URL, e.g. `did:ma:<runtime>#root`. |
+| `start` | string | Default start room DID-URL, e.g. `did:ma:<runtime>#concourse`. |
+| `operator` | string | Operator source path, e.g. `/ipns/<key-id>`. |
+| `name` | string | Runtime display name (default `間trix`). |
+| `description` | string | Runtime description text (default `A 間 runtime with a lazy owner.`). |
+| `i18n` | string | Active language BCP-47 tag (e.g. `nb`, `zh-Hans`). Setting `/config/i18n` via CRUD reloads translations immediately. |
 | `i18n_cid` | string | IPFS CID of the compiled locale DAG-CBOR node (set by `make src/i18n.yaml`) |
 | `plugin_envelope_queue_capacity` | positive integer | Capacity of the global in-memory plugin envelope queue (default `1024`). Missing values are materialised in the manifest at startup. Changes take effect after restarting the runtime. |
 | other | any | Free-form runtime metadata |
@@ -878,7 +938,7 @@ FTL files live in `i18n/`. They are compiled into the binary at build time via
 
 ```
 # from the operator terminal (takes effect immediately, persists to manifest):
-@ma:config.i18n: nb
+@ma/config/i18n: nb
 
 # or via CLI flag / env var (current process only):
 ma --i18n nb
@@ -889,8 +949,9 @@ MA_I18N=nb ma
 
 - `i18n/en.ftl` is the **canonical source** — it defines every key.
 - All other `i18n/*.ftl` files mirror the same key set with translated values.
-- Technical terms are kept verbatim: DID, IPFS, IPNS, RPC, ACL, iroh, CID,
-  `#root`, `/ma/ipfs/0.0.1`, `:ping`, `:pong`, Bootstrap, Plugin, manifest.
+- Technical terms are kept verbatim: DID, IPFS, IPNS, ACL, iroh, CID,
+  `#root`, `/ma/inbox/0.0.1`, `/ma/ipfs/0.0.1`, `:ping`, `:pong`, Bootstrap,
+  Plugin, manifest.
 - Missing keys fall back to the key name string.
 - **Never copy English text into non-English locale files.** Translate
   properly or leave the key absent — silently pasting English values into a
