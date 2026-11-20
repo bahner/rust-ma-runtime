@@ -566,7 +566,7 @@ Four required elements; optional extra args at position 5+:
 ```
 [name, ":cron",     spec_str,     verb_or_array, extra_args…]
 [name, ":interval", duration_str, verb_or_array, extra_args…]
-[name, ":at",       timestamp_ms, verb_or_array, extra_args…]
+[name, ":at",       timestamp_secs, verb_or_array, extra_args…]
 [name, ":in",       duration_str, verb_or_array, extra_args…]
 [name, ":random",   max_secs_int, verb_or_array, extra_args…]
 ```
@@ -574,8 +574,8 @@ Four required elements; optional extra args at position 5+:
 | Field | Type | Description |
 |-------|------|-------------|
 | name | text | caller-defined deterministic schedule name |
-| type | CBOR text atom | `:cron`, `:interval`, `:at`, or `:random` |
-| spec | text / integer | cron string, duration string, Unix ms timestamp, or max_secs integer |
+| type | CBOR text atom | `:cron`, `:interval`, `:at`, `:in`, or `:random` |
+| spec | text / integer | cron string, duration string, Unix epoch seconds timestamp, or max_secs integer |
 | verb_or_array | text atom or array | `":verb"` or `[":verb", arg1, …]` |
 | extra_args… | any CBOR | optional positional args appended after the verb |
 
@@ -592,7 +592,7 @@ dispatch and MUST NOT self-reschedule.
 |------|------|----------|
 | `:cron` | 6-field cron string `"sec min hour day month weekday"` | Fires on schedule indefinitely |
 | `:interval` | Human duration: `"1h"`, `"30m"`, `"5s"`, `"2d12h"` | Fires every N seconds indefinitely |
-| `:at` | Unix timestamp in milliseconds (integer) | Fires once at the given time |
+| `:at` | Unix timestamp in seconds (integer) | Fires once at the given time |
 | `:in` | Human duration: `"1h"`, `"30m"`, `"5s"`, `"2d12h"` | Fires once after the delay |
 | `:random` | Max seconds (integer) | Fires after 1–N random seconds, then self-reschedules |
 
@@ -625,8 +625,8 @@ that group is denied like any other ACL miss.
 ; Same, using array form for verb+args
 ["grow", ":interval", "30m", [":grow", "small plant+=1"]]
 
-; One-shot at a specific Unix timestamp (ms)
-["wake-once", ":at", 1748700000000, ":wake"]
+; One-shot at a specific Unix timestamp (seconds)
+["wake-once", ":at", 1748700000, ":wake"]
 
 ; Random re-trigger within 5 minutes
 ["scratch", ":random", 300, ":scratch"]

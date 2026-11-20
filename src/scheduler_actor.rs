@@ -12,7 +12,7 @@
 //! ```text
 //! [name, ":cron",     spec_str,     verb_or_array, extra_args…]
 //! [name, ":interval", duration_str, verb_or_array, extra_args…]
-//! [name, ":at",       timestamp_ms, verb_or_array, extra_args…]
+//! [name, ":at",       timestamp_secs, verb_or_array, extra_args…]
 //! [name, ":in",       duration_str, verb_or_array, extra_args…]
 //! [name, ":random",   max_secs_int, verb_or_array, extra_args…]
 //! ```
@@ -445,7 +445,7 @@ const fn scheduler_help_text() -> &'static str {
     "scheduler help\n\
 format: [name, :type, spec, verb_or_array, extra_args...]\n\
 types: :cron, :interval, :at, :in, :random\n\
-specs: :cron=\"sec min hour day month weekday\", :interval=\"30m\", :at=<unix_ms>, :in=\"10s\", :random=<max_secs>\n\
+specs: :cron=\"sec min hour day month weekday\", :interval=\"30m\", :at=<unix_secs>, :in=\"10s\", :random=<max_secs>\n\
 ownership: target is always msg.from; same [msg.from + name] overwrites previous schedule\n\
 verbs: :help (this text), :list (registered schedules as structured data)"
 }
@@ -527,7 +527,7 @@ fn parse_schedule_request(term: CborValue, from: &str) -> Result<ParsedRequest> 
             (
                 ":at",
                 ScheduleRequest::At {
-                    timestamp_ms: ts,
+                    timestamp_secs: ts,
                     content,
                 },
             )
@@ -643,12 +643,12 @@ mod tests {
         let term = CborValue::Array(vec![
             text("wake-once"),
             text(":at"),
-            int(1_700_000_000_000),
+            int(1_700_000_000),
             text(":wake"),
         ]);
         let p = parse_schedule_request(term, "did:ma:abc#e").unwrap();
         assert!(
-            matches!(p.request, ScheduleRequest::At { timestamp_ms, .. } if timestamp_ms == 1_700_000_000_000)
+            matches!(p.request, ScheduleRequest::At { timestamp_secs, .. } if timestamp_secs == 1_700_000_000)
         );
     }
 

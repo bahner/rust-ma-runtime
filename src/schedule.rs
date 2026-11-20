@@ -6,7 +6,7 @@
 //! |---------|------------|-----------|
 //! | `Cron` | 6-field cron `"sec min hour day month weekday"` or English spec | Fires on schedule indefinitely. |
 //! | `Interval` | Human-readable duration (`"1h"`, `"30m"`, `"5s"`, `"2h30m"`) | Fires every N seconds indefinitely. |
-//! | `At` | Unix timestamp in milliseconds | Fires once after the computed delay. |
+//! | `At` | Unix epoch timestamp in seconds | Fires once after the computed delay. |
 //! | `Random` | `max_secs: u64` | Fires after a random 1–N second delay, then self-reschedules. |
 //!
 //! Schedules are registered dynamically by plugins via `ma_send` to `#scheduler`
@@ -49,8 +49,11 @@ pub enum ScheduleRequest {
     },
     /// Fixed-interval recurring dispatch.
     Interval { secs: u64, content: Vec<u8> },
-    /// One-shot dispatch at a Unix millisecond timestamp.
-    At { timestamp_ms: i64, content: Vec<u8> },
+    /// One-shot dispatch at a Unix epoch timestamp in seconds.
+    At {
+        timestamp_secs: i64,
+        content: Vec<u8>,
+    },
     /// One-shot dispatch after a relative delay (duration string, e.g. `"10s"`).
     In { secs: u64, content: Vec<u8> },
     /// Self-rescheduling one-shot with a random delay up to `max_secs`.
@@ -83,12 +86,12 @@ struct ScheduleJobArgs {
     content: Vec<u8>,
 }
 
-fn now_ms() -> i64 {
+fn now_secs() -> i64 {
     i64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_millis(),
+            .as_secs(),
     )
     .unwrap_or(i64::MAX)
 }
@@ -139,7 +142,7 @@ pub async fn register_schedule(
             .await?
         }
         ScheduleRequest::At {
-            timestamp_ms,
+            timestamp_secs,
             content,
         } => {
             add_at_job(
@@ -151,14 +154,13 @@ pub async fn register_schedule(
                     active_guard,
                     content,
                 },
-                timestamp_ms,
+                timestamp_secs,
                 on_complete,
             )
             .await?
         }
         ScheduleRequest::In { secs, content } => {
-            let timestamp_ms = now_ms()
-                .saturating_add(i64::try_from(secs.saturating_mul(1000)).unwrap_or(i64::MAX));
+            let timestamp_secs = now_secs().saturating_add(i64::try_from(secs).unwrap_or(i64::MAX));
             add_at_job(
                 sched,
                 ScheduleJobArgs {
@@ -168,7 +170,7 @@ pub async fn register_schedule(
                     active_guard,
                     content,
                 },
-                timestamp_ms,
+                timestamp_secs,
                 on_complete,
             )
             .await?
@@ -238,11 +240,11 @@ async fn add_interval_job(
 async fn add_at_job(
     sched: &JobScheduler,
     args: ScheduleJobArgs,
-    timestamp_ms: i64,
+    timestamp_secs: i64,
     on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
 ) -> Result<uuid::Uuid> {
-    let delay_ms = u64::try_from((timestamp_ms - now_ms()).max(0)).unwrap_or(0);
-    let job = Job::new_one_shot_async(Duration::from_millis(delay_ms), move |_, _| {
+    let delay_secs = u64::try_from((timestamp_secs - now_secs()).max(0)).unwrap_or(0);
+    let job = Job::new_one_shot_async(Duration::from_secs(delay_secs), move |_, _| {
         let args = args.clone();
         let on_complete = on_complete.clone();
         Box::pin(async move {

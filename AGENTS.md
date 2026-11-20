@@ -435,7 +435,7 @@ dispatches by sending a CBOR array to `did:ma:<ipns>#scheduler` via `ma_send`.
 ```
 [name,       ":cron",     spec_str,     verb_or_array, extra_args…]
 [name,       ":interval", duration_str, verb_or_array, extra_args…]
-[name,       ":at",       timestamp_ms, verb_or_array, extra_args…]
+[name,       ":at",       timestamp_secs, verb_or_array, extra_args…]
 [name,       ":in",       duration_str, verb_or_array, extra_args…]
 [name,       ":random",   max_secs_int, verb_or_array, extra_args…]
 ```
@@ -444,7 +444,7 @@ dispatches by sending a CBOR array to `did:ma:<ipns>#scheduler` via `ma_send`.
 |-------|------|-------------|
 | name | text | caller-defined deterministic schedule name |
 | type | text atom | `:cron`, `:interval`, `:at`, `:in`, or `:random` |
-| spec | text / integer | cron string, duration string, Unix ms timestamp, or max_secs integer |
+| spec | text / integer | cron string, duration string, Unix epoch seconds timestamp, or max_secs integer |
 | verb_or_array | text atom or array | `":verb"` or `[":verb", arg1, …]` |
 | extra_args… | any CBOR | optional positional args appended after the verb |
 
@@ -458,7 +458,7 @@ replaces the previous definition.
 |------|------|-----------|
 | `:cron` | 6-field cron `"sec min hour day month weekday"` | Fires on schedule indefinitely |
 | `:interval` | Human duration: `"1h"`, `"30m"`, `"5s"`, `"2d12h"` | Fires every N seconds indefinitely |
-| `:at` | Unix timestamp in milliseconds (integer) | Fires once; removed from registry after firing |
+| `:at` | Unix timestamp in seconds (integer) | Fires once; removed from registry after firing |
 | `:in` | Human duration: `"1h"`, `"30m"`, `"5s"`, `"2d12h"` | Fires once after the delay; removed from registry after firing |
 | `:random` | Max seconds (integer) | Fires after 1–N random seconds, then self-reschedules |
 
@@ -474,8 +474,8 @@ replaces the previous definition.
 ; Same, using array form for verb
 ["grow", ":interval", "30m", [":grow", "small plant+=1", "bigplant+=4"]]
 
-; One-shot at a specific time
-["wake-once", ":at", 1748700000000, ":wake"]
+; One-shot at a specific time (Unix epoch seconds)
+["wake-once", ":at", 1748700000, ":wake"]
 
 ; One-shot after a relative delay
 ["timeout", ":in", "30s", ":timeout"]
