@@ -6,6 +6,7 @@
 use anyhow::{anyhow, Context, Result};
 use cid::Cid;
 use ma_core::config::{Config, SecretBundle};
+use noyalib::compat::serde_yaml;
 use std::{net::SocketAddr, path::Path};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -187,10 +188,9 @@ pub fn persist_root_cid(config: &mut Config, root_cid: &str) -> Result<()> {
     if root_cid_setting(config).as_deref() == Some(root_cid) {
         return Ok(());
     }
-    config.extra.insert(
-        serde_yaml::Value::String("root_cid".to_string()),
-        serde_yaml::Value::String(root_cid.to_string()),
-    );
+    config
+        .extra
+        .insert("root_cid", serde_yaml::Value::String(root_cid.to_string()));
     config.save()?;
     Ok(())
 }
@@ -334,6 +334,7 @@ mod tests {
         runtime_manifest_config, select_poll_ms, select_root_cid, select_status_bind,
         should_generate_headless_config, DEFAULT_POLL_MS, DEFAULT_STATUS_BIND,
     };
+    use noyalib::compat::serde_yaml;
 
     #[test]
     fn canonicalises_subsecond_rfc3339_to_whole_seconds() {

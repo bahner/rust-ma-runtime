@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 
 use fluent::{FluentBundle, FluentResource};
+use noyalib::compat::serde_yaml;
 use unic_langid::LanguageIdentifier;
 
 use crate::entity::{IpldLink, RuntimeManifest};
@@ -49,11 +50,7 @@ pub fn bundled_lang_map() -> HashMap<String, IpldLink> {
         .unwrap_or_default();
     langs
         .into_iter()
-        .filter_map(|(k, v)| {
-            k.as_str()
-                .zip(v.as_str())
-                .map(|(k, cid)| (k.to_string(), IpldLink::new(cid)))
-        })
+        .filter_map(|(k, v)| v.as_str().map(|cid| (k, IpldLink::new(cid))))
         .collect()
 }
 

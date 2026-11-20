@@ -10,6 +10,7 @@ use ma_core::{
     Did, DidDocumentResolver, Ipld, CONTENT_TYPE_TERM, CONTENT_TYPE_TERM_CBOR,
     CONTENT_TYPE_TERM_YAML,
 };
+use noyalib::compat::serde_yaml;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 

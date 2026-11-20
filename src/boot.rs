@@ -15,6 +15,7 @@ use clap::Parser;
 use ma_core::config::{Config, MaArgs};
 use ma_core::ipfs::IpfsDidPublisher;
 use ma_core::{ipns_from_secret, Ipld, INBOX_PROTOCOL_ID, IPFS_PROTOCOL_ID};
+use noyalib::compat::serde_yaml;
 use tracing::{error, info, warn};
 
 use crate::startup::{

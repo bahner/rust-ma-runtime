@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use ciborium::Value as CborValue;
+use noyalib::compat::serde_yaml;
 use tracing::warn;
 
 use super::helpers::{
@@ -304,7 +305,7 @@ pub fn set_daemon_config_key_pub(cfg: &mut ma_core::Config, key: &str, val: &ser
         "did_refresh_interval_secs" => {
             if let Some(n) = val.as_u64() {
                 cfg.extra.insert(
-                    serde_yaml::Value::String("did_refresh_interval_secs".to_string()),
+                    "did_refresh_interval_secs",
                     serde_yaml::Value::Number(n.into()),
                 );
             }
@@ -315,33 +316,28 @@ pub fn set_daemon_config_key_pub(cfg: &mut ma_core::Config, key: &str, val: &ser
         "outbox_backoff_attempts" => {
             if let Some(n) = val.as_u64() {
                 cfg.extra.insert(
-                    serde_yaml::Value::String("outbox_backoff_attempts".to_string()),
+                    "outbox_backoff_attempts",
                     serde_yaml::Value::Number(n.into()),
                 );
             }
         }
         "ipv6_enable" => {
             if let Some(b) = val.as_bool() {
-                cfg.extra.insert(
-                    serde_yaml::Value::String("ipv6_enable".to_string()),
-                    serde_yaml::Value::Bool(b),
-                );
+                cfg.extra.insert("ipv6_enable", serde_yaml::Value::Bool(b));
             }
         }
         "wasm_reload_shutdown_timeout_ms" => {
             if let Some(n) = val.as_u64() {
                 cfg.extra.insert(
-                    serde_yaml::Value::String("wasm_reload_shutdown_timeout_ms".to_string()),
+                    "wasm_reload_shutdown_timeout_ms",
                     serde_yaml::Value::Number(n.into()),
                 );
             }
         }
         "root_cid" => {
             if let Some(s) = val.as_str() {
-                cfg.extra.insert(
-                    serde_yaml::Value::String("root_cid".to_string()),
-                    serde_yaml::Value::String(s.to_string()),
-                );
+                cfg.extra
+                    .insert("root_cid", serde_yaml::Value::String(s.to_string()));
             }
         }
         _ => {}
@@ -396,7 +392,7 @@ fn cbor_to_yaml(val: &CborValue) -> serde_yaml::Value {
             let mut map = serde_yaml::Mapping::new();
             for (k, v) in pairs {
                 if let CborValue::Text(key) = k {
-                    map.insert(serde_yaml::Value::String(key.clone()), cbor_to_yaml(v));
+                    map.insert(key.clone(), cbor_to_yaml(v));
                 }
             }
             serde_yaml::Value::Mapping(map)
@@ -669,6 +665,7 @@ mod tests {
     };
     use ciborium::Value as CborValue;
     use ma_core::Config;
+    use noyalib::compat::serde_yaml;
 
     fn test_config() -> Config {
         Config {
@@ -843,7 +840,7 @@ mod tests {
         assert!(!public_plugin_config(&manifest, &cfg).contains_key("global_key"));
 
         cfg.extra.insert(
-            serde_yaml::Value::String("global_key".to_string()),
+            "global_key",
             serde_yaml::Value::String("break-glass".to_string()),
         );
 

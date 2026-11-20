@@ -1,0 +1,16 @@
+# RUSTSEC-2026-0543: chrono is unmaintained.
+#
+# chrono is required by tokio-cron-scheduler (both directly, through croner,
+# and through chrono-tz) for schedule timers. It also appears on Windows via
+# ma-core -> iroh -> netwatch -> wmi. Removing it means replacing
+# tokio-cron-scheduler; ma-runtime itself uses `time` for its own timestamps.
+#
+# RUSTSEC-2026-0555: chrono-tz is unmaintained.
+#
+# chrono-tz is a transitive dependency of tokio-cron-scheduler's timezone
+# support and cannot be removed without replacing that crate.
+#
+# Remove these ignores once tokio-cron-scheduler (and the iroh/netwatch/wmi
+# chain) move off chrono.
+[advisories]
+ignore = ["RUSTSEC-2026-0543", "RUSTSEC-2026-0555"]

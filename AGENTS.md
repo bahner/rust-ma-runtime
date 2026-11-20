@@ -157,21 +157,22 @@ anyhow = "1"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
 ciborium = "0.2"
 clap = { version = "4", features = ["derive"] }
-ma-core = { version = "^0.15", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
+ma-core = { version = "^0.16", default-features = false, features = ["config", "kubo", "iroh", "acl"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "multipart"] }
 serde_json = "1"
-serde_yaml = "0.9"
+noyalib = { version = "0.0.63", features = ["compat-serde-yaml"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
 tracing = "0.1"
 zeroize = "1"
 ```
 
-`ma-core 0.15` exposes everything this daemon uses for DID handling, so no
-direct `ma-did` dependency is required.
+`ma-core` exposes everything this daemon uses for DID handling. The old
+`ma-did` crate no longer exists — it was merged into `ma-core` — and must
+never be added as a dependency.
 
 ### DID document publication
 
-- Keep `ma-core` at `^0.15` or newer and use the published crate, never a
+- Keep `ma-core` at `^0.16` or newer and use the published crate, never a
   committed path dependency.
 - Build runtime documents with `SecretBundle::build_document` after
   canonicalising legacy bundle `created_at` values to RFC 3339 UTC whole
@@ -264,8 +265,8 @@ Add to `~/.config/ma/ma.yaml` to disable the IPFS publisher service:
 ipfs_publisher: false
 ```
 
-The key lives in `config.extra` (a `serde_yaml::Mapping`). Default is `true`
-(enabled) when the key is absent.
+The key lives in `config.extra` (a YAML mapping, exposed by `ma-core` using
+noyalib's `Mapping` type). Default is `true` (enabled) when the key is absent.
 
 ### First-time setup
 

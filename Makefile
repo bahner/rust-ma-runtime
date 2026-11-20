@@ -16,7 +16,7 @@ DEB_CHANGED_BY	:= $(shell if [ -n "$$DEBFULLNAME" ] && [ -n "$$DEBEMAIL" ]; then
 DEBSIGN_KEYID	?=
 DEB_SIGN_ARGS	:= $(if $(DEBSIGN_KEYID),-k$(DEBSIGN_KEYID))
 
-.PHONY: all clean deb distclean docker docker-image docker-push install lint publish release test
+.PHONY: all clean deb distclean docker docker-image docker-push install lint publish release test audit
 
 all: $(BINARY)
 
@@ -25,9 +25,12 @@ lint:
 	$(CARGO) fmt --check
 	mdl *.md
 
-test:
+test: audit
 	$(CARGO) clippy $(CLIPPY_STRICT)
 	$(CARGO) test --all-features
+
+audit:
+	$(CARGO) audit --deny warnings
 
 deb:
 	dpkg-buildpackage -b -nc -d $(DEB_SIGN_ARGS) --changed-by="$(DEB_CHANGED_BY)"

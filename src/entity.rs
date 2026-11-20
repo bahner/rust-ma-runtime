@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use noyalib::compat::serde_yaml;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 

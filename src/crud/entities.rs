@@ -394,6 +394,7 @@ mod tests {
     use std::time::Duration;
 
     use ciborium::Value as CborValue;
+    use noyalib::compat::serde_yaml;
     use tokio::sync::RwLock;
 
     use super::handle_entity_acl_field;

@@ -14,6 +14,7 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use ma_core::config::RemotePinConfig;
+use noyalib::compat::serde_yaml;
 use serde::{Deserialize, Serialize};
 
 use crate::acl::AclMap;
@@ -1104,6 +1105,7 @@ mod tests {
     };
     use crate::entity::{EntityNode, Evaluator, IpldLink, KindNode, KindTree, RuntimeManifest};
     use ma_core::{check_cap, CAP_IDENTITY_PUBLISH, CAP_IPFS};
+    use noyalib::compat::serde_yaml;
     use std::collections::{BTreeMap, HashMap};
 
     fn assert_daily_name(name: &str, base: &str) {

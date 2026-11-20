@@ -24,7 +24,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "mul
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
 serde_json = "1"
-serde_yaml = "0.9"
+noyalib = { version = "0.0.63", features = ["compat-serde-yaml"] }
 rand = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
 tokio-cron-scheduler = { version = "0.15", features = ["english"] }

@@ -732,6 +732,7 @@ fn send_error_reply(incoming: &ma_core::Message, ctx: &DispatchCtx, reason: &str
 #[cfg(test)]
 mod tests {
     use ciborium::Value as CborValue;
+    use noyalib::compat::serde_yaml;
     use std::collections::BTreeMap;
     use std::sync::Arc;
     use tokio::sync::RwLock;

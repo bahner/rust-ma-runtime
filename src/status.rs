@@ -8,6 +8,7 @@ use axum::http::{header, Method, StatusCode, Uri};
 use axum::response::{Html, IntoResponse, Redirect};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use noyalib::compat::serde_yaml;
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
@@ -664,9 +665,7 @@ pub fn persist_owners_to_config(path: &std::path::Path, owners: &[String]) -> an
     config.config_path = Some(path.to_path_buf());
 
     let owners_val = serde_yaml::to_value(owners)?;
-    config
-        .extra
-        .insert(serde_yaml::Value::String("owners".to_string()), owners_val);
+    config.extra.insert("owners", owners_val);
 
     config.save()?;
     Ok(())
