@@ -37,8 +37,9 @@ unic-langid = "0.9"
 # `extism::PluginBuilder::with_wasmtime_config`, so both crates must resolve
 # to the same wasmtime version. `extism 1.41` (current latest) requires
 # wasmtime ^49, so this direct dependency matches it — do not move to 50
-# until extism ships a 50-based release.
-wasmtime = "49"
+# or 51 until extism ships a release based on a newer wasmtime. Never go
+# below 49.0.7, which fixes RUSTSEC-2026-0566 through RUSTSEC-2026-0587.
+wasmtime = "49.0.7"
 zeroize = "1"
 
 [dev-dependencies]
