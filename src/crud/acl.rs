@@ -105,8 +105,7 @@ pub(super) async fn handle_root_acl(
             let value = manifest
                 .acl
                 .as_ref()
-                .map(|link| link.cid.clone())
-                .unwrap_or_default();
+                .map_or_default(|link| link.cid.clone());
             send_crud_reply_cbor(message, reply_type, ctx, &CborValue::Text(value)).await
         }
         (Some(""), [CborValue::Text(raw)]) => {
